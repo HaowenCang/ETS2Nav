@@ -21,7 +21,7 @@
 | `truck.fuel.range` | float | km |
 | `truck.fuel.warning` | bool | 低油量 |
 | `truck.fuel.consumption.average` | float | 平均油耗 |
-| `truck.fatigue` | float | 0–1，疲劳度 |
+| `truck.fatigue` | — | **不存在于官方 SDK 1.14**（研究 B1 初版有误，RenCloud 亦无此通道）；疲劳相关仅 `rest.stop` 可用 |
 | `game.time` | u32 | 游戏内分钟（自首个游戏日 00:00） |
 | `local.scale` | float | 真实秒 ↔ 游戏秒倍率 |
 | `rest.stop` | s32 | 距下次强制休息的游戏内分钟（实现相关，可能缺失） |
