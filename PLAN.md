@@ -42,8 +42,8 @@
 
 | ID | 任务 | 完成条件 | 状态 |
 |---|---|---|---|
-| A1 | 下载官方 SDK 1.14 与 scs_extractor（官方 wiki） | 压缩包入库（docs/vendor 或本地引用） | ⏳ |
-| A2 | 解包 base.scs，研读 `def/world/semaphore_profile.sii`、def 资源结构 | 形成格式笔记（docs/format-notes/） | ⏳ |
+| A1 | 下载官方 SDK 1.14 与 scs_extractor（官方 wiki） | 压缩包入库（vendor/） | ✅ 已入库 vendor/scs_sdk_1_14（含官方头文件/示例）、vendor/scs_extractor_1_55（exe） |
+| A2 | 解包 base.scs，研读 `def/world/semaphore_profile.sii`、def 资源结构 | 形成格式笔记（docs/format-notes/） | 🔄 def.scs 已解包（66928 条目），笔记已写；base_map.scs 解包后台运行中 |
 | A3 | Map Compiler 骨架（语言按 v0.2 §12：C# 优先；独立实现，不复制 GPL 代码） | 可解包 .scs HashFS、列出 archive 内容 | ⏳ |
 | A4 | 单城市解析：sector → prefab → navigation path | 从代表性城市（含十字口/环岛/高速出入口/公司/加油站）提取结构化数据 | ⏳ |
 | A5 | 有向图构建（Routing + Junction Graph，v0.2 §13–15） | 单城市图可查询 | ⏳ |
@@ -56,8 +56,8 @@
 
 | ID | 任务 | 完成条件 | 状态 |
 |---|---|---|---|
-| B1 | 核对 SDK 头文件通道名（job destination 等，v0.2 §5） | 通道清单定稿（docs/format-notes/telemetry-channels.md） | ⏳ |
-| B2 | semaphore_profile 解析器 + 语义笔记（interval/cycle/id_map/inherited/sleep_time） | 解析器单元测试通过 | ⏳ |
+| B1 | 核对 SDK 头文件通道名（job destination 等，v0.2 §5） | 通道清单定稿（docs/format-notes/telemetry-channels.md） | ✅ 定稿：目的地数据在官方 **configs**（destination.city(.id)/company(.id)），非 channels；官方事件 player.fined/tollgate/ferry/train |
+| B2 | semaphore_profile 解析器 + 语义笔记（interval/cycle/id_map/inherited/sleep_time） | 解析器单元测试通过 | 🔄 语义笔记完成（278 profile/46 sleep_time/169 inherited），解析器待写 |
 | B3 | telemetry-plugin DLL（C++，SDK 1.14，共享内存 + sequence counter，v0.2 §6–7） | telemetry-dump 能显示 position/heading/speed/timestamps/限速/job | ⏳ |
 | B4 | signal-lab 工具（记录 signal 事件 + 各 clock + 误差分析） | 可回放实验数据 | ⏳ |
 | B5 | 实验 TL-01 Clock Domain（v0.2 §29、§64） | 判定 semaphore interval 所属时钟域 | ⏳ |
