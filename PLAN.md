@@ -1,0 +1,130 @@
+# ETS2Nav 执行计划与进度管理
+
+> 依据：《Euro Truck Simulator 2 外部智能导航系统-v0.2.md》（技术基线）
+> 本文件是会话接续的唯一入口：任何会话开始先读本文件的「§1 当前状态」与「§3 任务状态表」，结束时更新之。
+
+---
+
+## §1 当前状态
+
+**最后更新**：2026-08（P0 启动）
+
+- [ ] **P0 阶段**（进行中，尚未开工）
+- [ ] P1 Map Compiler
+- [ ] P2 Navigation Core
+- [ ] P3 Driving Assistant
+- [ ] P4 正式 UI
+- [ ] P5 全欧洲测试
+- [ ] P6 性能优化与发布
+
+**当前任务**：P0 尚未开工。阻塞项：① 待确认事项（见 §2）；② 需要 ETS2 游戏安装路径。
+
+**已建立**：执行计划（本文件）、本地 git 仓库、.gitignore。
+
+---
+
+## §2 待确认事项（用户决策记录）
+
+| # | 事项 | 状态 | 决策 | 影响 |
+|---|---|---|---|---|
+| D1 | GitHub 远程仓库：名称、可见性 | ⏳ 待确认 | — | 推送阻塞 |
+| D2 | 项目许可证（v0.2 §12 前提：未定前不复制 GPL 实现） | ⏳ 待确认 | — | 决定 parser 实现策略与 LICENSE 文件 |
+| D3 | ETS2 安装路径（侦察未找到） | ⏳ 待确认 | — | P0-A 需要真实游戏文件；P0-B 需要运行游戏 |
+| D4 | P0 内部优先级（建议：A 先行，B 的静态部分并行） | ⏳ 待确认 | — | 任务排程 |
+
+---
+
+## §3 任务状态表
+
+状态约定：`⏳ pending` / `🔄 in_progress` / `🚫 blocked`（附原因）/ `✅ done`（附日期与验证）。
+
+### P0-A 路由图自动生成（最高工程风险，v0.2 §66）
+
+| ID | 任务 | 完成条件 | 状态 |
+|---|---|---|---|
+| A1 | 下载官方 SDK 1.14 与 scs_extractor（官方 wiki） | 压缩包入库（docs/vendor 或本地引用） | ⏳ |
+| A2 | 解包 base.scs，研读 `def/world/semaphore_profile.sii`、def 资源结构 | 形成格式笔记（docs/format-notes/） | ⏳ |
+| A3 | Map Compiler 骨架（语言按 v0.2 §12：C# 优先；独立实现，不复制 GPL 代码） | 可解包 .scs HashFS、列出 archive 内容 | ⏳ |
+| A4 | 单城市解析：sector → prefab → navigation path | 从代表性城市（含十字口/环岛/高速出入口/公司/加油站）提取结构化数据 | ⏳ |
+| A5 | 有向图构建（Routing + Junction Graph，v0.2 §13–15） | 单城市图可查询 | ⏳ |
+| A6 | Graph Validation 基础（v0.2 §17 结构/方向检测） | 检测器可运行并输出报告 | ⏳ |
+| A7 | 100–500 随机 OD 测试（v0.2 §66） | 断路/非法掉头/逆行报告 | ⏳ |
+| A8 | map-inspector + graph-debugger 工具（v0.2 §74） | 可查看节点/边并点击 A/B 出路线 | ⏳ |
+| **门** | **无需 QGIS 人工编辑，单城市 routing graph 基本正确（v0.2 §75）** | — | ⏳ |
+
+### P0-B 红绿灯 ±1 s（最高功能可行性风险，v0.2 §64–65）
+
+| ID | 任务 | 完成条件 | 状态 |
+|---|---|---|---|
+| B1 | 核对 SDK 头文件通道名（job destination 等，v0.2 §5） | 通道清单定稿（docs/format-notes/telemetry-channels.md） | ⏳ |
+| B2 | semaphore_profile 解析器 + 语义笔记（interval/cycle/id_map/inherited/sleep_time） | 解析器单元测试通过 | ⏳ |
+| B3 | telemetry-plugin DLL（C++，SDK 1.14，共享内存 + sequence counter，v0.2 §6–7） | telemetry-dump 能显示 position/heading/speed/timestamps/限速/job | ⏳ |
+| B4 | signal-lab 工具（记录 signal 事件 + 各 clock + 误差分析） | 可回放实验数据 | ⏳ |
+| B5 | 实验 TL-01 Clock Domain（v0.2 §29、§64） | 判定 semaphore interval 所属时钟域 | ⏳ |
+| B6 | 实验 TL-02 Phase Anchor（H1 全局 vs H2 局部，v0.2 §30） | 判定相位锚定模型 | ⏳ |
+| B7 | 实验 TL-03 Warp / TL-04 Reset / TL-05 Special Profiles（v0.2 §64） | 行为建模 | ⏳ |
+| **门** | Go/No-Go：Case A/B（|e|≤1 s，v0.2 §65）→ 倒计时入 V1；Case C → STATE_ONLY；Case D → UNAVAILABLE | — | ⏳ |
+
+### P0-C Telemetry 稳定性（v0.2 §75）
+
+| ID | 任务 | 完成条件 | 状态 |
+|---|---|---|---|
+| C1 | 数小时连续运行：不崩溃、数据连续、pause/load 正确 | 实测报告 | ⏳ |
+
+### P0-D 性能基线（v0.2 §63、§75）
+
+| ID | 任务 | 完成条件 | 状态 |
+|---|---|---|---|
+| D1 | ETS2 only vs ETS2+Core 基准脚本（FPS/1% low/frametime） | 对比数据 | ⏳ |
+
+### P0 交叉任务
+
+| ID | 任务 | 完成条件 | 状态 |
+|---|---|---|---|
+| X1 | 仓库骨架：目录结构（v0.2 §72 精简到 P0）、.gitignore、README | 初始提交完成 | ⏳ |
+| X2 | 决策记录文件（docs/decisions/，记录每次关键选择） | 随项目维护 | ⏳ |
+
+---
+
+## §4 里程碑与阶段映射（v0.2 §73）
+
+| 阶段 | 内容 | 入口条件 | 出口验收 |
+|---|---|---|---|
+| P0 | P0-A 路由图 + P0-B 红绿灯并行（+C/D） | 本计划确认、游戏路径可得 | v0.2 §75 四项：Map 无人工修复可用、Signal 时钟域/相位锚定明确（countdown 则 ≤1 s）、Telemetry 数小时稳定、性能无显著影响 |
+| P1 | 完整 Map Compiler（base map + 官方 DLC + graph + POI + sign + semaphore + vector tile，v0.2 §8–19） | P0 门通过 | 全欧洲编译产物 + 回归测试集（v0.2 §18） |
+| P2 | Navigation Core（Map Matching、A*、profile、alternatives、rerouting、maneuvers，v0.2 §20–26、§43–44） | P1 产物 | 亚秒级路线、偏航重规划 ≈1 s |
+| P3 | Driving Assistant（限速/超速/测速/红绿灯/GLOSA，v0.2 §36–42） | P2 | 各提醒模块验收 |
+| P4 | 正式 UI（Browser → Desktop → LAN Mobile → Android/iOS，v0.2 §56–61） | P2/P3 | 高德式信息结构 + 60 FPS 目标 |
+| P5 | 全欧洲官方地图测试（automated OD corpus，v0.2 §18、§66） | P1/P4 产物 | 数千 OD 自动检查通过 |
+| P6 | 性能优化（ALT/CH、增量编译等）与正式发布（v0.2 §62–63） | P5 | benchmark 目标达成 |
+
+---
+
+## §5 版本管理策略（GitHub）
+
+- **仓库**：GitHub（账号 HaowenCang），本地仓库为唯一写入源。
+- **分支模型**：`main`（可发布基线）+ 功能分支 `feat/<id>-<slug>`（如 `feat/A4-city-parser`）；P0 阶段可直接在 main 上小步提交，进入 P1 后强制分支 + PR。
+- **提交规范**：`<ID>: <动词> <对象>`，如 `A4: 实现 sector 解析`；提交信息含变更要点与验证命令。
+- **Tag**：P0 门通过 → `v0.1.0-p0`；此后按里程碑递增。
+- **忽略**：`.pi-subagents/`、`.pi-glla/`、`target/`、`bin/ obj/`、`node_modules/`、提取的游戏资源（`vendor/` 若含大文件）。
+- **文档随代码入库**：需求 v0.1/v0.2、本计划、可行性评估、格式笔记均在仓库内。
+
+---
+
+## §6 会话接续协议
+
+1. 读本文件 §1（当前状态）→ §2（待确认事项）→ §3（任务状态表），确定续接点。
+2. 更新任务状态为 `🔄 in_progress` 再动手。
+3. 每个任务完成时更新状态并记录验证方式；遇到阻塞记 `🚫` + 原因。
+4. 会话结束时：更新 §1 最后更新与摘要、提交 git。
+5. 关键决策（语言、格式、实验结论）写入 `docs/decisions/`。
+
+---
+
+## §7 关键风险提示（v0.2 §67）
+
+- 最高工程风险：Automatic Routing Graph（P0-A）——公开项目均需人工修复，本项目目标是无人工修复。
+- 最高功能风险：Traffic Light ±1 s（P0-B）——SDK 无运行时相位通道；相位锚定 H1/H2 未定；**禁止在设计阶段预设时钟模型**（v0.2 §28）。
+- 中等：speed camera、sign/exit number、speed-limit propagation、动态事件。
+- 低：Telemetry、POI、A*、rerouting、TTS、LAN、UI。
+- 合规：GPL-2.0（TruckLib）/GPL-3.0（TruckSim Maps）不直接复制或链接，仅作研究对照（v0.2 §12，许可证决定前默认）。

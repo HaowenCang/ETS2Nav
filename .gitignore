@@ -1,0 +1,26 @@
+# 依赖与构建产物
+target/
+bin/
+obj/
+node_modules/
+dist/
+build/
+
+# 提取的游戏资源（大文件不入库）
+vendor/
+*.scs
+extracted/
+
+# 本地运行时数据
+*.log
+*.db
+*.pmtiles
+signal-lab-data/
+
+# pi 工具运行时
+.pi-subagents/
+.pi-glla/
+
+# IDE
+.vscode/
+.idea/
