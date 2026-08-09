@@ -58,9 +58,15 @@ public sealed class DirectoryProvider : IScsResourceProvider
 
     public DirectoryProvider(string rootDir) => _root = Path.GetFullPath(rootDir);
 
+    public override string ToString() => $"DirectoryProvider:{_root}";
+
     private string ToPhysical(string virtualPath)
     {
         var rel = virtualPath.TrimStart('/').Replace('/', Path.DirectorySeparatorChar);
+        // 路径穿越防护（P1-02 评审 m3）：拒绝含 .. 段
+        var segments = rel.Split(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar);
+        if (segments.Any(s => s == ".."))
+            throw new ArgumentException($"非法虚拟路径：{virtualPath}");
         return Path.Combine(_root, rel);
     }
 
@@ -78,7 +84,7 @@ public sealed class DirectoryProvider : IScsResourceProvider
 }
 
 /// <summary>覆盖提供者（P1 §10）：多个 provider 按优先级从低到高叠加，高层覆盖低层。</summary>
-public sealed class OverlayProvider : IScsResourceProvider
+public sealed class OverlayProvider : IScsResourceProvider, IDisposable
 {
     private readonly List<IScsResourceProvider> _providers;   // 索引 0 = 最低优先级
 
@@ -89,6 +95,13 @@ public sealed class OverlayProvider : IScsResourceProvider
     {
         _providers.Add(provider);
         return this;
+    }
+
+    /// <summary>释放持有的 IDisposable provider（P1-02 评审 M1：资源所有权）。</summary>
+    public void Dispose()
+    {
+        foreach (var p in _providers)
+            if (p is IDisposable d) d.Dispose();
     }
 
     public bool Exists(string virtualPath)

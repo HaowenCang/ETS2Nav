@@ -5,7 +5,7 @@
 - **需求与技术基线**：[Euro Truck Simulator 2 外部智能导航系统-v0.2.md](./Euro%20Truck%20Simulator%202%20外部智能导航系统-v0.2.md)
 - **可行性评估**：[ETS2 外部智能导航系统可行性评估.md](./ETS2%20外部智能导航系统可行性评估.md)
 - **执行计划与进度**：[PLAN.md](./PLAN.md)
-- **当前阶段**：P0（路由图自动生成 + 红绿灯时钟域实验）
+- **当前阶段**：P1（Map Compiler 完整化——执行基线：P1-map-compiler-plan.md；P0 已关门 v0.1.0-p0）
 
 ## 架构概览（v0.2 §3）
 
@@ -28,7 +28,7 @@ ETS2 Files ──▶ Map Compiler (C#/TS，离线低频) ──▶ map.db / rout
 ets2-nav/
 ├─ telemetry-plugin/   # C++ DLL：SDK 1.14 + 共享内存
 ├─ map-compiler/       # 地图解析与编译（独立实现，不复制 GPL 代码）
-├─ tools/              # P0 工具：telemetry-dump / map-inspector / graph-debugger / signal-lab
+├─ tools/              # P0/P1 工具：map-inspector / graph-debugger / telemetry-dump / signal-lab / perf-bench
 ├─ tests/              # 自动化测试
 ├─ docs/               # 格式笔记、决策记录
 └─ PLAN.md             # 执行计划与进度

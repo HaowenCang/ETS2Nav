@@ -63,13 +63,13 @@ public sealed class GameInstall
         return inst;
     }
 
-    /// <summary>contentFingerprint（P1 §11）：游戏版本 + archive 名/大小/时间 + DLC 集合 → SHA-256。</summary>
+    /// <summary>contentFingerprint（P1 §11）：游戏版本 + archive 名/大小/UTC 时间 + DLC 集合 → SHA-256。</summary>
     public string ComputeFingerprint()
     {
         var sb = new StringBuilder();
         sb.Append(GameVersion ?? "?");
         foreach (var a in Archives)
-            sb.Append('|').Append(a.Name).Append(':').Append(a.Size).Append(':').Append(a.Modified.Ticks);
+            sb.Append('|').Append(a.Name).Append(':').Append(a.Size).Append(':').Append(a.Modified.ToUniversalTime().Ticks);
         sb.Append("|dlc=").Append(string.Join(",", EnabledDlc));
         var bytes = SHA256.HashData(Encoding.UTF8.GetBytes(sb.ToString()));
         return Convert.ToHexString(bytes).ToLowerInvariant();
@@ -88,13 +88,17 @@ public sealed class GameInstall
                 continue;   // 跳过无关 archive
             if (a.Name.StartsWith("dlc_"))
             {
-                // 地图 DLC 探测：打开条目表看是否含 /map/ 目录
+                // 地图 DLC 探测：打开条目表看是否含 /map/ 目录（失败不静默——警告并跳过，P1-02 评审 M3）
                 try
                 {
                     using var probe = ScsHashFs.HashFsReader.Open(a.Path);
                     if (!probe.EnumerateFiles("/map").Any()) continue;
                 }
-                catch { continue; }
+                catch (Exception ex)
+                {
+                    Console.Error.WriteLine($"[ScsResource] 警告：dlc archive {a.Name} 打不开（{ex.GetType().Name}: {ex.Message}），已跳过");
+                    continue;
+                }
             }
             overlay.Add(new HashFsProvider(a.Path));
         }
@@ -108,6 +112,10 @@ public sealed class GameInstall
         "base_map.scs" => 2,
         "base_aux.scs" => 3,
         "base_navi.scs" => 4,
+        "core.scs" => 5,
+        "base_cfg.scs" => 6,
+        "base_share.scs" => 7,
+        "base_vehicle.scs" => 8,
         _ => 100,   // dlc_* 按名序（ETS2 实际优先级含 dlc 依赖序，名序为近似）
     };
 }

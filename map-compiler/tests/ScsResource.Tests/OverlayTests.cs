@@ -83,4 +83,71 @@ public class OverlayTests : IDisposable
         }
         finally { Directory.Delete(dir, true); }
     }
+
+    [Fact]
+    public void Fingerprint_Changes_WhenDlcAdded()
+    {
+        var dir = Path.Combine(Path.GetTempPath(), "ets2nav-game-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(dir);
+        try
+        {
+            File.WriteAllText(Path.Combine(dir, "base.scs"), "b");
+            var fp1 = GameInstall.Detect(dir).ContentFingerprint;
+            File.WriteAllText(Path.Combine(dir, "dlc_iberia.scs"), "d");
+            var fp2 = GameInstall.Detect(dir).ContentFingerprint;
+            Assert.NotEqual(fp1, fp2);
+            Assert.Contains("iberia", GameInstall.Detect(dir).EnabledDlc);
+        }
+        finally { Directory.Delete(dir, true); }
+    }
+
+    [Fact]
+    public void ResolveSource_ReturnsProvider()
+    {
+        var d1 = Path.Combine(Path.GetTempPath(), "ets2nav-rs-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(Path.Combine(d1, "def"));
+        File.WriteAllText(Path.Combine(d1, "def", "x.sii"), "x");
+        try
+        {
+            var overlay = new OverlayProvider(new DirectoryProvider(d1));
+            Assert.NotNull(overlay.ResolveSource("/def/x.sii"));
+            Assert.Null(overlay.ResolveSource("/def/y.sii"));
+        }
+        finally { Directory.Delete(d1, true); }
+    }
+
+    [Fact]
+    public void Overlay_ThreeLayers_PriorityOrder()
+    {
+        var d1 = Path.Combine(Path.GetTempPath(), "ets2nav-3l1-" + Guid.NewGuid().ToString("N"));
+        var d2 = Path.Combine(Path.GetTempPath(), "ets2nav-3l2-" + Guid.NewGuid().ToString("N"));
+        var d3 = Path.Combine(Path.GetTempPath(), "ets2nav-3l3-" + Guid.NewGuid().ToString("N"));
+        foreach (var d in new[] { d1, d2, d3 })
+            Directory.CreateDirectory(Path.Combine(d, "def"));
+        File.WriteAllText(Path.Combine(d1, "def", "x.sii"), "low");
+        File.WriteAllText(Path.Combine(d3, "def", "x.sii"), "high");
+        try
+        {
+            var overlay = new OverlayProvider(new DirectoryProvider(d1), new DirectoryProvider(d2), new DirectoryProvider(d3));
+            using var r = new StreamReader(overlay.Open("/def/x.sii"));
+            Assert.Equal("high", r.ReadToEnd());
+        }
+        finally
+        {
+            foreach (var d in new[] { d1, d2, d3 }) Directory.Delete(d, true);
+        }
+    }
+
+    [Fact]
+    public void DirectoryProvider_RejectsPathTraversal()
+    {
+        var d = Path.Combine(Path.GetTempPath(), "ets2nav-pt-" + Guid.NewGuid().ToString("N"));
+        Directory.CreateDirectory(d);
+        try
+        {
+            var p = new DirectoryProvider(d);
+            Assert.Throws<ArgumentException>(() => p.Open("/../../etc/passwd"));
+        }
+        finally { Directory.Delete(d, true); }
+    }
 }
