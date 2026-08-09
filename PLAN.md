@@ -48,9 +48,9 @@
 | A3 | Map Compiler 骨架（语言按 v0.2 §12：C# 优先；独立实现，不复制 GPL 代码） | 可解包 .scs HashFS、列出 archive 内容 | ✅ 全部完成：HashFS v1/v2 读取器 + ScsSector 解析器（17 种 item 类型 + 节点表）；**282 sector 与 TruckLib 逐项对照零差异**（174735 items / 248410 nodes，24 单测全过） |
 | A4 | 单城市解析：sector → prefab → navigation path | 从代表性城市（含十字口/环岛/高速出入口/公司/加油站）提取结构化数据 | ✅ 柏林区域 16 sector 加载（中心 (12725,-9846)，覆盖 sec+0002/+0003-0002/-0003 等） |
 | A5 | 有向图构建（Routing + Junction Graph，v0.2 §13–15） | 单城市图可查询 | ✅ ScsGraph：全局节点表 + 跨 sector 连接 + prefab 全连接近似（双向边）；柏林核心城区：道路节点 2426/主分量 87%，+缓冲 16 sector：道路节点 6194/主分量 80% |
-| A6 | Graph Validation 基础（v0.2 §17 结构/方向检测） | 检测器可运行并输出报告 | ⏳ |
+| A6 | Graph Validation 基础（v0.2 §17 结构/方向检测） | 检测器可运行并输出报告 | ✅ 并入 P1-01（ScsValidation 拆分正式化） |
 | A7 | 100–500 随机 OD 测试（v0.2 §66） | 断路/非法掉头/逆行报告 | 🔄 框架已跑通：主分量内 200/200 OD 100% 可达（随机种子固定）；边界小分量已定位为截断效应，待 A6 正式化 |
-| A8 | map-inspector + graph-debugger 工具（v0.2 §74） | 可查看节点/边并点击 A/B 出路线 | ⏳ |
+| A8 | map-inspector + graph-debugger 工具（v0.2 §74） | 可查看节点/边并点击 A/B 出路线 | ✅ 并入 P1-01（CLI + MapLibre Web + Dijkstra） |
 | **门** | **无需 QGIS 人工编辑，单城市 routing graph 基本正确（v0.2 §75）** | — | ⏳ |
 
 ### P0-B 红绿灯 ±1 s（最高功能可行性风险，v0.2 §64–65）
@@ -84,7 +84,7 @@
 | ID | 任务 | 完成条件 | 状态 |
 |---|---|---|---|
 | X1 | 仓库骨架：目录结构（v0.2 §72 精简到 P0）、.gitignore、README | 初始提交完成 | ✅ 已完成（含 GitHub 推送） |
-| X2 | 决策记录文件（docs/decisions/，记录每次关键选择） | 随项目维护 | 🔄 关键决策已入 PLAN §2；待正式化 docs/decisions/ |
+| X2 | 决策记录文件（docs/decisions/，记录每次关键选择） | 随项目维护 | ✅ ADR-001~007 已建（2026-08-10） |
 
 ---
 
@@ -108,7 +108,7 @@
 |---|---|---|---|
 | P1-00 | Baseline Freeze（README/PLAN/ADR/决策记录） | P1 baseline documented | 🔄 进行中（ADR-001~007 已建） |
 | P1-01 | Validation & Debug Tooling（GraphValidator 拆分 + severity + diagnostics + map-inspector + graph-debugger） | Berlin P0 graph 可完整可视化并显示 validation error | ⏳ |
-| P1-02 | Resource Resolver（IScsResourceProvider + HashFs/Directory/Overlay + DLC 检测 + fingerprint） | 所有上层模块仅经 virtual resource API 读取 | ⏳ |
+| P1-02 | Resource Resolver（IScsResourceProvider + HashFs/Directory/Overlay + DLC 检测 + fingerprint） | 所有上层模块仅经 virtual resource API 读取 | 🔄 Resolver 层完成（8 测试）+ 评审修复（Dispose/ResolveSource/指纹 UTC/路径穿越/探测警告）；**上层迁移（Sector/Sii/Graph 改经 Overlay）未开始** |
 | P1-03 | Definition Layer（SII corpus + include + road look + country/city/company/semaphore/ferry/train + sign 基础） | Berlin 所需定义全部解析为 typed model | ⏳ |
 | P1-04 | Prefab Navigation Parser（descriptor/connector/curves/navigation lanes/movement/signal ID） | semantic corpus 全部典型 prefab 恢复合法 movement | ⏳ |
 | P1-05 | Semantic Graph（SemanticMap + RoadSegment + JunctionMovement + RoutingGraphBuilder + JunctionGraphBuilder；删除双向/全连接近似） | Berlin 正式 semantic graph 可生成 | ⏳ |
@@ -121,6 +121,20 @@
 | P1-12 | Vector Tiles（map.pmtiles：road/city/POI/developer layers） | graph-debugger/MapLibre 可直接加载 | ⏳ |
 | P1-13 | Europe Build（base + 全部官方 DLC；0 fatal / 0 未解析 parser error） | 完成 | ⏳ |
 | P1-14 | Regression Suite（parser/semantic/route corpus + random OD + determinism + reader + scale） | 一条命令跑完整 P1 测试套件 | ⏳ |
+
+P1 Gates（G1~G13）见 P1-map-compiler-plan.md §126–§138；Exit Criteria §139。
+
+### P1 风险跟踪（§118–124）
+
+| ID | 风险 | 等级 | 缓解 | 状态 |
+|---|---|---|---|---|
+| R1 | Prefab Navigation Semantics | Critical | semantic corpus + oracle 对照 + graph-debugger + 逐 family 扩展 | ⏳ P1-04 前置 |
+| R2 | Road Direction Semantics | Critical | road look + node direction + telemetry traces + fixtures | ⏳ P1-03/P1-05 |
+| R3 | Full Europe Format Diversity | High | Berlin → Germany → Europe 分阶段 | ⏳ P1-07/P1-13 |
+| R4 | Definition Override | High | Resource Resolver 先行（P1-02） | 🔄 Resolver 层完成，上层迁移待 P1-03 |
+| R5 | Sign/Speed Semantics | Medium/High | Telemetry speed limit ground truth | ⏳ P1-09 |
+| R6 | TruckLib License | Medium | oracle-only 定位（ADR-005） | ✅ 已定案 |
+| R7 | Dataset Schema Premature Freeze | Medium | 语义图稳定后冻结 v1 | ⏳ P1-11 |
 
 P1 Gates（G1~G13）见 P1-map-compiler-plan.md §126–§138；Exit Criteria §139。
 
