@@ -1,0 +1,146 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<title>ETS2Nav graph-debugger</title>
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
+<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<style>
+  html, body, #map { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
+  #panel { position: absolute; top: 10px; left: 10px; z-index: 10; background: rgba(255,255,255,.95);
+           padding: 10px; border-radius: 8px; box-shadow: 0 2px 8px rgba(0,0,0,.3); max-width: 320px; font-size: 12px; }
+  #panel h1 { font-size: 14px; margin: 0 0 8px; }
+  #panel input { width: 100%; box-sizing: border-box; margin: 2px 0; font-size: 12px; }
+  #stats { margin-top: 6px; color: #555; white-space: pre-wrap; }
+  .btn { margin-top: 6px; width: 100%; }
+  #route-info { margin-top: 6px; color: #006; font-weight: 600; }
+</style>
+</head>
+<body>
+<div id="map"></div>
+<div id="panel">
+  <h1>ETS2Nav graph-debugger（P1 §45）</h1>
+  <div>数据：<span id="data-name">data.geojson</span></div>
+  <div style="margin-top:6px;color:#888">起点/终点 = 节点 uid（hex，如 5731ab8a218ff811）。<br>空起终点 = 全部图。点地图 = 最近节点。</div>
+  <input id="from" placeholder="起点 node uid（hex）">
+  <input id="to" placeholder="终点 node uid（hex）">
+  <button class="btn" onclick="route()">Dijkstra 路径</button>
+  <button class="btn" onclick="resetView()">重置视图</button>
+  <div id="route-info"></div>
+  <div id="stats"></div>
+</div>
+<script>
+const map = new maplibregl.Map({ container: 'map', style: {
+  version: 8, sources: {}, layers: [],
+  glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+}, center: [0, 0], zoom: 3 });
+
+let nodes = new Map();      // uid -> {x, z}
+let edges = [];             // {from, to, uid, len, geojson-feature-idx}
+let features = [];
+
+async function load() {
+  const r = await fetch('data.geojson');
+  const fc = await r.json();
+  features = fc.features;
+  // 构建节点图
+  for (const f of features) {
+    const p = f.properties;
+    if (f.geometry.type === 'LineString') {
+      const [x0, z0] = f.geometry.coordinates[0];
+      const [x1, z1] = f.geometry.coordinates[1];
+      if (p.from) {
+        if (!nodes.has(p.from)) nodes.set(p.from, { x: x0, z: z0 });
+        if (!nodes.has(p.to)) nodes.set(p.to, { x: x1, z: z1 });
+        edges.push({ from: p.from, to: p.to, uid: p.uid, len: p.len || 0 });
+      }
+    }
+  }
+  // 简易平面坐标系（SCS 坐标 → 墨卡托近似：z→lat, x→lng，仅调试）
+  const toLatLng = (x, z) => [x / 111320, z / 111320];
+  const fLines = features.filter(f => f.geometry.type === 'LineString');
+  if (fLines.length === 0) { document.getElementById('stats').textContent = '无 LineString 要素'; return; }
+  // 数据范围定中心
+  let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
+  for (const f of fLines) for (const [x, z] of f.geometry.coordinates) {
+    minX = Math.min(minX, x); maxX = Math.max(maxX, x);
+    minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
+  }
+  const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
+  map.setCenter(toLatLng(cx, cz));
+  map.setZoom(10);
+
+  // 源：边 + 错误点
+  map.addSource('edges', { type: 'geojson', data: { type: 'FeatureCollection', features: fLines } });
+  map.addLayer({ id: 'road', type: 'line', source: 'edges',
+    layout: { 'line-join': 'round', 'line-cap': 'round' },
+    paint: {
+      'line-color': ['case', ['==', ['get', 'kind'], 'prefab'], '#f59e0b', '#3b82f6'],
+      'line-width': ['case', ['==', ['get', 'kind'], 'prefab'], 2.5, 1.2],
+      'line-opacity': 0.85,
+    } });
+  const errs = features.filter(f => f.properties.kind === 'validation_error');
+  if (errs.length) {
+    map.addSource('errs', { type: 'geojson', data: { type: 'FeatureCollection', features: errs } });
+    map.addLayer({ id: 'err', type: 'circle', source: 'errs', paint: { 'circle-radius': 6, 'circle-color': '#dc2626' } });
+  }
+  document.getElementById('stats').textContent =
+    `节点 ${nodes.size} / 边 ${edges.length} / 要素 ${features.length} / 错误点 ${errs.length}`;
+}
+load().catch(e => { document.getElementById('stats').textContent = '加载失败: ' + e.message; });
+
+function dijkstra(fromUid, toUid) {
+  const adj = new Map();
+  for (const e of edges) {
+    if (!adj.has(e.from)) adj.set(e.from, []);
+    adj.get(e.from).push(e);
+  }
+  const dist = new Map([[fromUid, 0]]);
+  const prev = new Map();
+  const visited = new Set();
+  while (true) {
+    let cur = null, best = Infinity;
+    for (const [u, d] of dist) if (!visited.has(u) && d < best) { best = d; cur = u; }
+    if (cur === null || cur === toUid) break;
+    visited.add(cur);
+    for (const e of (adj.get(cur) || [])) {
+      const nd = best + (e.len || 1);
+      if (nd < (dist.get(e.to) ?? Infinity)) { dist.set(e.to, nd); prev.set(e.to, e); }
+    }
+  }
+  if (!prev.has(toUid)) return null;
+  const path = [];
+  let u = toUid;
+  while (u !== fromUid) { path.push(prev.get(u)); u = prev.get(u).from; }
+  path.reverse();
+  return path;
+}
+
+async function route() {
+  const from = document.getElementById('from').value.trim();
+  const to = document.getElementById('to').value.trim();
+  const info = document.getElementById('route-info');
+  if (!from || !to) { info.textContent = '请输入起终点 node uid'; return; }
+  if (!nodes.has(from)) { info.textContent = '起点不在图中'; return; }
+  if (!nodes.has(to)) { info.textContent = '终点不在图中'; return; }
+  const path = dijkstra(from, to);
+  if (!path) { info.textContent = '无路径（可能在不同连通分量）'; return; }
+  const coords = path.map(e => {
+    const [x0, z0] = nodeXY(e.from), [x1, z1] = nodeXY(e.to);
+    return [[x0 / 111320, z0 / 111320], [x1 / 111320, z1 / 111320]];
+  }).flat();
+  if (map.getSource('route')) map.removeLayer('route'), map.removeSource('route');
+  map.addSource('route', { type: 'geojson', data: { type: 'FeatureCollection', features: [{
+    type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } }] } });
+  map.addLayer({ id: 'route', type: 'line', source: 'route',
+    paint: { 'line-color': '#16a34a', 'line-width': 4, 'line-opacity': 0.9 } });
+  info.textContent = `路径 ${path.length} 条边，总长 ${path.reduce((s, e) => s + (e.len || 0), 0).toFixed(0)}m`;
+}
+
+function nodeXY(uid) { const n = nodes.get(uid); return [n.x, n.z]; }
+function resetView() { map.fitBounds([[minX / 111320, minZ / 111320], [maxX / 111320, maxZ / 111320]], { padding: 30 }); }
+let minX, maxX, minZ, maxZ;
+</script>
+</body>
+</html>

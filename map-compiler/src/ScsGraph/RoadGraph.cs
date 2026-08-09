@@ -11,6 +11,7 @@ public sealed class RoadGraph
 {
     /// <summary>节点：uid → 内部索引（连续）。</summary>
     private readonly Dictionary<ulong, int> _nodeIndex = new();
+    private readonly List<ulong> _nodeUids = new();
     private readonly List<(double X, double Y, double Z)> _positions = new();
     /// <summary>有向边（双向道路存两条）。from → to 列表。</summary>
     private readonly List<List<int>> _outEdges = new();
@@ -20,6 +21,9 @@ public sealed class RoadGraph
 
     public int NodeCount => _positions.Count;
     public int EdgeCount => _edgeData.Count;
+
+    /// <summary>节点 UID 表（索引与 Positions 对齐，供调试/导出）。</summary>
+    public IReadOnlyList<ulong> NodeUids => _nodeUids;
 
     public IReadOnlyList<(double X, double Y, double Z)> Positions => _positions;
 
@@ -48,6 +52,7 @@ public sealed class RoadGraph
         if (_nodeIndex.TryGetValue(uid, out int idx)) return idx;
         idx = _positions.Count;
         _nodeIndex[uid] = idx;
+        _nodeUids.Add(uid);
         _positions.Add((x, y, z));
         _outEdges.Add(new List<int>());
         return idx;

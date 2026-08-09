@@ -144,6 +144,8 @@ if (geojsonArg != null)
             {
                 ["kind"] = data.IsPrefabConnector ? "prefab" : "road",
                 ["uid"] = data.ItemUid.ToString("x16"),
+                ["from"] = graph.NodeUids[from].ToString("x16"),
+                ["to"] = graph.NodeUids[to].ToString("x16"),
                 ["look"] = data.RoadLook,
                 ["len"] = data.Length,
             },
