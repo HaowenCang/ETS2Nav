@@ -164,6 +164,7 @@ SCSAPI_VOID telemetry_frame_start(const scs_event_t UNUSED(event), const void *c
     shared_memory->frame_elapsed_ms = continuous_elapsed_ms;
 
     // 帧更新完成：递增序号（最后写入，客户端据此判断数据完整）
+    // 注意：seq 在 frame_start 递增，通道值随后写入（≤1 帧相位差，消费端按此契约）
     shared_memory->sequence++;
 }
 
@@ -226,8 +227,8 @@ SCSAPI_VOID telemetry_configuration(const scs_event_t event, const void *const e
         if ((v = find_attribute(*info, SCS_TELEMETRY_CONFIG_ATTRIBUTE_source_company_id, SCS_U32_NIL, SCS_VALUE_TYPE_string)) != NULL) {
             copy_string(shared_memory->job_source_company_id, sizeof(shared_memory->job_source_company_id), v->value.value_string.value);
         }
-        if ((v = find_attribute(*info, SCS_TELEMETRY_CONFIG_ATTRIBUTE_income, SCS_U32_NIL, SCS_VALUE_TYPE_u32)) != NULL) {
-            shared_memory->job_income = v->value.value_u32.value;
+        if ((v = find_attribute(*info, SCS_TELEMETRY_CONFIG_ATTRIBUTE_income, SCS_U32_NIL, SCS_VALUE_TYPE_u64)) != NULL) {
+            shared_memory->job_income = (scs_u32_t)v->value.value_u64.value;   // 官方类型 u64，窄化存储
         }
         if ((v = find_attribute(*info, SCS_TELEMETRY_CONFIG_ATTRIBUTE_delivery_time, SCS_U32_NIL, SCS_VALUE_TYPE_u32)) != NULL) {
             shared_memory->job_delivery_time_minutes = v->value.value_u32.value;
@@ -245,6 +246,13 @@ static bool initialize_shared_memory(void)
     shared_memory_handle = CreateFileMappingA(INVALID_HANDLE_VALUE, NULL, PAGE_READWRITE, 0, sizeof(struct telemetry_state_t), "Local\\ETS2NavTelemetry");
     if (shared_memory_handle == NULL) {
         log_line(SCS_LOG_TYPE_error, "Unable to create shared memory");
+        return false;
+    }
+    // 双实例防护（ETS2+ATS 同时运行会双写同一映射）
+    if (GetLastError() == ERROR_ALREADY_EXISTS) {
+        log_line(SCS_LOG_TYPE_error, "ETS2NavTelemetry already exists (another game instance?) - aborting");
+        CloseHandle(shared_memory_handle);
+        shared_memory_handle = NULL;
         return false;
     }
     shared_memory = static_cast<struct telemetry_state_t *>(MapViewOfFile(shared_memory_handle, FILE_MAP_ALL_ACCESS, 0, 0, sizeof(struct telemetry_state_t)));

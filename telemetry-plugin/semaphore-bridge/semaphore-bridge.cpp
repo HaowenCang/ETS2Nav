@@ -122,12 +122,15 @@ static inline bool slot_hint(const uint8_t *p)
     return is_valid_state(state);
 }
 
+// 前向声明（scan_region 协作取消用）
+static volatile bool reader_running = false;
+
 // 扫描地址区间，收集候选（最多 outMax 个）
 static int scan_region(uintptr_t start, uintptr_t end, uintptr_t *out, int outMax)
 {
     int found = 0;
     uintptr_t addr = start;
-    long yieldAt = 0;
+    uintptr_t yieldAt = 0;
     while (addr < end)
     {
         MEMORY_BASIC_INFORMATION mbi;
@@ -142,10 +145,16 @@ static int scan_region(uintptr_t start, uintptr_t end, uintptr_t *out, int outMa
             && prot != (PAGE_READWRITE | PAGE_NOCACHE) && prot != (PAGE_READWRITE | PAGE_WRITECOMBINE))
             continue;
         if (regionStart < 0x100000000ull) continue;
+        // 跳过自身共享内存映射区（防自定位）
+        if (sem_mem != NULL && regionStart >= (uintptr_t)sem_mem && regionStart < (uintptr_t)sem_mem + 16 + NAV_SEM_MAX_LIGHTS * LIGHT_SIZE)
+            continue;
+        if (regionStart < (uintptr_t)sem_mem && (uintptr_t)sem_mem < regionStart + mbi.RegionSize)
+            continue;
 
         const uint8_t *base = (const uint8_t *)regionStart;
         const size_t limit = (size_t)mbi.RegionSize;
-        for (size_t i = 0; i + 48 * 2 <= limit; i += 4)
+        // i + 192 <= limit 保证 slot_matches(i+144) 读取 [i+144, i+192) 不越界
+        for (size_t i = 0; i + 48 * 4 <= limit; i += 4)
         {
             if (!slot_hint(base + i)) continue;
             if (!slot_matches(base + i)) continue;
@@ -154,11 +163,13 @@ static int scan_region(uintptr_t start, uintptr_t end, uintptr_t *out, int outMa
                 out[found++] = regionStart + i;
                 if (found >= outMax) return found;
             }
-        }
-        if ((long)regionStart - yieldAt > 512L * 1024 * 1024)
-        {
-            yieldAt = (long)regionStart;
-            Sleep(1);
+            // 协作取消点 + yield（修复：64 位地址截断 + 无取消点）
+            if ((regionStart + i - yieldAt) > 256ull * 1024 * 1024)
+            {
+                yieldAt = regionStart + i;
+                if (!reader_running) return found;   // 卸载时快速退出（BLOCKER-1）
+                Sleep(1);
+            }
         }
     }
     return found;
@@ -212,7 +223,7 @@ static int array_span(uintptr_t base, int *validOut)
 
 // ---- 读取线程 ----
 static HANDLE reader_thread = NULL;
-static volatile bool reader_running = false;
+
 
 static DWORD WINAPI reader_loop(LPVOID)
 {
@@ -345,7 +356,11 @@ SCSAPI_VOID scs_telemetry_shutdown(void)
     reader_running = false;
     if (reader_thread)
     {
-        WaitForSingleObject(reader_thread, 3000);
+        // 协作取消后等待线程退出（扫描循环已含取消点，退出 ≤ 数秒）；超时兜底继续等待而非直接 CloseHandle
+        for (int i = 0; i < 100; i++)
+        {
+            if (WaitForSingleObject(reader_thread, 100) == WAIT_OBJECT_0) break;
+        }
         CloseHandle(reader_thread);
         reader_thread = NULL;
     }
