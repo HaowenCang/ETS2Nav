@@ -1,20 +1,31 @@
-// sem-head：读取共享内存头部原始值（诊断）
+// sem-probe v2 原版（用户工具）——从 git 恢复
 using System.IO.MemoryMappedFiles;
-try
+using System.Text;
+var mmf = MemoryMappedFile.OpenExisting(@"Local\ETS2NavSemaphore");
+using var view = mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
+Console.WriteLine($"sem-probe: ETS2NavSemaphore (Ctrl+C 退出)");
+Console.WriteLine($"magic={view.ReadUInt32(0):x8} version={view.ReadUInt32(4)} seq={view.ReadUInt32(8)} count={view.ReadUInt32(12)}");
+uint last = 0;
+while (true)
 {
-    using var mmf = MemoryMappedFile.OpenExisting(@"Local\ETS2NavSemaphore");
-    using var view = mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
-    uint magic = view.ReadUInt32(0);
-    uint version = view.ReadUInt32(4);
     uint seq = view.ReadUInt32(8);
     uint count = view.ReadUInt32(12);
-    Console.WriteLine($"magic=0x{magic:x8} (期望 0x324d4553)  version={version}  seq={seq}  count={count}");
-    // 等待 3 秒看 seq 是否变化
-    for (int i = 0; i < 6; i++)
+    if (seq != last && count <= 64)
     {
-        Thread.Sleep(500);
-        uint s2 = view.ReadUInt32(8);
-        Console.WriteLine($"  t+{(i + 1) * 0.5:F1}s seq={s2}");
+        last = seq;
+        var buf = new byte[(int)count * 48];
+        view.ReadArray(16, buf, 0, buf.Length);
+        Console.WriteLine($"--- seq={seq} count={count} ---");
+        for (int i = 0; i < count; i++)
+        {
+            int o = i * 48;
+            int type = BitConverter.ToInt32(buf, o + 32);
+            int state = BitConverter.ToInt32(buf, o + 40);
+            float time = BitConverter.ToSingle(buf, o + 36);
+            if (type == 0 && state == 0) continue;
+            float px = BitConverter.ToSingle(buf, o), pz = BitConverter.ToSingle(buf, o + 8);
+            Console.WriteLine($"  [{i}] type={type} state={state,-5} time={time,5:F1}s pos=({px,8:F1},{pz,8:F1})");
+        }
     }
+    Thread.Sleep(50);
 }
-catch (FileNotFoundException) { Console.WriteLine("共享内存不存在——插件未加载"); }
