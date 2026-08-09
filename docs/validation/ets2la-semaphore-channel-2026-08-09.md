@@ -25,3 +25,9 @@
 
 - `tools/ets2la-probe/Ets2laProbe`：读取 ETS2LASemaphore（需主程序运行）
 - `tools/ets2la-probe/MemScanProbe`：进程内存字符串扫描（只读探针，已验证可用）
+
+## 更新（2026-08-10）
+
+- ETS2LA 共享内存通道**暂不可用**：用户确认 ETS2LA 版本未更新、不支持当前 ETS2 版本；待更新后重试（Ets2laProbe 验证）。
+- 期间自主路径已就绪：vision-anchor（低成本区域视觉锚定，60×60px@10Hz，编译通过）——不依赖 ETS2LA。
+- 内存反查工具链已备：memscan-probe v2（float 值搜索 + 地址 dump），ETS2LA 通道恢复后即可用其数据定位游戏内部信号灯结构。
