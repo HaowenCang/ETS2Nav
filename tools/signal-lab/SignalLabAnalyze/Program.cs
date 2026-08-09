@@ -99,7 +99,8 @@ static List<(long WallMs, ulong SimUs, ulong PausedUs, uint GameMin, float Scale
     {
         var p = line.Split(',');
         if (p.Length < 6) continue;
-        list.Add((long.Parse(p[0]), ulong.Parse(p[1]), ulong.Parse(p[2]), uint.Parse(p[3]), float.Parse(p[5], CultureInfo.InvariantCulture)));
+        // 列：wall_ms, sim_us, paused_sim_us, game_min, scale, speed_kph
+        list.Add((long.Parse(p[0]), ulong.Parse(p[1]), ulong.Parse(p[2]), uint.Parse(p[3]), float.Parse(p[4], CultureInfo.InvariantCulture)));
     }
     return list;
 }
