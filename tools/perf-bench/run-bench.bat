@@ -1,12 +1,12 @@
 @echo off
-rem run-bench.bat：P0-D 性能基准记录（PresentMon + 自动提权）
-rem 用法：右键"以管理员身份运行" run-bench.bat <标签> <秒数>
-rem 例：run-bench.bat baseline 120   （对照组：无 ETS2Nav 插件）
-rem     run-bench.bat withnav 120    （实验组：有 ETS2Nav 插件）
+rem run-bench.bat: P0-D performance benchmark recorder (PresentMon, auto-elevate)
+rem Usage: right-click "Run as administrator" run-bench.bat <tag> <seconds>
+rem   e.g. run-bench.bat baseline 120   (control: no ETS2Nav plugins)
+rem        run-bench.bat withnav 120    (experiment: ETS2Nav plugins loaded)
 
 setlocal
 
-rem ---- 自动请求管理员权限 ----
+rem ---- auto-elevate ----
 net session >nul 2>&1
 if %errorlevel% neq 0 (
     powershell -Command "Start-Process '%~f0' -Verb RunAs -ArgumentList '%1 %2'"
@@ -24,16 +24,16 @@ if not exist "%OUTDIR%" mkdir "%OUTDIR%"
 set OUTFILE=%OUTDIR%\%TAG%.csv
 
 echo ============================================
-echo  P0-D 基准记录：%TAG%  （%DURATION% 秒）
-echo  目标进程：eurotrucks2.exe
-echo  输出：%OUTFILE%
-echo  请在游戏内保持固定路线/速度驾驶 %DURATION% 秒
-echo  开始时间：%date% %time%
+echo  P0-D benchmark: %TAG%  (%DURATION% s)
+echo  Target: eurotrucks2.exe
+echo  Output: %OUTFILE%
+echo  Drive the fixed route at steady speed for %DURATION% s
+echo  Started: %date% %time%
 echo ============================================
 
 %PM% --process-name eurotrucks2.exe --output_file "%OUTFILE%" --duration %DURATION%
 
-echo 记录完成：%OUTFILE%
-echo 按任意键退出...
+echo Done: %OUTFILE%
+echo Press any key to exit...
 pause >nul
 endlocal
