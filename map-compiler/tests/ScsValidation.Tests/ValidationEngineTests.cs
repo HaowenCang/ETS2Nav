@@ -74,7 +74,7 @@ public class ValidationEngineTests
         };
         var graph = ScsGraph.RoadGraph.Build(new[] { sec });
         var report = Engine().Run(new ValidationContext { Sectors = new[] { sec }, Graph = graph });
-        Assert.Contains(report.Issues, i => i.Code == "REF_BROKEN_BACKWARD" && i.Severity == ValidationSeverity.Error);
+        Assert.Contains(report.Issues, i => i.Code == "REF_BROKEN_BACKWARD" && i.Severity == ValidationSeverity.Warning);
     }
 
     [Fact]

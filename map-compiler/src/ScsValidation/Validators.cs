@@ -81,8 +81,8 @@ public sealed class ReferenceValidator : IGraphValidator
                     sink.Add(new ValidationIssue
                     {
                         Code = "REF_BROKEN_BACKWARD",
-                        Severity = ValidationSeverity.Error,
-                        Description = $"node 引用不存在的 backward item {n.BackwardItemUid:x16}",
+                        Severity = ValidationSeverity.Warning,
+                        Description = $"node 引用 backward item {n.BackwardItemUid:x16} 不在已加载 sector 集（可能位于未加载 sector）",
                         SourceUid = n.Uid,
                         Sector = sec.SectorName,
                     });
@@ -90,8 +90,8 @@ public sealed class ReferenceValidator : IGraphValidator
                     sink.Add(new ValidationIssue
                     {
                         Code = "REF_BROKEN_FORWARD",
-                        Severity = ValidationSeverity.Error,
-                        Description = $"node 引用不存在的 forward item {n.ForwardItemUid:x16}",
+                        Severity = ValidationSeverity.Warning,
+                        Description = $"node 引用 forward item {n.ForwardItemUid:x16} 不在已加载 sector 集（可能位于未加载 sector）",
                         SourceUid = n.Uid,
                         Sector = sec.SectorName,
                     });
