@@ -55,14 +55,14 @@ var active = rawCandidates.Select(a => (Addr: a, States: new int[frames], Times:
 var sw = Stopwatch.StartNew();
 for (int f = 0; f < frames; f++)
 {
-    foreach (var c in active)
+    for (int k = 0; k < active.Count; k++)
     {
         var one = new byte[48];
-        if (Native.ReadProcessMemory(proc.Handle, (IntPtr)c.Addr, one, 48, out _))
+        if (Native.ReadProcessMemory(proc.Handle, (IntPtr)active[k].Addr, one, 48, out _))
         {
-            c.States[f] = BitConverter.ToInt32(one, 44);
-            c.Times[f] = BitConverter.ToSingle(one, 40);
-            c.Valid++;
+            active[k].States[f] = BitConverter.ToInt32(one, 44);
+            active[k].Times[f] = BitConverter.ToSingle(one, 40);
+            active[k].Valid++;
         }
     }
     if (f < frames - 1) Thread.Sleep(100);
