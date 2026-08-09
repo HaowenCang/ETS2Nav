@@ -17,7 +17,7 @@ if errorlevel 1 (
     exit /b 1
 )
 
-cl /nologo /O2 /EHsc /W3 /utf-8 ^
+cl /nologo /O2 /EHsc /EHa /W3 /utf-8 ^
    /I "%SDK_INC%" ^
    /D WIN32 /D NDEBUG ^
    /LD ^

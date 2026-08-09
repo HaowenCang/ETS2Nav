@@ -230,7 +230,7 @@ static DWORD WINAPI reader_loop(LPVOID)
     {
         LONG now = GetTickCount();
 
-        if (located_base != 0 && now - last_verify_tick > 10000)
+        if (located_base != 0 && now - last_verify_tick > 1000)
         {
             last_verify_tick = now;
             if (!verify_base(located_base)) located_base = 0;
@@ -272,9 +272,18 @@ static DWORD WINAPI reader_loop(LPVOID)
             const uint8_t *src = (const uint8_t *)located_base;
             int n = located_count;
             if (n > NAV_SEM_MAX_LIGHTS) n = NAV_SEM_MAX_LIGHTS;
-            memcpy(sem_lights, src, (size_t)n * LIGHT_SIZE);
-            *sem_count = (uint32_t)n;
-            (*sem_sequence)++;
+            // SEH 保护：数组可能被游戏重分配（读档/区域切换），访问违例时置零重扫
+            __try
+            {
+                memcpy(sem_lights, src, (size_t)n * LIGHT_SIZE);
+                *sem_count = (uint32_t)n;
+                (*sem_sequence)++;
+            }
+            __except (EXCEPTION_EXECUTE_HANDLER)
+            {
+                located_base = 0;   // 数组失效 → 重扫
+                log_line(SCS_LOG_TYPE_warning, "ETS2Nav semaphore: array access fault, rescanning");
+            }
         }
         Sleep(100);
     }
