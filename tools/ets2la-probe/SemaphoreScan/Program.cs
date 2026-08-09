@@ -1,11 +1,19 @@
 // semaphore-scan v5：状态机行为验证版
 // 决定性特征：真实信号灯在采样窗口内（10s）必然发生 state 转换（RED<->GREEN 等）
 //   + time_remaining 递减并在转换时重置。随机内存/零填充不具备此行为。
-// 流程：静态候选 → 排除零填充 → 10 秒跟踪（100ms/帧）→ 状态机验证
 // 用法：游戏在信号灯路口附近（灯在工作）时执行
 
 using System.Diagnostics;
 using System.Runtime.InteropServices;
+
+sealed class Track
+{
+    public long Addr;
+    public int[] States = new int[100];
+    public float[] Times = new float[100];
+    public int Valid;
+    public Track(long a) { Addr = a; }
+}
 
 var proc = Process.GetProcessesByName("eurotrucks2").FirstOrDefault();
 if (proc is null) { Console.WriteLine("未找到 eurotrucks2 进程"); Console.ReadKey(); return; }
@@ -33,7 +41,6 @@ while (Native.VirtualQueryEx(proc.Handle, addr, out var mbi, (uint)Marshal.SizeO
     {
         int state = BitConverter.ToInt32(buf, i + 44);
         if (Array.IndexOf(validStates, state) < 0) continue;
-        // 排除零填充：position/time/state 全零且下一槽全零
         bool zeroSlot = BitConverter.ToInt32(buf, i) == 0 && BitConverter.ToInt32(buf, i + 4) == 0
             && BitConverter.ToInt32(buf, i + 8) == 0 && BitConverter.ToSingle(buf, i + 40) == 0
             && state == 0;
@@ -41,7 +48,6 @@ while (Native.VirtualQueryEx(proc.Handle, addr, out var mbi, (uint)Marshal.SizeO
             && BitConverter.ToInt32(buf, i + 56) == 0 && BitConverter.ToSingle(buf, i + 88) == 0
             && BitConverter.ToInt32(buf, i + 92) == 0;
         if (zeroSlot && nextZero) continue;
-        // time 范围
         float time = BitConverter.ToSingle(buf, i + 40);
         if (time is < -1 or > 300) continue;
         rawCandidates.Add((long)mbi.BaseAddress + i);
@@ -51,7 +57,7 @@ Console.WriteLine($"静态候选（非零填充）：{rawCandidates.Count} 处�
 
 // 第二轮：10 秒跟踪（100ms/帧），验证状态机行为
 const int frames = 100;
-var active = rawCandidates.Select(a => (Addr: a, States: new int[frames], Times: new float[frames], Valid: 0)).ToList();
+var active = rawCandidates.Select(a => new Track(a)).ToList();
 var sw = Stopwatch.StartNew();
 for (int f = 0; f < frames; f++)
 {
@@ -78,7 +84,6 @@ foreach (var c in active)
     for (int f = 1; f < frames; f++)
         if (c.States[f] != 0 && c.States[f - 1] != 0 && c.States[f] != c.States[f - 1])
             transitions++;
-    // time 最大递减（允许 0 值跳过）
     float maxDrop = 0;
     for (int f = 1; f < frames; f++)
     {
