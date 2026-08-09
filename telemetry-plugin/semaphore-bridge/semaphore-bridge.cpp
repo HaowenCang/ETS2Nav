@@ -228,7 +228,9 @@ static DWORD WINAPI reader_loop(LPVOID)
 
     while (reader_running)
     {
-        LONG now = GetTickCount();
+        __try
+        {
+            LONG now = GetTickCount();
 
         if (located_base != 0 && now - last_verify_tick > 1000)
         {
@@ -286,6 +288,14 @@ static DWORD WINAPI reader_loop(LPVOID)
             }
         }
         Sleep(100);
+        }
+        __except (EXCEPTION_EXECUTE_HANDLER)
+        {
+            // 兜底：任何访问违例（数组重分配/页面回收）→ 置零重扫，绝不崩溃
+            located_base = 0;
+            log_line(SCS_LOG_TYPE_warning, "ETS2Nav semaphore: access fault caught, rescanning");
+            Sleep(200);
+        }
     }
     return 0;
 }
