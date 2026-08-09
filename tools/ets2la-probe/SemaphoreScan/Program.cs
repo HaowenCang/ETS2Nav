@@ -6,14 +6,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
-sealed class Track
-{
-    public long Addr;
-    public int[] States = new int[100];
-    public float[] Times = new float[100];
-    public int Valid;
-    public Track(long a) { Addr = a; }
-}
 
 var proc = Process.GetProcessesByName("eurotrucks2").FirstOrDefault();
 if (proc is null) { Console.WriteLine("未找到 eurotrucks2 进程"); Console.ReadKey(); return; }
@@ -115,4 +107,12 @@ static class Native
     public static extern int VirtualQueryEx(IntPtr hProcess, IntPtr lpAddress, out MEMORY_BASIC_INFORMATION lpBuffer, uint dwLength);
     [DllImport("kernel32.dll")]
     public static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, int dwSize, out IntPtr lpNumberOfBytesRead);
+}
+sealed class Track
+{
+    public long Addr;
+    public int[] States = new int[100];
+    public float[] Times = new float[100];
+    public int Valid;
+    public Track(long a) { Addr = a; }
 }
