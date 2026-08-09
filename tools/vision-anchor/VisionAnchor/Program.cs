@@ -49,7 +49,7 @@ var keyThread = new Thread(() =>
             switch (key.Key)
             {
                 case ConsoleKey.F1:
-                    var p = Cursor.Position;
+                    var p = System.Windows.Forms.Cursor.Position;
                     anchor = (p.X, p.Y);
                     Console.WriteLine($"[校准] 采样中心 = ({p.X}, {p.Y})");
                     break;
