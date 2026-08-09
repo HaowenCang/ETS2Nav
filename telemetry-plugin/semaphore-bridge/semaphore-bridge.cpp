@@ -1,10 +1,8 @@
 /**
- * @brief ETS2Nav Semaphore Bridge v2（自研游戏内信号灯读取插件）
+ * @brief ETS2Nav Semaphore Bridge v3（自研游戏内信号灯读取插件）
  *
- * v2 修复：启动卡死问题
- * 1) 延迟扫描：等待 SCS frame_start 事件（游戏世界就绪）后才开始扫描
- * 2) 低优先级：reader 线程 THREAD_PRIORITY_BELOW_NORMAL，不与游戏主线程抢 CPU
- * 3) 重扫节流：timer_restart 或 60 秒间隔；重扫前先快速验证旧基址有效性
+ * v2 修复：启动卡死（延迟扫描 + 低优先级 + 重扫节流）
+ * v3 修复：误定位——加强槽验证（time≤60、pos 非零、cx/cy≠-1、连续≥2槽）+ 候选列表
  *
  * 数据布局（内存反查确认，48 字节/灯）：
  *   +0x00 pos(x,y,z) +0x0C cx/cy(short) +0x10 quat(4f) +0x20 type(int)
@@ -28,7 +26,7 @@
 #define UNUSED(x)
 
 #define NAV_SEM_MAGIC 0x324D4553u
-#define NAV_SEM_VERSION 2u
+#define NAV_SEM_VERSION 3u
 #define NAV_SEM_MAX_LIGHTS 64u
 #define LIGHT_SIZE 48u
 
@@ -90,12 +88,13 @@ static bool slot_matches(const uint8_t *p)
     int type = *(const int32_t *)(p + 0x20);
     if (type != 1 && type != 2) return false;
     float time = *(const float *)(p + 0x24);
-    if (time < 0.0f || time > 120.0f) return false;
+    if (time < 0.0f || time > 60.0f) return false;
     int state = *(const int32_t *)(p + 0x28);
     if (!is_valid_state(state)) return false;
     float px = *(const float *)(p + 0x00);
     float pz = *(const float *)(p + 0x08);
     if (px < -500000.0f || px > 500000.0f || pz < -500000.0f || pz > 500000.0f) return false;
+    if (px * px + pz * pz < 1.0f) return false;   // pos 非零
     float qx = *(const float *)(p + 0x10), qy = *(const float *)(p + 0x14);
     float qz = *(const float *)(p + 0x18), qw = *(const float *)(p + 0x1C);
     float q2 = qx * qx + qy * qy + qz * qz + qw * qw;
@@ -103,6 +102,7 @@ static bool slot_matches(const uint8_t *p)
     int16_t cx = *(const int16_t *)(p + 0x0C);
     int16_t cy = *(const int16_t *)(p + 0x0E);
     if (cx < -10000 || cx > 10000 || cy < -10000 || cy > 10000) return false;
+    if (cx == -1 && cy == -1) return false;   // 未初始化槽
     return true;
 }
 
@@ -111,14 +111,15 @@ static inline bool slot_hint(const uint8_t *p)
     int type = *(const int32_t *)(p + 0x20);
     if (type != 1 && type != 2) return false;
     float time = *(const float *)(p + 0x24);
-    if (time < 0.0f || time > 120.0f) return false;
+    if (time < 0.0f || time > 60.0f) return false;
     int state = *(const int32_t *)(p + 0x28);
     return is_valid_state(state);
 }
 
-// 扫描地址区间 [start, end)，返回基址或 0
-static uintptr_t scan_region(uintptr_t start, uintptr_t end)
+// 扫描地址区间，收集候选（最多 outMax 个）
+static int scan_region(uintptr_t start, uintptr_t end, uintptr_t *out, int outMax)
 {
+    int found = 0;
     uintptr_t addr = start;
     long yieldAt = 0;
     while (addr < end)
@@ -143,27 +144,29 @@ static uintptr_t scan_region(uintptr_t start, uintptr_t end)
             if (!slot_hint(base + i)) continue;
             if (!slot_matches(base + i)) continue;
             if (slot_matches(base + i + 48) || slot_matches(base + i + 96) || slot_matches(base + i + 144))
-                return regionStart + i;
+            {
+                out[found++] = regionStart + i;
+                if (found >= outMax) return found;
+            }
         }
-        // 每约 512MB 让出一次调度（低优先级下避免长时间霸占）
         if ((long)regionStart - yieldAt > 512L * 1024 * 1024)
         {
             yieldAt = (long)regionStart;
             Sleep(1);
         }
     }
-    return 0;
+    return found;
 }
 
-// 顺序扫描全内存（低优先级）
-static uintptr_t scan_single(void)
+// 顺序扫描全内存（低优先级），返回候选列表
+static int scan_single(uintptr_t *out, int outMax)
 {
     SYSTEM_INFO si;
     GetSystemInfo(&si);
     uintptr_t lo = (uintptr_t)si.lpMinimumApplicationAddress;
     uintptr_t hi = (uintptr_t)si.lpMaximumApplicationAddress;
     if (lo < 0x100000000ull) lo = 0x100000000ull;
-    return scan_region(lo, hi);
+    return scan_region(lo, hi, out, outMax);
 }
 
 static uintptr_t located_base = 0;
@@ -174,6 +177,18 @@ static LONG last_full_scan_tick = 0;
 static bool verify_base(uintptr_t base)
 {
     return base != 0 && slot_matches((const uint8_t *)base);
+}
+
+// 统计候选的连续有效槽数
+static int count_consecutive(uintptr_t base)
+{
+    int cnt = 0;
+    for (int k = 0; k < NAV_SEM_MAX_LIGHTS; k++)
+    {
+        if (slot_matches((const uint8_t *)(base + (size_t)k * 48))) cnt++;
+        else break;
+    }
+    return cnt;
 }
 
 // ---- 读取线程 ----
@@ -196,7 +211,6 @@ static DWORD WINAPI reader_loop(LPVOID)
     {
         LONG now = GetTickCount();
 
-        // 定期验证旧基址有效性（10 秒）
         if (located_base != 0 && now - last_verify_tick > 10000)
         {
             last_verify_tick = now;
@@ -209,24 +223,28 @@ static DWORD WINAPI reader_loop(LPVOID)
 
         if (trigger && located_base == 0)
         {
-            uintptr_t found = scan_single();
-            if (found)
+            uintptr_t cands[16];
+            int nc = scan_single(cands, 16);
+            if (nc > 0)
             {
-                located_base = found;
-                located_count = 0;
-                for (int k = 0; k < NAV_SEM_MAX_LIGHTS; k++)
+                for (int ci = 0; ci < nc; ci++)
                 {
-                    if (slot_matches((const uint8_t *)(found + (size_t)k * 48))) located_count++;
-                    else break;
+                    int cnt = count_consecutive(cands[ci]);
+                    if (cnt >= 2)
+                    {
+                        located_base = cands[ci];
+                        located_count = cnt;
+                        last_full_scan_tick = now;
+                        log_line(SCS_LOG_TYPE_message, "ETS2Nav semaphore array located 0x%llx (%d lights)",
+                            (unsigned long long)cands[ci], cnt);
+                        break;
+                    }
                 }
-                last_full_scan_tick = now;
-                log_line(SCS_LOG_TYPE_message, "ETS2Nav semaphore array located 0x%llx (%d lights)",
-                    (unsigned long long)found, located_count);
             }
         }
         else if (located_base != 0)
         {
-            last_full_scan_tick = now;   // 节流
+            last_full_scan_tick = now;
         }
 
         if (located_base != 0)
@@ -247,7 +265,6 @@ static DWORD WINAPI reader_loop(LPVOID)
 SCSAPI_VOID on_frame_start(const scs_event_t UNUSED(event), const void *const event_info, const scs_context_t UNUSED(context))
 {
     const struct scs_telemetry_frame_start_t *info = static_cast<const scs_telemetry_frame_start_t *>(event_info);
-    // 任何 frame_start 到达即表示游戏仿真运行中（SDK 1.14 无 truck/job 标志，仅 timer_restart）
     InterlockedExchange(&game_ready, 1);
     if (info->flags & SCS_TELEMETRY_FRAME_START_FLAG_timer_restart)
         InterlockedExchange(&need_rescan, 1);
@@ -280,7 +297,7 @@ SCSAPI_RESULT scs_telemetry_init(const scs_u32_t version, const scs_telemetry_in
     }
     SetThreadPriority(reader_thread, THREAD_PRIORITY_BELOW_NORMAL);
 
-    log_line(SCS_LOG_TYPE_message, "ETS2Nav semaphore bridge v2 initialized (lazy scan)");
+    log_line(SCS_LOG_TYPE_message, "ETS2Nav semaphore bridge v3 initialized (lazy scan)");
     return SCS_RESULT_ok;
 }
 
