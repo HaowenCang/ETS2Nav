@@ -1,5 +1,5 @@
 @echo off
-rem run-bench.bat: P0-D performance benchmark recorder (PresentMon, auto-elevate)
+rem run-bench.bat: P0-D performance benchmark recorder (PresentMon 2.5.1 console, auto-elevate)
 rem Usage: right-click "Run as administrator" run-bench.bat <tag> <seconds>
 rem   e.g. run-bench.bat baseline 120   (control: no ETS2Nav plugins)
 rem        run-bench.bat withnav 120    (experiment: ETS2Nav plugins loaded)
@@ -18,7 +18,7 @@ if "%TAG%"=="" set TAG=bench
 set DURATION=%2
 if "%DURATION%"=="" set DURATION=120
 
-set PM="C:\Program Files\Intel\PresentMon\PresentMonApplication\PresentMon.exe"
+set PM="C:\Program Files\Intel\PresentMon\PresentMonConsoleApplication\PresentMon-2.5.1-x64.exe"
 set OUTDIR=%~dp0data
 if not exist "%OUTDIR%" mkdir "%OUTDIR%"
 set OUTFILE=%OUTDIR%\%TAG%.csv
@@ -31,7 +31,7 @@ echo  Drive the fixed route at steady speed for %DURATION% s
 echo  Started: %date% %time%
 echo ============================================
 
-%PM% --process-name eurotrucks2.exe --output_file "%OUTFILE%" --duration %DURATION%
+%PM% --process_name eurotrucks2.exe --output_file "%OUTFILE%" --timed %DURATION% --v1_metrics
 
 echo Done: %OUTFILE%
 echo Press any key to exit...
