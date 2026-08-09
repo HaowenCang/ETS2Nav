@@ -59,6 +59,47 @@ public sealed class StructuralValidator : IGraphValidator
                     });
             }
         }
+
+        // missing node（§36）：road/prefab 引用的节点必须存在于节点表
+        var nodeUids = new HashSet<ulong>();
+        foreach (var sec in ctx.Sectors)
+            foreach (var n in sec.Nodes)
+                nodeUids.Add(n.Uid);
+        foreach (var sec in ctx.Sectors)
+        {
+            foreach (var road in sec.Roads)
+            {
+                if (!nodeUids.Contains(road.Node0))
+                    sink.Add(new ValidationIssue
+                    {
+                        Code = "STRUCT_MISSING_NODE",
+                        Severity = ValidationSeverity.Error,
+                        Description = $"road 引用不存在的节点 {road.Node0:x16}",
+                        SourceUid = road.Uid,
+                        Sector = sec.SectorName,
+                    });
+                if (!nodeUids.Contains(road.Node1))
+                    sink.Add(new ValidationIssue
+                    {
+                        Code = "STRUCT_MISSING_NODE",
+                        Severity = ValidationSeverity.Error,
+                        Description = $"road 引用不存在的节点 {road.Node1:x16}",
+                        SourceUid = road.Uid,
+                        Sector = sec.SectorName,
+                    });
+            }
+            foreach (var pf in sec.Prefabs)
+                foreach (var nu in pf.NodeUids)
+                    if (!nodeUids.Contains(nu))
+                        sink.Add(new ValidationIssue
+                        {
+                            Code = "STRUCT_MISSING_NODE",
+                            Severity = ValidationSeverity.Error,
+                            Description = $"prefab 引用不存在的节点 {nu:x16}",
+                            SourceUid = pf.Uid,
+                            Sector = sec.SectorName,
+                        });
+        }
     }
 }
 
@@ -107,10 +148,13 @@ public sealed class DirectionValidator : IGraphValidator
 
     public void Validate(ValidationContext ctx, List<ValidationIssue> sink)
     {
+        // 全局节点表（跨 sector 构建，P1-01 评审 m2）
+        var nodeByUid = new Dictionary<ulong, MapNode>();
+        foreach (var sec in ctx.Sectors)
+            foreach (var n in sec.Nodes)
+                nodeByUid.TryAdd(n.Uid, n);
         foreach (var sec in ctx.Sectors)
         {
-            var nodeByUid = new Dictionary<ulong, MapNode>();
-            foreach (var n in sec.Nodes) nodeByUid[n.Uid] = n;
             foreach (var road in sec.Roads)
             {
                 if (nodeByUid.TryGetValue(road.Node0, out var n0) && n0.ForwardItemUid != 0 && n0.ForwardItemUid != road.Uid)
@@ -141,15 +185,27 @@ public sealed class ConnectivityValidator : IGraphValidator
 {
     public string Name => "connectivity";
 
-    public static (int Components, int LargestNodes, int Isolated, int DeadEnds) Compute(RoadGraph graph)
+    /// <summary>连通性统计（P1 §40）：分量/孤立/死端限定在边端点节点集（非道路 item 节点不计入，P1-01 评审 M2）。</summary>
+    public static (int Components, int LargestNodes, int Isolated, int DeadEnds, int NonRoadNodes) Compute(RoadGraph graph)
     {
         int n = graph.NodeCount;
+        // 边端点集（有边参与的节点）
+        var touched = new bool[n];
+        var degree = new int[n];
+        for (int e = 0; e < graph.EdgeCount; e++)
+        {
+            var (from, to) = graph.EdgeEnds(e);
+            touched[from] = true; touched[to] = true;
+            degree[from]++;
+            degree[to]++;
+        }
+        int nonRoad = n - touched.Count(t => t);
         var comp = new int[n];
         Array.Fill(comp, -1);
         int compCount = 0, largest = 0, isolated = 0, deadEnds = 0;
         for (int s = 0; s < n; s++)
         {
-            if (comp[s] >= 0) continue;
+            if (!touched[s] || comp[s] >= 0) continue;
             int size = 0;
             var stack = new Stack<int>();
             stack.Push(s);
@@ -169,27 +225,28 @@ public sealed class ConnectivityValidator : IGraphValidator
             compCount++;
         }
         for (int u = 0; u < n; u++)
-            if (graph.OutEdges(u).Count == 1) deadEnds++;
-        return (compCount, largest, isolated, deadEnds);
+            if (touched[u] && degree[u] == 1) deadEnds++;
+        return (compCount, largest, isolated, deadEnds, nonRoad);
     }
 
     public void Validate(ValidationContext ctx, List<ValidationIssue> sink)
     {
         if (ctx.Graph.NodeCount == 0) return;
-        var (compCount, largest, isolated, deadEnds) = Compute(ctx.Graph);
+        var (compCount, largest, isolated, deadEnds, nonRoad) = Compute(ctx.Graph);
+        int roadNodes = ctx.Graph.NodeCount - nonRoad;
         sink.Add(new ValidationIssue
         {
             Code = "CONN_STATS",
             Severity = ValidationSeverity.Info,
-            Description = $"连通分量 {compCount}，最大分量 {largest} 节点（{100.0 * largest / ctx.Graph.NodeCount:F1}%），" +
-                          $"孤立节点 {isolated}，死端 {deadEnds}",
+            Description = $"连通分量 {compCount}，最大分量 {largest} 节点（道路子图 {100.0 * largest / Math.Max(1, roadNodes):F1}%），" +
+                          $"孤立节点 {isolated}，死端 {deadEnds}，非道路 item 节点 {nonRoad}（不计入分量）",
         });
         if (isolated > 0)
             sink.Add(new ValidationIssue
             {
                 Code = "CONN_ISOLATED",
-                Severity = ValidationSeverity.Warning,
-                Description = $"{isolated} 个孤立节点",
+                Severity = ValidationSeverity.Info,
+                Description = $"{isolated} 个孤立道路节点（仅含自环或无通路）",
             });
     }
 }
@@ -228,12 +285,12 @@ public sealed class GeometryValidator : IGraphValidator
                     Description = $"零长边 {e}（({x0:F1},{z0:F1})==({x1:F1},{z1:F1})）",
                     SourceUid = ctx.Graph.Edge(e).ItemUid,
                 });
-            else if (len > 5000)
+            else if (len > 2000)
                 sink.Add(new ValidationIssue
                 {
                     Code = "GEOM_TELEPORT",
                     Severity = ValidationSeverity.Warning,
-                    Description = $"疑似 teleport 边 {e}：长度 {len:F0}m",
+                    Description = $"疑似 teleport 边 {e}：长度 {len:F0}m（合法道路边上限 ≈1000m）",
                     SourceUid = ctx.Graph.Edge(e).ItemUid,
                 });
         }

@@ -19,9 +19,12 @@ var secNames = (Arg(args, "--sectors") ?? "sec+0002-0002,sec+0002-0003,sec+0003-
 var sectors = new List<SectorFile>();
 foreach (var name in secNames)
 {
-    var path = Path.Combine(dir, name + ".base");
-    if (!File.Exists(path)) { Console.Error.WriteLine($"缺 sector: {name}"); continue; }
-    sectors.Add(SectorFile.Read(path));
+    foreach (var ext in new[] { ".base", ".aux" })
+    {
+        var path = Path.Combine(dir, name + ext);
+        if (!File.Exists(path)) continue;
+        sectors.Add(SectorFile.Read(path));
+    }
 }
 Console.WriteLine($"已加载 {sectors.Count} 个 sector（{sectors.Sum(s => s.Items.Count)} items / {sectors.Sum(s => s.Nodes.Count)} nodes）");
 var graph = RoadGraph.Build(sectors);

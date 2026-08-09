@@ -67,6 +67,7 @@ async function load() {
     minX = Math.min(minX, x); maxX = Math.max(maxX, x);
     minZ = Math.min(minZ, z); maxZ = Math.max(maxZ, z);
   }
+  viewBounds = { minX, maxX, minZ, maxZ };
   const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
   map.setCenter(toLatLng(cx, cz));
   map.setZoom(10);
@@ -109,6 +110,7 @@ function dijkstra(fromUid, toUid) {
       if (nd < (dist.get(e.to) ?? Infinity)) { dist.set(e.to, nd); prev.set(e.to, e); }
     }
   }
+  if (fromUid === toUid) return [];
   if (!prev.has(toUid)) return null;
   const path = [];
   let u = toUid;
@@ -117,9 +119,25 @@ function dijkstra(fromUid, toUid) {
   return path;
 }
 
+map.on('click', (e) => {
+  // 点选最近节点（P1 §45）：交替填入起终点
+  if (!nodes.size) return;
+  let best = null, bestD = Infinity;
+  const lng = e.lngLat.lng, lat = e.lngLat.lat;
+  for (const [uid, n] of nodes) {
+    const d = (n.x / 111320 - lng) ** 2 + (n.z / 111320 - lat) ** 2;
+    if (d < bestD) { bestD = d; best = uid; }
+  }
+  const f = document.getElementById('from'), t = document.getElementById('to');
+  if (!f.value) f.value = best;
+  else if (!t.value) t.value = best;
+  else { f.value = best; t.value = ''; }
+  route();
+});
+
 async function route() {
-  const from = document.getElementById('from').value.trim();
-  const to = document.getElementById('to').value.trim();
+  const from = document.getElementById('from').value.trim().toLowerCase();
+  const to = document.getElementById('to').value.trim().toLowerCase();
   const info = document.getElementById('route-info');
   if (!from || !to) { info.textContent = '请输入起终点 node uid'; return; }
   if (!nodes.has(from)) { info.textContent = '起点不在图中'; return; }
@@ -139,8 +157,11 @@ async function route() {
 }
 
 function nodeXY(uid) { const n = nodes.get(uid); return [n.x, n.z]; }
-function resetView() { map.fitBounds([[minX / 111320, minZ / 111320], [maxX / 111320, maxZ / 111320]], { padding: 30 }); }
-let minX, maxX, minZ, maxZ;
+function resetView() {
+  if (!viewBounds) return;
+  const { minX, maxX, minZ, maxZ } = viewBounds;
+  map.fitBounds([[minX / 111320, minZ / 111320], [maxX / 111320, maxZ / 111320]], { padding: 30 });
+}
 </script>
 </body>
 </html>

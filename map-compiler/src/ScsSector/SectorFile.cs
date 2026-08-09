@@ -31,8 +31,8 @@ public sealed class RoadItem : MapItem
     public required string RoadLook { get; init; }
     public required string RightLanes { get; init; }
     public required string LeftLanes { get; init; }
-    public required ulong Node0 { get; init; }
-    public required ulong Node1 { get; init; }
+    public ulong Node0 { get; set; }
+    public ulong Node1 { get; set; }
     public double Length { get; init; }
     public bool LeftHandTraffic { get; init; }
     public bool IsCityRoad { get; init; }
@@ -284,9 +284,21 @@ public sealed class SectorFile
             ItemType.Trajectory => ReadTrajectory(r, uid, flags, view),
             ItemType.Terrain => ReadTerrain(r, uid, flags, view),
             ItemType.Model => ReadModel(r, uid, flags, view),
+            ItemType.Mover => ReadMover(r, uid, flags, view),
             ItemType.Buildings => ReadBuildings(r, uid, flags, view),
             ItemType.Curve => ReadCurve(r, uid, flags, view),
             ItemType.BezierPatch => ReadBezierPatch(r, uid, flags, view),
+            ItemType.Hookup => ReadHookup(r, uid, flags, view),
+            ItemType.EnvironmentArea => ReadEnvironmentArea(r, uid, flags, view),
+            ItemType.Hinge => ReadHinge(r, uid, flags, view),
+            ItemType.Compound => ReadCompound(r, uid, flags, view),
+            ItemType.Walker => ReadWalker(r, uid, flags, view),
+            ItemType.Sound => ReadSound(r, uid, flags, view),
+            ItemType.CameraPath => ReadCameraPath(r, uid, flags, view),
+            ItemType.CameraPoint => ReadCameraPoint(r, uid, flags, view),
+            ItemType.Gate => ReadGate(r, uid, flags, view),
+            ItemType.AnimatedModel => ReadAnimatedModel(r, uid, flags, view),
+            ItemType.FarModel => ReadFarModel(r, uid, flags, view),
             _ => new MapItem { Type = type, Uid = uid, Flags = flags, ViewDistance = view },
         };
     }
@@ -690,6 +702,172 @@ private static MapItem ReadModel(BinaryReader r, ulong uid, uint flags, int view
     r.ReadUInt32();          // terrain color
     r.ReadSingle();          // terrain rotation
     return new MapItem { Type = ItemType.Model, Uid = uid, Flags = flags, ViewDistance = view };
+}
+
+private static MapItem ReadMover(BinaryReader r, ulong uid, uint flags, int view)
+{
+    uint tagCount = r.ReadUInt32();
+    for (int i = 0; i < tagCount; i++) r.ReadUInt64();     // tags (token)
+    r.ReadUInt64();          // model token
+    r.ReadUInt64();          // look token
+    r.ReadUInt64();          // variant token
+    r.ReadSingle();          // speed
+    r.ReadSingle();          // end delay
+    r.ReadSingle();          // width
+    uint count = r.ReadUInt32();
+    uint lenCount = r.ReadUInt32();
+    for (int i = 0; i < lenCount; i++) r.ReadSingle();      // lengths
+    uint nodeCount = r.ReadUInt32();
+    for (int i = 0; i < nodeCount; i++) r.ReadUInt64();     // node refs
+    return new MapItem { Type = ItemType.Mover, Uid = uid, Flags = flags, ViewDistance = view };
+}
+
+private static MapItem ReadHookup(BinaryReader r, ulong uid, uint flags, int view)
+{
+    ReadPascalString(r);
+    r.ReadUInt64();          // node
+    return new MapItem { Type = ItemType.Hookup, Uid = uid, Flags = flags, ViewDistance = view };
+}
+
+private static MapItem ReadEnvironmentArea(BinaryReader r, ulong uid, uint flags, int view)
+{
+    r.ReadSingle();          // width
+    r.ReadSingle();          // height
+    r.ReadInt32();           // fog behavior
+    r.ReadUInt64();          // climate token
+    r.ReadUInt64();          // reflection cube token
+    r.ReadUInt64();          // node
+    return new MapItem { Type = ItemType.EnvironmentArea, Uid = uid, Flags = flags, ViewDistance = view };
+}
+
+private static MapItem ReadHinge(BinaryReader r, ulong uid, uint flags, int view)
+{
+    r.ReadUInt64();          // model token
+    r.ReadUInt64();          // look token
+    r.ReadUInt64();          // node
+    r.ReadSingle();          // min rotation
+    r.ReadSingle();          // max rotation
+    return new MapItem { Type = ItemType.Hinge, Uid = uid, Flags = flags, ViewDistance = view };
+}
+
+private static MapItem ReadCompound(BinaryReader r, ulong uid, uint flags, int view)
+{
+    r.ReadUInt64();          // node
+    uint itemCount = r.ReadUInt32();
+    for (int i = 0; i < itemCount; i++)
+    {
+        var type = (ItemType)r.ReadInt32();
+        ReadItem(r, type);   // 递归（内部 item 含完整 Kdop 头）
+    }
+    uint nodeCount = r.ReadUInt32();
+    for (int i = 0; i < nodeCount; i++)
+    {
+        // 完整 Node 结构：uid + fixed3 + quat + backward + forward + flags
+        r.ReadUInt64();
+        for (int k = 0; k < 3; k++) r.ReadInt32();
+        for (int k = 0; k < 4; k++) r.ReadSingle();
+        r.ReadUInt64();
+        r.ReadUInt64();
+        r.ReadUInt32();
+    }
+    return new MapItem { Type = ItemType.Compound, Uid = uid, Flags = flags, ViewDistance = view };
+}
+
+private static MapItem ReadWalker(BinaryReader r, ulong uid, uint flags, int view)
+{
+    r.ReadUInt64();          // name prefix token
+    r.ReadSingle();          // speed
+    r.ReadSingle();          // end delay
+    r.ReadUInt32();          // count
+    r.ReadSingle();          // width
+    r.ReadSingle();          // angle
+    uint lenCount = r.ReadUInt32();
+    for (int i = 0; i < lenCount; i++) r.ReadSingle();
+    uint nodeCount = r.ReadUInt32();
+    for (int i = 0; i < nodeCount; i++) r.ReadUInt64();
+    return new MapItem { Type = ItemType.Walker, Uid = uid, Flags = flags, ViewDistance = view };
+}
+
+private static MapItem ReadSound(BinaryReader r, ulong uid, uint flags, int view)
+{
+    r.ReadUInt64();          // name token
+    r.ReadUInt64();          // reverb token
+    r.ReadSingle();          // width
+    r.ReadSingle();          // height
+    r.ReadUInt64();          // node
+    return new MapItem { Type = ItemType.Sound, Uid = uid, Flags = flags, ViewDistance = view };
+}
+
+private static MapItem ReadCameraPath(BinaryReader r, ulong uid, uint flags, int view)
+{
+    uint tagCount = r.ReadUInt32();
+    for (int i = 0; i < tagCount; i++) r.ReadUInt64();
+    uint nodeCount = r.ReadUInt32();
+    for (int i = 0; i < nodeCount; i++) r.ReadUInt64();
+    uint trackCount = r.ReadUInt32();
+    for (int i = 0; i < trackCount; i++) r.ReadUInt64();
+    uint controlCount = r.ReadUInt32();
+    for (int i = 0; i < controlCount; i++) r.ReadUInt64();
+    uint keyframeCount = r.ReadUInt32();
+    for (int i = 0; i < keyframeCount; i++)
+    {
+        r.ReadInt32();       // speed change easing
+        r.ReadInt32();       // rotation change easing
+        r.ReadSingle();      // speed coefficient
+        r.ReadSingle();      // fov
+        for (int k = 0; k < 6; k++) r.ReadSingle();   // control points 2×3
+    }
+    r.ReadSingle();          // camera speed
+    return new MapItem { Type = ItemType.CameraPath, Uid = uid, Flags = flags, ViewDistance = view };
+}
+
+private static MapItem ReadCameraPoint(BinaryReader r, ulong uid, uint flags, int view)
+{
+    uint tagCount = r.ReadUInt32();
+    for (int i = 0; i < tagCount; i++) r.ReadUInt64();
+    r.ReadUInt64();          // node
+    return new MapItem { Type = ItemType.CameraPoint, Uid = uid, Flags = flags, ViewDistance = view };
+}
+
+private static MapItem ReadGate(BinaryReader r, ulong uid, uint flags, int view)
+{
+    r.ReadUInt64();          // model token
+    uint nodeCount = r.ReadUInt32();
+    r.ReadUInt64();          // gate node
+    for (int i = 1; i < nodeCount; i++) r.ReadUInt64();
+    for (int i = 0; i < 2; i++)    // MaxCapacity = 2
+    {
+        ReadPascalString(r); // trigger
+        r.ReadInt32();       // node index
+    }
+    return new MapItem { Type = ItemType.Gate, Uid = uid, Flags = flags, ViewDistance = view };
+}
+
+private static MapItem ReadFarModel(BinaryReader r, ulong uid, uint flags, int view)
+{
+    r.ReadSingle();          // width
+    r.ReadSingle();          // height
+    uint modelCount = r.ReadUInt32();
+    for (int i = 0; i < modelCount; i++)
+    {
+        r.ReadUInt64();      // model token
+        for (int k = 0; k < 3; k++) r.ReadSingle();   // scale
+    }
+    uint childCount = r.ReadUInt32();
+    for (int i = 0; i < childCount; i++) r.ReadUInt64();
+    uint nodeCount = r.ReadUInt32();
+    r.ReadUInt64();          // object node
+    for (int i = 1; i < nodeCount; i++) r.ReadUInt64();
+    return new MapItem { Type = ItemType.FarModel, Uid = uid, Flags = flags, ViewDistance = view };
+}
+
+private static MapItem ReadAnimatedModel(BinaryReader r, ulong uid, uint flags, int view)
+{
+    uint tagCount = r.ReadUInt32();
+    for (int i = 0; i < tagCount; i++) r.ReadUInt64();
+    r.ReadUInt64();          // model token
+    r.ReadUInt64();          // node
+    return new MapItem { Type = ItemType.AnimatedModel, Uid = uid, Flags = flags, ViewDistance = view };
 }
 
 private static MapItem ReadBuildings(BinaryReader r, ulong uid, uint flags, int view)

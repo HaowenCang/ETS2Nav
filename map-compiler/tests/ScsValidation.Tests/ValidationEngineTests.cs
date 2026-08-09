@@ -150,7 +150,26 @@ public class ValidationEngineTests
     [Fact]
     public void JsonExport_MatchesSchema()
     {
-        var sec = Sector(Item(0xAA), Item(0xAA));
+        var sec = new SectorFile
+        {
+            GameId = "eut2",
+            Items = new List<MapItem>
+            {
+                Item(0xAA), Item(0xAA),
+            },
+            Nodes = new List<MapNode>
+            {
+                new() { Uid = 0x01, X = 100, Y = 0, Z = -200, BackwardItemUid = 0, ForwardItemUid = 0xAA },
+                new() { Uid = 0x02, X = 110, Y = 0, Z = -200, BackwardItemUid = 0xAA, ForwardItemUid = 0 },
+            },
+            VisibilityAreaUids = new List<ulong>(),
+            SectorName = "sec+0000+0000",
+        };
+        // 让 item 引用合法节点（避免 missing node 干扰结构断言）
+        ((RoadItem)sec.Items[0]).Node0 = 0x01;
+        ((RoadItem)sec.Items[0]).Node1 = 0x02;
+        ((RoadItem)sec.Items[1]).Node0 = 0x01;
+        ((RoadItem)sec.Items[1]).Node1 = 0x02;
         var graph = ScsGraph.RoadGraph.Build(new[] { sec });
         var report = Engine().Run(new ValidationContext { Sectors = new[] { sec }, Graph = graph });
         var json = report.ToJson();
