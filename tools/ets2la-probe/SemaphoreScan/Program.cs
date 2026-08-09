@@ -12,24 +12,6 @@
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
-static class Native
-{
-    [StructLayout(LayoutKind.Sequential)]
-    public struct MEMORY_BASIC_INFORMATION
-    {
-        public IntPtr BaseAddress;
-        public IntPtr AllocationBase;
-        public uint AllocationProtect;
-        public IntPtr RegionSize;
-        public uint State;
-        public uint Protect;
-        public uint Type;
-    }
-    [DllImport("kernel32.dll")]
-    public static extern int VirtualQueryEx(IntPtr hProcess, IntPtr lpAddress, out MEMORY_BASIC_INFORMATION lpBuffer, uint dwLength);
-    [DllImport("kernel32.dll")]
-    public static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, int dwSize, out IntPtr lpNumberOfBytesRead);
-}
 
 var proc = Process.GetProcessesByName("eurotrucks2").FirstOrDefault();
 if (proc is null) { Console.WriteLine("未找到 eurotrucks2 进程"); return; }
@@ -77,3 +59,21 @@ while (Native.VirtualQueryEx(proc.Handle, addr, out var mbi, (uint)Marshal.SizeO
 Console.WriteLine($"扫描 {scanned / 1024 / 1024} MB，候选 {candidates.Count} 处");
 foreach (var c in candidates.Take(30))
     Console.WriteLine($"  0x{c.Addr:x12}");
+static class Native
+{
+    [StructLayout(LayoutKind.Sequential)]
+    public struct MEMORY_BASIC_INFORMATION
+    {
+        public IntPtr BaseAddress;
+        public IntPtr AllocationBase;
+        public uint AllocationProtect;
+        public IntPtr RegionSize;
+        public uint State;
+        public uint Protect;
+        public uint Type;
+    }
+    [DllImport("kernel32.dll")]
+    public static extern int VirtualQueryEx(IntPtr hProcess, IntPtr lpAddress, out MEMORY_BASIC_INFORMATION lpBuffer, uint dwLength);
+    [DllImport("kernel32.dll")]
+    public static extern bool ReadProcessMemory(IntPtr hProcess, IntPtr lpBaseAddress, byte[] lpBuffer, int dwSize, out IntPtr lpNumberOfBytesRead);
+}
