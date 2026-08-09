@@ -1,16 +1,40 @@
-// semaphore-scan v6：强约束静态过滤（四元数归一化等）→ 动态跟踪验证
+// semaphore-scan v7：紧凑模式扫描 + ETS2LA 联合验证（决定性）
+// 模式：{state:int ∈ {1,2,4,8,32}} 与相邻 {float ∈ [0,60]}（两种顺序）
+// 验证：候选的 state/time 与 ETS2LA 共享内存当前值对照（联合匹配 → 真实结构）
 using System.Diagnostics;
+using System.IO.MemoryMappedFiles;
 using System.Runtime.InteropServices;
 
-var proc = Process.GetProcessesByName("eurotrucks2").FirstOrDefault();
-if (proc is null) { Console.WriteLine("未找到 eurotrucks2 进程"); Console.ReadKey(); return; }
-Console.WriteLine($"PID={proc.Id}");
+// 1) ETS2LA 当前信号灯（ground truth）
+var ets2la = new List<(int State, float Time, float X, float Z)>();
+try
+{
+    using var mmf = MemoryMappedFile.OpenExisting(@"Local\ETS2LASemaphore");
+    using var view = mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
+    var buf = new byte[40 * 48];
+    view.ReadArray(0, buf, 0, buf.Length);
+    for (int i = 0; i < 40; i++)
+    {
+        int o = i * 48;
+        int type = BitConverter.ToInt32(buf, o + 32);
+        int state = BitConverter.ToInt32(buf, o + 40);
+        float time = BitConverter.ToSingle(buf, o + 36);
+        if (type == 1 && time > 0 && time < 60)
+            ets2la.Add((state, time, BitConverter.ToSingle(buf, o), BitConverter.ToSingle(buf, o + 8)));
+    }
+    Console.WriteLine($"ETS2LA 活动灯组 {ets2la.Count} 组");
+    foreach (var e in ets2la.Take(5)) Console.WriteLine($"  state={e.State} time={e.Time:F1}s pos=({e.X:F0},{e.Z:F0})");
+}
+catch (FileNotFoundException) { Console.WriteLine("ETS2LA 共享内存不可用——联合验证失效"); }
 
-int[] validStates = [1, 2, 4, 8, 32];   // 去掉 0（OFF 罕见）
-var rawCandidates = new List<long>();
+// 2) 游戏内存紧凑模式扫描
+var proc = Process.GetProcessesByName("eurotrucks2").FirstOrDefault();
+if (proc is null) { Console.WriteLine("未找到 eurotrucks2"); return; }
+
+int[] validStates = [1, 2, 4, 8, 32];
+var candidates = new List<(long Addr, int State, float Time)>();
 long scanned = 0;
 var addr = IntPtr.Zero;
-
 while (Native.VirtualQueryEx(proc.Handle, addr, out var mbi, (uint)Marshal.SizeOf<Native.MEMORY_BASIC_INFORMATION>()) != 0)
 {
     addr = (IntPtr)((long)mbi.BaseAddress + (long)mbi.RegionSize);
@@ -23,95 +47,44 @@ while (Native.VirtualQueryEx(proc.Handle, addr, out var mbi, (uint)Marshal.SizeO
     if (!Native.ReadProcessMemory(proc.Handle, mbi.BaseAddress, buf, buf.Length, out _)) continue;
     scanned += buf.Length;
 
-    for (int i = 0; i + 48 <= buf.Length; i += 4)
+    for (int i = 0; i + 8 <= buf.Length; i += 4)
     {
-        int state = BitConverter.ToInt32(buf, i + 44);
-        if (Array.IndexOf(validStates, state) < 0) continue;
-        int type = BitConverter.ToInt32(buf, i + 36);
-        if (type is not (1 or 2)) continue;
-        float time = BitConverter.ToSingle(buf, i + 40);
-        if (time is < 0 or > 300) continue;
-        // 四元数归一化：|q|^2 = x^2+y^2+z^2+w^2 ≈ 1（最强约束）
-        float qx = BitConverter.ToSingle(buf, i + 16), qy = BitConverter.ToSingle(buf, i + 20);
-        float qz = BitConverter.ToSingle(buf, i + 24), qw = BitConverter.ToSingle(buf, i + 28);
-        float q2 = qx * qx + qy * qy + qz * qz + qw * qw;
-        if (q2 < 0.8f || q2 > 1.2f) continue;
-        // position.Y 合理
-        float py = BitConverter.ToSingle(buf, i + 4);
-        if (float.IsNaN(py) || float.IsInfinity(py) || Math.Abs(py) > 100000) continue;
-        // 排除零填充
-        bool zeroSlot = BitConverter.ToInt32(buf, i) == 0 && BitConverter.ToInt32(buf, i + 8) == 0 && time == 0 && state == 0;
-        if (zeroSlot) continue;
-        rawCandidates.Add((long)mbi.BaseAddress + i);
+        // 模式1：int(state) + float(time)
+        int s = BitConverter.ToInt32(buf, i);
+        float t = BitConverter.ToSingle(buf, i + 4);
+        if (Array.IndexOf(validStates, s) >= 0 && t >= 0 && t <= 60)
+            candidates.Add(((long)mbi.BaseAddress + i, s, t));
+        // 模式2：float(time) + int(state)
+        float t2 = BitConverter.ToSingle(buf, i);
+        int s2 = BitConverter.ToInt32(buf, i + 4);
+        if (Array.IndexOf(validStates, s2) >= 0 && t2 >= 0 && t2 <= 60)
+            candidates.Add(((long)mbi.BaseAddress + i, s2, t2));
     }
 }
-Console.WriteLine($"强约束静态候选：{rawCandidates.Count} 处（扫描 {scanned / 1024 / 1024} MB）");
+Console.WriteLine($"紧凑模式候选：{candidates.Count} 处（扫描 {scanned / 1024 / 1024} MB）");
 
-// 动态跟踪（仅当候选可控时）
-const int frames = 100;
-if (rawCandidates.Count > 0 && rawCandidates.Count <= 20000)
+// 3) 联合验证：候选与 ETS2LA 值匹配
+int matched = 0;
+foreach (var c in candidates.Take(200000))
 {
-    var tracks = rawCandidates.Select(a => new Track(a)).ToList();
-    var sw = Stopwatch.StartNew();
-    for (int f = 0; f < frames; f++)
+    foreach (var e in ets2la)
     {
-        for (int k = 0; k < tracks.Count; k++)
+        if (c.State == e.State && Math.Abs(c.Time - e.Time) < 1.0)
         {
-            var one = new byte[48];
-            if (Native.ReadProcessMemory(proc.Handle, (IntPtr)tracks[k].Addr, one, 48, out _))
-            {
-                tracks[k].States[f] = BitConverter.ToInt32(one, 44);
-                tracks[k].Times[f] = BitConverter.ToSingle(one, 40);
-                tracks[k].Valid++;
-            }
+            matched++;
+            if (matched <= 20)
+                Console.WriteLine($"匹配! 0x{c.Addr:x12} state={c.State} time={c.Time:F1}s（ETS2LA: {e.Time:F1}s）");
+            break;
         }
-        if (f < frames - 1) Thread.Sleep(100);
     }
-    Console.WriteLine($"跟踪完成（{sw.Elapsed.TotalSeconds:F1}s）");
-
-    var confirmed = new List<(long Addr, int Transitions, float MaxDrop)>();
-    foreach (var c in tracks)
-    {
-        if (c.Valid < 30) continue;
-        int transitions = 0;
-        for (int f = 1; f < frames; f++)
-            if (c.States[f] != 0 && c.States[f - 1] != 0 && c.States[f] != c.States[f - 1])
-                transitions++;
-        float maxDrop = 0;
-        for (int f = 1; f < frames; f++)
-        {
-            float a = c.Times[f - 1], b = c.Times[f];
-            if (a > 0.5f && b >= 0 && a - b > maxDrop) maxDrop = a - b;
-        }
-        if (transitions >= 1 || maxDrop > 2.0f)
-            confirmed.Add((c.Addr, transitions, maxDrop));
-    }
-    Console.WriteLine($"状态机验证通过：{confirmed.Count} 处");
-    foreach (var (a, tr, md) in confirmed.Take(30))
-        Console.WriteLine($"  0x{a:x12}  转换×{tr}  最大递减 {md:F1}s");
-
-    var outPath = Path.Combine(AppContext.BaseDirectory, "semaphore-scan-results.txt");
-    File.WriteAllLines(outPath, confirmed.Select(c => $"0x{c.Addr:x12} t={c.Transitions} drop={c.MaxDrop:F1}"));
-    Console.WriteLine($"结果已保存：{outPath}（{confirmed.Count} 处）");
 }
-else
-{
-    Console.WriteLine(rawCandidates.Count == 0 ? "无静态候选（布局假设可能错误）" : $"候选 {rawCandidates.Count} 过多，跳过跟踪（需进一步收紧）");
-    var outPath = Path.Combine(AppContext.BaseDirectory, "semaphore-scan-results.txt");
-    File.WriteAllLines(outPath, rawCandidates.Take(200).Select(a => $"0x{a:x12}"));
-    Console.WriteLine($"前 200 个候选已保存：{outPath}");
-}
+Console.WriteLine($"联合匹配：{matched} 处");
+var outPath = Path.Combine(AppContext.BaseDirectory, "semaphore-scan-results.txt");
+File.WriteAllLines(outPath, candidates.Where(c => ets2la.Any(e => c.State == e.State && Math.Abs(c.Time - e.Time) < 1.0))
+    .Select(c => $"0x{c.Addr:x12} state={c.State} time={c.Time:F1}").Take(100));
+Console.WriteLine($"结果已保存：{outPath}");
 Console.WriteLine("按任意键退出...");
 Console.ReadKey();
-
-sealed class Track
-{
-    public long Addr;
-    public int[] States = new int[100];
-    public float[] Times = new float[100];
-    public int Valid;
-    public Track(long a) { Addr = a; }
-}
 
 static class Native
 {
