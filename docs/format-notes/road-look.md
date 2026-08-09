@@ -47,7 +47,7 @@ road_look : road.at1
     lanes_right[]: traffic_lane.road.local                      # 车道 → lane 定义
     compatible_edges_right[]: ger_sw_3m_a                       # 兼容边缘（视觉）
     road_offset / road_size_left / road_size_right
-    shoulder_space_left / shoulder_space_right
+    shoulder_size_left / shoulder_size_right          # 属性名为 shoulder_size_*（实测；早期笔记误记 space）
     center_line_left_style: 3                                    # 线型编号
     template_variants_right[]: .tmpl_var.road.template1          # 变体引用（tmpl_var 块）
 }

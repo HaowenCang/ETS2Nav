@@ -46,7 +46,13 @@ public static class DefinitionLoader
         foreach (var seg in segs)
         {
             if (seg == ".") continue;
-            if (seg == "..") { if (outSegs.Count > 0) outSegs.RemoveAt(outSegs.Count - 1); continue; }
+            if (seg == "..")
+            {
+                // 越界钳制改显式报错（P1-03 评审 m9）：虚拟根之上无目录可退
+                if (outSegs.Count == 0) throw new ArgumentException($"非法虚拟路径（越界）：{vp}");
+                outSegs.RemoveAt(outSegs.Count - 1);
+                continue;
+            }
             outSegs.Add(seg);
         }
         return "/" + string.Join('/', outSegs);
