@@ -7,10 +7,10 @@
 
 ## §1 当前状态
 
-**最后更新**：2026-08-10（P0 门评审通过，正式关门；进入 P1 准备）
+**最后更新**：2026-08-10（P1 启动：P1-00 Baseline Freeze 进行中）
 
-- [x] **P0 阶段**（✅ 门评审通过 2026-08-10，tag v0.1.0-p0；A6/A8 工具延 P1 前置）
-- [ ] P1 Map Compiler
+- [x] **P0 阶段**（✅ 门评审通过 2026-08-10，tag v0.1.0-p0；A6/A8 工具并入 P1-01）
+- [ ] **P1 Map Compiler**（🔄 进行中：P1-00 Baseline Freeze；执行基线 = P1-map-compiler-plan.md）
 - [ ] P2 Navigation Core
 - [ ] P3 Driving Assistant
 - [ ] P4 正式 UI
@@ -101,6 +101,28 @@
 | P6 | 性能优化（ALT/CH、增量编译等）与正式发布（v0.2 §62–63） | P5 | benchmark 目标达成 |
 
 ---
+
+## §4.1 P1 工作包状态（执行基线：P1-map-compiler-plan.md）
+
+| ID | 任务 | 完成条件 | 状态 |
+|---|---|---|---|
+| P1-00 | Baseline Freeze（README/PLAN/ADR/决策记录） | P1 baseline documented | 🔄 进行中（ADR-001~007 已建） |
+| P1-01 | Validation & Debug Tooling（GraphValidator 拆分 + severity + diagnostics + map-inspector + graph-debugger） | Berlin P0 graph 可完整可视化并显示 validation error | ⏳ |
+| P1-02 | Resource Resolver（IScsResourceProvider + HashFs/Directory/Overlay + DLC 检测 + fingerprint） | 所有上层模块仅经 virtual resource API 读取 | ⏳ |
+| P1-03 | Definition Layer（SII corpus + include + road look + country/city/company/semaphore/ferry/train + sign 基础） | Berlin 所需定义全部解析为 typed model | ⏳ |
+| P1-04 | Prefab Navigation Parser（descriptor/connector/curves/navigation lanes/movement/signal ID） | semantic corpus 全部典型 prefab 恢复合法 movement | ⏳ |
+| P1-05 | Semantic Graph（SemanticMap + RoadSegment + JunctionMovement + RoutingGraphBuilder + JunctionGraphBuilder；删除双向/全连接近似） | Berlin 正式 semantic graph 可生成 | ⏳ |
+| P1-06 | **Berlin Semantic Gate**（独立 Gate：≥500 deterministic random OD，0 fatal / 0 已知非法 movement / 0 逆行） | Gate 通过 | ⏳ |
+| P1-07 | Germany Scale Test（完整 Germany build + validation 无 blocker + random OD ≥500） | 通过 | ⏳ |
+| P1-08 | POI / Search（city/company/garage/repair/fuel/rest/ferry/train/toll/border + search.db） | POI 均有效 access 或明确非 routing POI | ⏳ |
+| P1-09 | Road Rules / Signs / Speed（speed model + sign parser + speed segments + telemetry validation + camera 调研） | 代表路线 map speed 与 telemetry 高一致率 | ⏳ |
+| P1-10 | Semaphore Binding（JunctionMovement ↔ SemaphoreProfile/ID） | P0 测试路口均确定 signal group | ⏳ |
+| P1-11 | Dataset Writer（manifest/map.db/routing.graph/junction.graph/search.db/diagnostics.json + Rust smoke reader） | Dataset 可脱离 C# 独立读取 | ⏳ |
+| P1-12 | Vector Tiles（map.pmtiles：road/city/POI/developer layers） | graph-debugger/MapLibre 可直接加载 | ⏳ |
+| P1-13 | Europe Build（base + 全部官方 DLC；0 fatal / 0 未解析 parser error） | 完成 | ⏳ |
+| P1-14 | Regression Suite（parser/semantic/route corpus + random OD + determinism + reader + scale） | 一条命令跑完整 P1 测试套件 | ⏳ |
+
+P1 Gates（G1~G13）见 P1-map-compiler-plan.md §126–§138；Exit Criteria §139。
 
 ## §5 版本管理策略（GitHub）
 
