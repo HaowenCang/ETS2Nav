@@ -68,3 +68,14 @@ sem-probe / 导航核心（任何进程可读）
 **结论**：48B 信号灯数组由 ETS2LA 插件（或其 SDK 组件）激活（机制不明，闭源）；游戏原生灯模拟存在（灯变化+车按灯通行），但原生数据结构非 48B 布局（MirrorScan 反查：坐标窗口/精确世界坐标/多灯聚类均被几何点云噪声淹没，原生结构疑为指针化对象图）。
 
 **产品影响**：自研 semaphore-bridge 需要 ETS2LA 组件共存才能获得数组。下一步：隔离测试（仅 ets2la_plugin.dll → 数组？）确定最小激活依赖；产品路线决策（共存 vs 逆向激活机制）。
+
+### 隔离测试定案（2026-08-10 深夜）
+| 配置 | 数组 |
+|---|---|
+| 仅 ets2la_plugin.dll + 自研两插件 | ✅ 存在（seq=1631、40 灯完美） |
+
+**激活者 = ets2la_plugin.dll 单文件**（370KB）——无需 ETS2LA 主程序/scs-telemetry.dll/scs_sdk_controller.dll/Trucky。
+
+**产品依赖最小化**：运行时 plugins 目录 = scs-nav-bridge.dll + semaphore-bridge.dll + ets2la_plugin.dll（共存激活）。
+
+**遗留风险**：ets2la_plugin.dll 闭源第三方组件——激活机制未明（疑为加载时 hook/内部调用）；依赖其存在性与行为稳定。
