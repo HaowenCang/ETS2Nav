@@ -69,7 +69,7 @@ if (candidates.Count > 0)
         float t1 = BitConverter.ToSingle(one, 40);
         float dt = t0 - t1;
         // 递减 0.2~2.5s（800ms 间隔）→ 真实倒计时；红绿灯转换瞬间 t1 可能重置（周期跳变），容差放宽
-        if (dt is > 0.05 and < 5.0)
+        if (dt is > 0.05f and < 5.0f)
             confirmed.Add((caddr, t0, t1));
     }
     Console.WriteLine($"动态验证通过：{confirmed.Count} 处");
