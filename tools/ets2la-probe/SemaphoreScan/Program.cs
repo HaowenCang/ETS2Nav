@@ -1,20 +1,21 @@
 // semaphore-scan：游戏内存信号灯结构扫描器（自研内存读取可行性侦察）
-//
 // 特征（依据 ETS2LA 公开布局，很可能是游戏内部结构镜像）：
-//   state 枚举 ∈ {0,1,2,4,8,32}（OFF/ORANGETORED/RED/ORANGETOGREEN/GREEN/SLEEP）
-//   time_remaining：float ∈ [0, 300]
-//   position：3×float 世界坐标（合理范围 ±500000）
-//   type ∈ {1=信号灯, 2=道闸}
-//   48 字节/灯，最多 40 灯连续排列
-//
+//   state 枚举 ∈ {0,1,2,4,8,32}、time_remaining float ∈ [0,300]、
+//   position 世界坐标（±500000）、type ∈ {1,2}、48 字节/灯连续排列
+// 结果同时输出到控制台与 semaphore-scan-results.txt（防窗口关闭丢失）
 // 用法：游戏在信号灯路口附近运行时执行
 
 using System.Diagnostics;
 using System.Runtime.InteropServices;
 
-
 var proc = Process.GetProcessesByName("eurotrucks2").FirstOrDefault();
-if (proc is null) { Console.WriteLine("未找到 eurotrucks2 进程"); return; }
+if (proc is null)
+{
+    Console.WriteLine("未找到 eurotrucks2 进程——请先启动游戏并进入驾驶界面");
+    Console.WriteLine("按任意键退出...");
+    Console.ReadKey();
+    return;
+}
 Console.WriteLine($"PID={proc.Id}");
 
 int[] validStates = [0, 1, 2, 4, 8, 32];
@@ -34,8 +35,6 @@ while (Native.VirtualQueryEx(proc.Handle, addr, out var mbi, (uint)Marshal.SizeO
 
     for (int i = 0; i + 96 <= buf.Length; i += 4)
     {
-        // 布局假设（与 ETS2LA 相同序）：pos(12)+cx/cy(4)+rot(16)+type(4)+time(4)+state(4)+id(4)
-        // type @+36、time @+40、state @+44
         int state = BitConverter.ToInt32(buf, i + 44);
         if (Array.IndexOf(validStates, state) < 0) continue;
         int type = BitConverter.ToInt32(buf, i + 36);
@@ -45,7 +44,6 @@ while (Native.VirtualQueryEx(proc.Handle, addr, out var mbi, (uint)Marshal.SizeO
         float px = BitConverter.ToSingle(buf, i);
         float pz = BitConverter.ToSingle(buf, i + 8);
         if (Math.Abs(px) > 500000 || Math.Abs(pz) > 500000) continue;
-        // 下一槽也符合或为 0
         int ns = BitConverter.ToInt32(buf, i + 48 + 44);
         bool nextOk = ns == 0 || Array.IndexOf(validStates, ns) >= 0;
         if (nextOk)
@@ -57,8 +55,15 @@ while (Native.VirtualQueryEx(proc.Handle, addr, out var mbi, (uint)Marshal.SizeO
 }
 
 Console.WriteLine($"扫描 {scanned / 1024 / 1024} MB，候选 {candidates.Count} 处");
-foreach (var c in candidates.Take(30))
+foreach (var c in candidates.Take(50))
     Console.WriteLine($"  0x{c.Addr:x12}");
+
+var outPath = Path.Combine(AppContext.BaseDirectory, "semaphore-scan-results.txt");
+File.WriteAllLines(outPath, candidates.Take(100).Select(c => $"0x{c.Addr:x12}"));
+Console.WriteLine($"结果已保存：{outPath}");
+Console.WriteLine("按任意键退出...");
+Console.ReadKey();
+
 static class Native
 {
     [StructLayout(LayoutKind.Sequential)]
