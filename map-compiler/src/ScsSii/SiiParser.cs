@@ -55,19 +55,35 @@ public sealed class SiiDocument
 
 public static class SiiParser
 {
-    /// <summary>解析 SII 文本。失败抛 SiiParseException 并带行号。</summary>
+    /// <summary>解析 SII 文本。失败抛 SiiParseException 并带行号。
+    /// 支持两种顶层：标准 SiiNunit 包装，以及裸 unit 序列（.sui include 片段，无 SiiNunit）。</summary>
     public static SiiDocument Parse(string text)
     {
         var doc = new SiiDocument();
         var lines = text.Replace("\r\n", "\n").Split('\n');
         int i = 0;
-        // 顶层必须为 SiiNunit { ... }；宽容处理：跳过 BOM 与空行
         var (topClass, topName) = NextUnitHeader(lines, ref i);
-        if (topClass != "SiiNunit")
-            throw new SiiParseException($"顶层应为 SiiNunit，实际为 {topClass}（行 {i + 1}）");
-        i++; // 消费顶层 header 行
-        SkipToOpenBrace(lines, ref i);
-        // 顶层块内：@include 或 unit 定义
+        if (topClass == "SiiNunit")
+        {
+            i++; // 消费顶层 header 行
+            SkipToOpenBrace(lines, ref i);
+            ParseTopLevel(lines, ref i, doc);
+        }
+        else if (topClass is null || topClass == "}")
+        {
+            // 空文件
+        }
+        else
+        {
+            // 裸 unit 文件：当前 header 即为第一个 unit（不含 SiiNunit）
+            ParseUnit(lines, ref i, topClass, topName, doc);
+            ParseTopLevel(lines, ref i, doc);
+        }
+        return doc;
+    }
+
+    private static void ParseTopLevel(string[] lines, ref int i, SiiDocument doc)
+    {
         while (i < lines.Length)
         {
             var (cls, name) = PeekHeader(lines, ref i);
@@ -83,21 +99,27 @@ public static class SiiParser
                 i++;
                 continue;
             }
-            // unit 定义：class : name { ... } 或 class : name（无块，如 license_plate_data 引用？）
             i++; // 消费 header 行
-            if (TrySkipToOpenBraceOrLineEnd(lines, ref i))
-            {
-                var unit = new SiiUnit { Class = cls, Name = name };
-                ParseAttributes(lines, ref i, unit);
-                doc.Units.Add(unit);
-            }
-            else
-            {
-                // 无块体（单行 unit，值引用形式）——忽略体，仅记录
-                doc.Units.Add(new SiiUnit { Class = cls, Name = name });
-            }
+            ParseUnit(lines, ref i, cls, name, doc);
         }
-        return doc;
+    }
+
+    private static void ParseUnit(string[] lines, ref int i, string cls, string name, SiiDocument doc)
+    {
+        // `xxx : name {`（header 与块同行）与 `xxx : name\n{` 两种格式
+        bool inlineBrace = name.EndsWith('{');
+        if (inlineBrace) name = name[..^1].TrimEnd();
+        if (inlineBrace || TrySkipToOpenBraceOrLineEnd(lines, ref i))
+        {
+            var unit = new SiiUnit { Class = cls, Name = name };
+            ParseAttributes(lines, ref i, unit);
+            doc.Units.Add(unit);
+        }
+        else
+        {
+            // 无块体（单行 unit，值引用形式）——忽略体，仅记录
+            doc.Units.Add(new SiiUnit { Class = cls, Name = name });
+        }
     }
 
     private static void ParseAttributes(string[] lines, ref int i, SiiUnit unit)
@@ -128,7 +150,7 @@ public static class SiiParser
     private static (string?, string) SplitKey(string line)
     {
         var t = line.TrimStart();
-        if (t.Length == 0 || t[0] == '#') return (null, "");
+        if (t.Length == 0 || t[0] == '#' || t.StartsWith("//")) return (null, "");
         int colon = t.IndexOf(':');
         if (colon < 0) throw new SiiParseException($"无法解析行：{line.Trim()}");
         var key = t[..colon].Trim();
@@ -187,7 +209,7 @@ public static class SiiParser
         while (i < lines.Length)
         {
             var t = lines[i].Trim();
-            if (t.Length == 0 || t.StartsWith('#')) { i++; continue; }
+            if (t.Length == 0 || t.StartsWith('#') || t.StartsWith("//")) { i++; continue; }
             if (t == "}") return ("}", null);
             if (t.StartsWith("@include"))
             {
@@ -225,7 +247,7 @@ public static class SiiParser
         {
             var t = lines[i].Trim();
             if (t == "{") { i++; return; }
-            if (t.Length > 0 && !t.StartsWith('#')) throw new SiiParseException($"期望 '{{'（行 {i + 1}）");
+            if (t.Length > 0 && !t.StartsWith('#') && !t.StartsWith("//")) throw new SiiParseException($"期望 '{{'（行 {i + 1}）");
             i++;
         }
         throw new SiiParseException("文件在 '{{' 前结束");
@@ -238,7 +260,7 @@ public static class SiiParser
         {
             var t = lines[i].Trim();
             if (t == "{") { i++; return true; }
-            if (t.Length > 0 && !t.StartsWith('#'))
+            if (t.Length > 0 && !t.StartsWith('#') && !t.StartsWith("//"))
             {
                 // header 之后的非 '{' 行：unit 无块体（如 `foo : .bar` 单行定义）——不消费该行？
                 // 该行就是 header 自身（无块），直接返回 false 且不推进（调用方已消费 header）。

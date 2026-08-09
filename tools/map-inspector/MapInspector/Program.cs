@@ -72,6 +72,31 @@ if (cmdArgs.Contains("--stats"))
         Console.WriteLine($"  {g.Key}: {g.Sum(s => s.Items.Count)} items / {g.Sum(s => s.Nodes.Count)} nodes");
 }
 
+if (cmdArgs.Contains("--defs"))
+{
+    // P1-03 完成条件验证：sector 引用的 road type / traffic rule / lane 定义链是否全部可解析
+    var res = new ScsDefinitions.DefinitionResolver(overlay);
+    var lookRefs = sectors.SelectMany(s => s.Items.OfType<RoadItem>()).Select(r => r.RoadLook).Distinct().OrderBy(x => x).ToList();
+    var ruleRefs = sectors.SelectMany(s => s.Items.OfType<RoadItem>())
+        .SelectMany(r => new[] { r.RightTrafficRule, r.LeftTrafficRule }).Where(x => x.Length > 0).Distinct().OrderBy(x => x).ToList();
+    var missingLooks = lookRefs.Where(x => res.GetRoadLook(x) is null).ToList();
+    // 链路：road look → lanes → traffic_lane 定义
+    var missingLanes = res.RoadLooks.Values
+        .SelectMany(rl => rl.LanesLeft.Concat(rl.LanesRight))
+        .Distinct().Where(l => res.GetTrafficLane(l) is null).ToList();
+    Console.WriteLine($"definition 统计：{res.LoadedFiles} 文件 / road_look {res.RoadLooks.Count} / traffic_lane {res.TrafficLanes.Count} / country {res.Countries.Count} / city {res.Cities.Count} / company {res.Companies.Count} / ferry {res.Ferries.Count}");
+    Console.WriteLine($"sector 引用：road type {lookRefs.Count} 种，traffic rule {ruleRefs.Count} 种");
+    Console.WriteLine($"缺失 road type：{missingLooks.Count}");
+    foreach (var m in missingLooks) Console.WriteLine($"  MISSING {m}");
+    Console.WriteLine($"缺失 traffic_lane 定义：{missingLanes.Count}");
+    foreach (var m in missingLanes) Console.WriteLine($"  MISSING {m}");
+    var sample = res.GetRoadLook(lookRefs.FirstOrDefault() ?? "");
+    if (sample != null)
+        Console.WriteLine($"样本 {lookRefs.First()}: {sample.DisplayName}，车道 L={sample.LanesLeft.Count} R={sample.LanesRight.Count}");
+    if (missingLooks.Count == 0)
+        Console.WriteLine("P1-03 完成条件满足：Berlin road 引用的 road type 全部解析为 typed model");
+}
+
 if (cmdArgs.Contains("--validate"))
 {
     var report = new ValidationEngine()

@@ -29,8 +29,10 @@ public class MapItem
 public sealed class RoadItem : MapItem
 {
     public required string RoadLook { get; init; }
-    public required string RightLanes { get; init; }
-    public required string LeftLanes { get; init; }
+    public required string RightTrafficRule { get; init; }
+    public required string LeftTrafficRule { get; init; }
+    public required string RightVariant { get; init; }
+    public required string LeftVariant { get; init; }
     public ulong Node0 { get; set; }
     public ulong Node1 { get; set; }
     public double Length { get; init; }
@@ -344,13 +346,15 @@ public sealed class SectorFile
 
     private static RoadItem ReadRoad(BinaryReader r, ulong uid, uint flags, int view)
     {
-        // kdop flags 4 字节已读；随后：road_flags 4 字节（rflag1+dlc+rflag3+rflag4）
+        // kdop flags 4 字节已读；随后（对照 TruckLib RoadSerializer 1.60 布局）：
+        // road_flags u32 → RoadType → RightTrafficRule → LeftTrafficRule → RightVariant → LeftVariant
+        // → 四边 token → terrain×2 → look×2 → material → railing×3 → height×2 → node×2 → length
         r.ReadUInt32();          // road_flags
         string roadLook = r.ReadToken();
-        string rightLanes = r.ReadToken();
-        string leftLanes = r.ReadToken();
-        string rightTmpl = r.ReadToken();
-        string leftTmpl = r.ReadToken();
+        string rightTrafficRule = r.ReadToken();
+        string leftTrafficRule = r.ReadToken();
+        string rightVariant = r.ReadToken();
+        string leftVariant = r.ReadToken();
         string rightEdgeRight = r.ReadToken();
         string rightEdgeLeft = r.ReadToken();
         string leftEdgeRight = r.ReadToken();
@@ -374,7 +378,8 @@ public sealed class SectorFile
         return new RoadItem
         {
             Type = ItemType.Road, Uid = uid, Flags = flags, ViewDistance = view,
-            RoadLook = roadLook, RightLanes = rightLanes, LeftLanes = leftLanes,
+            RoadLook = roadLook, RightTrafficRule = rightTrafficRule, LeftTrafficRule = leftTrafficRule,
+            RightVariant = rightVariant, LeftVariant = leftVariant,
             Node0 = node0, Node1 = node1, Length = length,
             LeftHandTraffic = (flags & (1u << 15)) != 0,
             IsCityRoad = (flags & (1u << 19)) != 0,
