@@ -179,16 +179,29 @@ static bool verify_base(uintptr_t base)
     return base != 0 && slot_matches((const uint8_t *)base);
 }
 
-// 统计候选的连续有效槽数
-static int count_consecutive(uintptr_t base)
+// 统计数组跨度：从基址到最后一个有效槽（容忍间隙，连续 4 空槽截断）
+// 同时返回有效槽总数（客户端可用 count 过滤空槽）
+static int array_span(uintptr_t base, int *validOut)
 {
-    int cnt = 0;
+    int span = 0;
+    int valid = 0;
+    int emptyRun = 0;
     for (int k = 0; k < NAV_SEM_MAX_LIGHTS; k++)
     {
-        if (slot_matches((const uint8_t *)(base + (size_t)k * 48))) cnt++;
-        else break;
+        if (slot_matches((const uint8_t *)(base + (size_t)k * 48)))
+        {
+            span = k + 1;
+            valid++;
+            emptyRun = 0;
+        }
+        else
+        {
+            emptyRun++;
+            if (emptyRun >= 4) break;   // 连续 4 空槽：数组结束
+        }
     }
-    return cnt;
+    if (validOut) *validOut = valid;
+    return span;
 }
 
 // ---- 读取线程 ----
@@ -229,14 +242,15 @@ static DWORD WINAPI reader_loop(LPVOID)
             {
                 for (int ci = 0; ci < nc; ci++)
                 {
-                    int cnt = count_consecutive(cands[ci]);
-                    if (cnt >= 2)
+                    int valid = 0;
+                    int span = array_span(cands[ci], &valid);
+                    if (valid >= 2)
                     {
                         located_base = cands[ci];
-                        located_count = cnt;
+                        located_count = span;   // 跨度（含间隙槽），客户端过滤
                         last_full_scan_tick = now;
-                        log_line(SCS_LOG_TYPE_message, "ETS2Nav semaphore array located 0x%llx (%d lights)",
-                            (unsigned long long)cands[ci], cnt);
+                        log_line(SCS_LOG_TYPE_message, "ETS2Nav semaphore array located 0x%llx (span %d, %d valid)",
+                            (unsigned long long)cands[ci], span, valid);
                         break;
                     }
                 }
