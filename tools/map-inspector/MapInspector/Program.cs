@@ -73,6 +73,40 @@ if (cmdArgs.Contains("--stats"))
         Console.WriteLine($"  {g.Key}: {g.Sum(s => s.Items.Count)} items / {g.Sum(s => s.Nodes.Count)} nodes");
 }
 
+if (cmdArgs.Contains("--prefab"))
+{
+    // P1-04 验证：prefab token → PPD 加载 + movement 恢复
+    var res = new ScsPrefab.PrefabResolver(overlay);
+    var token = Arg(args, "--prefab") ?? "";
+    if (token.Length == 0)
+    {
+        // 无参数：Berlin sector 全部 prefab 覆盖验证
+        var tokens = sectors.SelectMany(s => s.Items.OfType<PrefabItem>()).Select(p => p.Model).Distinct().OrderBy(x => x).ToList();
+        int ok = 0;
+        var mvTotal = 0;
+        foreach (var t in tokens)
+        {
+            var pd = res.Load(t);
+            if (pd == null) { Console.WriteLine($"  FAIL {t}: {res.FailedPpds.Last(f => f.Token == t).Error}"); continue; }
+            ok++;
+            mvTotal += ScsPrefab.PrefabMovements.Recover(pd, t).Count;
+        }
+        Console.WriteLine($"prefab 覆盖：{ok}/{tokens.Count} 加载成功，movements 共 {mvTotal}");
+        return;
+    }
+    var pd0 = res.Load(token);
+    if (pd0 == null)
+    {
+        Console.WriteLine($"{token} 加载失败：{res.FailedPpds.LastOrDefault(f => f.Token == token).Error}");
+        return;
+    }
+    var mv = ScsPrefab.PrefabMovements.Recover(pd0, token);
+    Console.WriteLine($"{token}: v0x{pd0.Version:x} nodes={pd0.ControlNodes.Count} curves={pd0.NavCurves.Count} navNodes={pd0.NavNodes.Count} semaphores={pd0.Semaphores.Count} movements={mv.Count}");
+    Console.WriteLine($"  转向: 直行 {mv.Count(m => m.TurnType == 0)} 左 {mv.Count(m => m.TurnType == -1)} 右 {mv.Count(m => m.TurnType == 1)} U {mv.Count(m => m.TurnType == 2)}  带信号灯 {mv.Count(m => m.SemaphoreId >= 0)}");
+    foreach (var m in mv.Take(8))
+        Console.WriteLine($"  node {m.EntryNode} → node {m.ExitNode}：{m.CurvePath.Length} 段 {m.Length:F1}m 转向 {m.TurnType} 灯 {m.SemaphoreId}");
+}
+
 if (cmdArgs.Contains("--defs"))
 {
     // P1-03 完成条件验证：sector 引用的 road type / traffic rule / lane 定义链是否全部可解析

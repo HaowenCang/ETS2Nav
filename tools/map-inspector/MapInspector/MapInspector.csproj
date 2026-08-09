@@ -14,6 +14,7 @@
     <ProjectReference Include="..\..\..\map-compiler\src\ScsSector\ScsSector.csproj" />
     <ProjectReference Include="..\..\..\map-compiler\src\ScsResource\ScsResource.csproj" />
     <ProjectReference Include="..\..\..\map-compiler\src\ScsDefinitions\ScsDefinitions.csproj" />
+    <ProjectReference Include="..\..\..\map-compiler\src\ScsPrefab\ScsPrefab.csproj" />
   </ItemGroup>
 
 </Project>
