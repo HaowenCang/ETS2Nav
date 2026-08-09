@@ -23,6 +23,8 @@
 #include "amtrucks/scssdk_ats.h"
 #include "amtrucks/scssdk_telemetry_ats.h"
 
+#include <math.h>
+
 #define UNUSED(x)
 
 #define NAV_SEM_MAGIC 0x324D4553u
@@ -88,17 +90,21 @@ static bool slot_matches(const uint8_t *p)
     int type = *(const int32_t *)(p + 0x20);
     if (type != 1 && type != 2) return false;
     float time = *(const float *)(p + 0x24);
-    if (time < 0.0f || time > 60.0f) return false;
+    if (!(time >= 0.0f && time <= 60.0f)) return false;   // NaN 穿透防护
     int state = *(const int32_t *)(p + 0x28);
     if (!is_valid_state(state)) return false;
     float px = *(const float *)(p + 0x00);
+    float py = *(const float *)(p + 0x04);
     float pz = *(const float *)(p + 0x08);
-    if (px < -500000.0f || px > 500000.0f || pz < -500000.0f || pz > 500000.0f) return false;
-    if (px * px + pz * pz < 1.0f) return false;   // pos 非零
+    // NaN/Infinity 显式排除（NaN 比较全 false，会穿透范围检查）
+    if (!(px == px && py == py && pz == pz)) return false;
+    if (!(px > -500000.0f && px < 500000.0f && pz > -500000.0f && pz < 500000.0f)) return false;
+    if (!(px * px + pz * pz >= 1.0f)) return false;   // pos 非零
     float qx = *(const float *)(p + 0x10), qy = *(const float *)(p + 0x14);
     float qz = *(const float *)(p + 0x18), qw = *(const float *)(p + 0x1C);
+    if (!(qx == qx && qy == qy && qz == qz && qw == qw)) return false;
     float q2 = qx * qx + qy * qy + qz * qz + qw * qw;
-    if (q2 < 0.8f || q2 > 1.2f) return false;
+    if (!(q2 >= 0.8f && q2 <= 1.2f)) return false;
     int16_t cx = *(const int16_t *)(p + 0x0C);
     int16_t cy = *(const int16_t *)(p + 0x0E);
     if (cx < -10000 || cx > 10000 || cy < -10000 || cy > 10000) return false;
@@ -244,7 +250,7 @@ static DWORD WINAPI reader_loop(LPVOID)
                 {
                     int valid = 0;
                     int span = array_span(cands[ci], &valid);
-                    if (valid >= 2)
+                    if (valid >= 4)   // 至少 4 个有效槽（弱候选通常只有 1-3 个）
                     {
                         located_base = cands[ci];
                         located_count = span;   // 跨度（含间隙槽），客户端过滤
