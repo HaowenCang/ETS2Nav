@@ -1,12 +1,13 @@
 namespace ScsPrefab;
 
-/// <summary>JunctionMovement（P1 计划 §21）：prefab 内一条合法行车路径。</summary>
+/// <summary>JunctionMovement（P1 计划 §21）：prefab 内一条合法行车路径。
+/// EntryNode/ExitNode 为 ControlNode 索引（→ prefab node 需按 Origin 映射）。</summary>
 public sealed class PrefabMovement
 {
     public required string PrefabToken { get; init; }
-    public required int EntryCurve { get; init; }      // NavCurves 索引（入口曲线）
-    public required int ExitCurve { get; init; }       // NavCurves 索引（出口曲线）
-    public required byte EntryNode { get; init; }      // prefab node（连接外部道路）
+    public required int EntryCurve { get; init; }      // NavCurves 索引（入口曲线，取路径首曲线）
+    public required int ExitCurve { get; init; }       // NavCurves 索引（出口曲线，取路径末曲线）
+    public required byte EntryNode { get; init; }      // ControlNode 索引
     public required byte ExitNode { get; init; }
     public required byte EntryLane { get; init; }
     public required byte ExitLane { get; init; }
@@ -22,28 +23,86 @@ public sealed class PrefabMovement
 }
 
 /// <summary>
-/// Prefab movement 恢复器（P1 计划 §22）：prefab connectivity 完全来自 navigation 语义——
-/// 从每个入口曲线沿 NextLines 链深度遍历到出口曲线，每条完整路径 = 一个 movement。
+/// Prefab movement 恢复器（P1 计划 §22）：prefab connectivity 完全来自 navigation 语义。
+/// 网络语义（对照 NavNode 结构）：NavNode 连接图（Physical 节点 Index = ControlNode = prefab 连接点；
+/// AI 节点为内部交点）。movement = Physical 起点沿连接图（每步取该连接的第一条曲线）到 Physical 终点。
+/// InputLines/OutputLines 数据在真实 corpus 中不完整（已验证 mod_ger_67），不作为端点依据。
 /// </summary>
 public static class PrefabMovements
 {
-    private const int MaxDepth = 12;
+    private const int MaxDepth = 16;
 
     public static List<PrefabMovement> Recover(PrefabDescriptor pd, string prefabToken)
     {
         var curves = pd.NavCurves;
+        // NavNode 邻接：i → (target, curves)
+        var adj = new List<List<(int Target, int[] Curves)>>(pd.NavNodes.Count);
+        for (int i = 0; i < pd.NavNodes.Count; i++)
+        {
+            var list = new List<(int, int[])>();
+            foreach (var c in pd.NavNodes[i].Connections)
+            {
+                var valid = c.CurveIndices.Where(x => x < curves.Count).Select(x => (int)x).ToArray();
+                if (valid.Length > 0) list.Add(((int)c.TargetNodeIndex, valid));
+            }
+            adj.Add(list);
+        }
+        // Physical 节点：navNode 索引 → ControlNode 索引
+        var physical = new Dictionary<int, int>();
+        for (int i = 0; i < pd.NavNodes.Count; i++)
+            if (pd.NavNodes[i].Type == 0 && pd.NavNodes[i].Index < pd.ControlNodes.Count)
+                physical[i] = pd.NavNodes[i].Index;
+
         var result = new List<PrefabMovement>();
         var semaphoreByCurve = BuildSemaphoreMap(curves);
-        for (int entry = 0; entry < curves.Count; entry++)
+        foreach (var (start, entryCtrl) in physical)
         {
-            var c = curves[entry];
-            if (!c.IsEntry) continue;   // 只从入口曲线出发
-            var visited = new bool[curves.Count];
-            visited[entry] = true;
-            var path = new List<int> { entry };
-            Dfs(pd, entry, path, visited, entry, result, prefabToken, semaphoreByCurve);
+            var visited = new bool[pd.NavNodes.Count];
+            visited[start] = true;
+            var path = new List<int>();
+            Dfs(pd, start, entryCtrl, path, visited, result, prefabToken, semaphoreByCurve, adj, physical);
         }
         return result;
+    }
+
+    private static void Dfs(PrefabDescriptor pd, int node, int entryCtrl, List<int> path, bool[] visited,
+        List<PrefabMovement> result, string token, Dictionary<int, int> semaphores,
+        List<List<(int Target, int[] Curves)>> adj, Dictionary<int, int> physical)
+    {
+        foreach (var (target, curveList) in adj[node])
+        {
+            // 每连接取第一条曲线（车道合并；P1-06 细化多车道）
+            int curve = curveList[0];
+            bool targetPhysical = physical.TryGetValue(target, out int exitCtrl);
+            if (visited[target]) continue;
+            if (path.Count + 1 >= MaxDepth) continue;
+            visited[target] = true;
+            path.Add(curve);
+            if (targetPhysical)
+            {
+                var first = pd.NavCurves[path[0]];
+                var last = pd.NavCurves[curve];
+                result.Add(new PrefabMovement
+                {
+                    PrefabToken = token,
+                    EntryCurve = path[0],
+                    ExitCurve = curve,
+                    EntryNode = (byte)entryCtrl,
+                    ExitNode = (byte)exitCtrl,
+                    EntryLane = first.StartLane,
+                    ExitLane = last.EndLane,
+                    CurvePath = path.ToArray(),
+                    Length = path.Sum(i => pd.NavCurves[i].Length),
+                    SemaphoreId = FindSemaphore(path, semaphores),
+                    PriorityModifier = first.PriorityModifier,
+                    LowProbability = first.LowProbability,
+                    TurnAngle = TurnAngleBetween(first, last),
+                });
+            }
+            Dfs(pd, target, entryCtrl, path, visited, result, token, semaphores, adj, physical);
+            path.RemoveAt(path.Count - 1);
+            visited[target] = false;
+        }
     }
 
     /// <summary>每条曲线所属信号灯（SemaphoreId → 最近前缀曲线，链上前缀优先）。</summary>
@@ -53,44 +112,6 @@ public static class PrefabMovements
         for (int i = 0; i < curves.Count; i++)
             if (curves[i].SemaphoreId >= 0) map[i] = curves[i].SemaphoreId;
         return map;
-    }
-
-    private static void Dfs(PrefabDescriptor pd, int entry, List<int> path, bool[] visited,
-        int curve, List<PrefabMovement> result, string token, Dictionary<int, int> semaphores)
-    {
-        var c = pd.NavCurves[curve];
-        if (c.IsExit && path.Count > 1)
-        {
-            var first = pd.NavCurves[entry];
-            var last = c;
-            result.Add(new PrefabMovement
-            {
-                PrefabToken = token,
-                EntryCurve = entry,
-                ExitCurve = curve,
-                EntryNode = first.StartNode,
-                ExitNode = last.EndNode,
-                EntryLane = first.StartLane,
-                ExitLane = last.EndLane,
-                CurvePath = path.ToArray(),
-                Length = path.Sum(i => pd.NavCurves[i].Length),
-                SemaphoreId = FindSemaphore(path, semaphores),
-                PriorityModifier = first.PriorityModifier,
-                LowProbability = first.LowProbability,
-                TurnAngle = TurnAngleBetween(first, last),
-            });
-        }
-        if (path.Count >= MaxDepth) return;
-        for (int k = 0; k < c.NextCount; k++)
-        {
-            int next = c.NextLines[k];
-            if (next < 0 || next >= pd.NavCurves.Count || visited[next]) continue;
-            visited[next] = true;
-            path.Add(next);
-            Dfs(pd, entry, path, visited, next, result, token, semaphores);
-            path.RemoveAt(path.Count - 1);
-            visited[next] = false;
-        }
     }
 
     private static int FindSemaphore(List<int> path, Dictionary<int, int> semaphores)

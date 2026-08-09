@@ -32,21 +32,24 @@ public class PpdReaderTests
         using var ms = new MemoryStream();
         using var w = new BinaryWriter(ms);
         w.Write(0x19u);                      // version
-        w.Write(1u);                         // nodes
+        w.Write(3u);                         // nodes
         w.Write(4u);                         // navCurves
         w.Write(0u);                         // signs
         w.Write(1u);                         // semaphores
         w.Write(0u); w.Write(0u); w.Write(0u); w.Write(0u); w.Write(0u);   // spawn/terrain/tpVar/map/trigger
         w.Write(0u);                         // intersections
-        w.Write(1u);                         // navNodes
+        w.Write(4u);                         // navNodes
         for (int i = 0; i < 12; i++) w.Write(0u);   // offsets
 
-        // ControlNode：4×u32 + pos + dir + 8 in + 8 out
-        for (int i = 0; i < 4; i++) w.Write(0u);
-        Write(w, 0f); Write(w, 0f); Write(w, 0f);
-        Write(w, 1f); Write(w, 0f); Write(w, 0f);
-        for (int i = 0; i < 8; i++) w.Write(-1);
-        for (int i = 0; i < 8; i++) w.Write(-1);
+        // ControlNode ×3：4×u32 + pos + dir + 8 in + 8 out
+        for (int n = 0; n < 3; n++)
+        {
+            for (int i = 0; i < 4; i++) w.Write(0u);
+            Write(w, 0f); Write(w, 0f); Write(w, 0f);
+            Write(w, 1f); Write(w, 0f); Write(w, 0f);
+            for (int i = 0; i < 8; i++) w.Write(-1);
+            for (int i = 0; i < 8; i++) w.Write(-1);
+        }
 
         // NavCurve 0：entry（StartNode=0, prev=0）
         WriteCurve(w, "in1", flags: 0, endNode: 0, endLane: 0, startNode: 0, startLane: 0,
@@ -80,18 +83,41 @@ public class PpdReaderTests
         w.Write(0u);
         for (int i = 0; i < 4; i++) w.Write(0u);
 
-        // NavNode：type + index + used + 8 conn（target + len + usedCurves + 8×u16）
-        w.Write((byte)1);         // AiNode
-        w.Write((ushort)0);
-        w.Write((byte)0);         // used conns
+        // NavNode 图（type + index + used + 8 conn（target + len + usedCurves + 8×u16））
+        // navNode[0] Physical ctrl0 → AI[3] via curve 0
+        WriteNavNode(w, 0, 0, new[] { (3, new ushort[] { 0 }) });
+        // navNode[1] Physical ctrl1（目标）
+        WriteNavNode(w, 0, 1, Array.Empty<(int, ushort[])>());
+        // navNode[2] Physical ctrl2（目标）
+        WriteNavNode(w, 0, 2, Array.Empty<(int, ushort[])>());
+        // navNode[3] AI → Physical1 via [1]（直行）、Physical2 via [2,3]（左/右）
+        WriteNavNode(w, 1, 99, new[] { (1, new ushort[] { 1 }), (2, new ushort[] { 2 }) });
+        return ms.ToArray();
+    }
+
+    private static void WriteNavNode(BinaryWriter w, byte type, ushort index, (int Target, ushort[] Curves)[] conns)
+    {
+        w.Write(type);
+        w.Write(index);
+        w.Write((byte)conns.Length);
         for (int i = 0; i < 8; i++)
         {
-            w.Write((ushort)0xFFFF);
-            w.Write(float.MaxValue);
-            w.Write((byte)0);
-            for (int k = 0; k < 8; k++) w.Write((ushort)0xFFFF);
+            if (i < conns.Length)
+            {
+                w.Write((ushort)conns[i].Target);
+                w.Write(10f);
+                w.Write((byte)conns[i].Curves.Length);
+                for (int k = 0; k < 8; k++)
+                    w.Write(k < conns[i].Curves.Length ? conns[i].Curves[k] : (ushort)0xFFFF);
+            }
+            else
+            {
+                w.Write((ushort)0xFFFF);
+                w.Write(float.MaxValue);
+                w.Write((byte)0);
+                for (int k = 0; k < 8; k++) w.Write((ushort)0xFFFF);
+            }
         }
-        return ms.ToArray();
     }
 
     private static void WriteCurve(BinaryWriter w, string name, uint flags, byte endNode, byte endLane,
@@ -121,10 +147,10 @@ public class PpdReaderTests
         using var ms = new MemoryStream(BuildPpd());
         var pd = PpdReader.Read(ms, "test.ppd");
         Assert.Equal(0x19u, pd.Version);
-        Assert.Single(pd.ControlNodes);
+        Assert.Equal(3, pd.ControlNodes.Count);
         Assert.Equal(4, pd.NavCurves.Count);
         Assert.Single(pd.Semaphores);
-        Assert.Single(pd.NavNodes);
+        Assert.Equal(4, pd.NavNodes.Count);
     }
 
     [Fact]
@@ -144,20 +170,19 @@ public class PpdReaderTests
     [Fact]
     public void RecoversMovementsWithTurnTypes()
     {
+        // NavNode 图：Physical[0]=ctrl0 → AI[3] → Physical[1]=ctrl1（直行）/ Physical[2]=ctrl2（左转）
         using var ms = new MemoryStream(BuildPpd());
         var pd = PpdReader.Read(ms, "test.ppd");
         var mv = PrefabMovements.Recover(pd, "test");
-        Assert.Equal(3, mv.Count);                       // entry → 3 exits
+        Assert.Equal(2, mv.Count);                       // ctrl0 → ctrl1 / ctrl2（每连接取首曲线）
         Assert.All(mv, m => Assert.Equal(0, m.EntryNode));
-        Assert.Equal(new[] { 1, 2, 3 }, mv.Select(m => (int)m.ExitNode).OrderBy(x => x));
-        // 直行（0°）/ 左转（-90°）/ 右转（+90°）
+        Assert.Equal(new[] { 1, 2 }, mv.Select(m => (int)m.ExitNode).OrderBy(x => x));
+        // 直行（0°）/ 左转（-90°）
         var straight = mv.Single(m => m.ExitNode == 1);
         Assert.Equal(0, straight.TurnType);
-        Assert.Equal(0, straight.SemaphoreId);           // exit curve 0 绑定信号灯
+        Assert.Equal(0, straight.SemaphoreId);           // 出口曲线绑定信号灯
         var left = mv.Single(m => m.ExitNode == 2);
         Assert.Equal(-1, left.TurnType);                 // 左转
-        var right = mv.Single(m => m.ExitNode == 3);
-        Assert.Equal(1, right.TurnType);                 // 右转
         Assert.Equal(20f, straight.Length, 3);           // 10+10
     }
 

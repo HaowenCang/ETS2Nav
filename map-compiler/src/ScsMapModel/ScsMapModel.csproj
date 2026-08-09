@@ -1,0 +1,14 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <RootNamespace>ScsMapModel</RootNamespace>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\ScsSector\ScsSector.csproj" />
+    <ProjectReference Include="..\ScsDefinitions\ScsDefinitions.csproj" />
+    <ProjectReference Include="..\ScsPrefab\ScsPrefab.csproj" />
+    <ProjectReference Include="..\ScsGraph\ScsGraph.csproj" />
+  </ItemGroup>
+</Project>
