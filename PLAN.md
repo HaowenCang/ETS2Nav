@@ -7,9 +7,9 @@
 
 ## §1 当前状态
 
-**最后更新**：2026-08（P0 启动）
+**最后更新**：2026-08-10（P0 收官：B/D 完成，A/C 收尾）
 
-- [ ] **P0 阶段**（进行中，尚未开工）
+- [ ] **P0 阶段**（B/D 验收通过，A6/A7/A8/C1 收尾中）
 - [ ] P1 Map Compiler
 - [ ] P2 Navigation Core
 - [ ] P3 Driving Assistant
@@ -17,9 +17,9 @@
 - [ ] P5 全欧洲测试
 - [ ] P6 性能优化与发布
 
-**当前任务**：P0 尚未开工。阻塞项：① 待确认事项（见 §2）；② 需要 ETS2 游戏安装路径。
+**当前任务**：P0 门评审收尾。**P0-D 验收通过**（avg -1.3% / 1%low +0.7%）；**P0-B 数据源重大定案**：ETS2LA 插件共存激活信号灯数组（隔离测试定案：仅 ets2la_plugin.dll 单文件激活，无主程序依赖，方案 C：先共存推进后评估逆向）。
 
-**已建立**：执行计划（本文件）、本地 git 仓库、.gitignore。
+**已建立**：执行计划（本文件）、本地 git 仓库、.gitignore、GitHub 仓库（HaowenCang/ETS2Nav private）。
 
 ---
 
@@ -31,6 +31,7 @@
 | D2 | 项目许可证 | ✅ 已确认（2026-08-09 修订） | **GPL-3.0**（原 MIT；为复用 GPL 生态实现而改） | LICENSE 已更新；v0.2 §12 的"不复制 GPL 实现"约束解除，可复用 TruckLib/ETS2LA/TruckSim Maps |
 | D3 | ETS2 安装路径 | ✅ 已确认 | `E:\SteamLibrary\steamapps\common\Euro Truck Simulator 2` | P0-A 可用真实游戏文件 |
 | D4 | P0 内部优先级 | ✅ 已确认 | 按建议：骨架 + P0-A 先行，P0-B 静态部分（B1–B2）并行 | 任务排程生效 |
+| D5 | 信号灯数组激活依赖 | ✅ 已确认（2026-08-10） | **方案 C：ETS2LA 共存推进**（plugins 含 ets2la_plugin.dll 单文件激活），逆向激活评估延后 | 产品运行时依赖 ets2la_plugin.dll（闭源）；P0-B 验收按共存状态记录 |
 
 ---
 
@@ -62,8 +63,9 @@
 | B4 | signal-lab 工具（记录 signal 事件 + 各 clock + 误差分析） | 可回放实验数据 | ✅ signal-lab（高频采样+按键标记+CSV）+ signal-analyze（TL-01/02 判定）+ 模拟验证 PASS；**待真实游戏数据采集**（用户配合） |
 | B5 | 实验 TL-01 Clock Domain（v0.2 §29、§64） | 判定 semaphore interval 所属时钟域 | ✅ **结论：simulation_time 驱动，interval 秒=真实秒（1:1）**——7 间隔全部倍率 1.000±0.7%；周期 59.5s≈60s profile；排除 game.time（见 docs/validation/tl01-clock-domain-2026-08-09.md） |
 | B6 | 实验 TL-02 Phase Anchor（H1 全局 vs H2 局部，v0.2 §30） | 判定相位锚定模型 | ✅ **H2 确认**：sim 连续窗口内驶离返回后相位跳变（5.9→27.5s mod 周期）；纯计算倒计时不可行，需观测锚定+外推（见 docs/validation/tl02-phase-anchor-2026-08-09.md） |
-| B7 | 实验 TL-03 Warp / TL-04 Reset / TL-05 Special Profiles（v0.2 §64） | 行为建模 | ⏳ |
+| B7 | 实验 TL-03 Warp / TL-04 Reset / TL-05 Special Profiles（v0.2 §64） | 行为建模 | ⏳（v0.3 与逆向激活评估一并规划） |
 | **门** | Go/No-Go：Case A/B（|e|≤1 s，v0.2 §65）→ 倒计时入 V1；Case C → STATE_ONLY；Case D → UNAVAILABLE | — | ✅ **Go（Case B）**：TL-01 时钟域确定（1:1 真实秒）、TL-02 H2 加载锚定确认、同窗口外推实测最大误差 0.483s ≤1s 验收（见 docs/validation/p0b-traffic-light-conclusions-2026-08-09.md）；倒计时方案：观测锚定+段长学习+外推，未锚定期间 STATE_ONLY |
+| B8 | **自研精确数据源 semaphore-bridge**（v0.2 §64 超越项） | 游戏内内存读取，共享内存 Local\ETS2NavSemaphore | ✅ **v8 定稿**：48B/灯布局反查定案（pos+cx/cy+quat+type+time+state+id）；SEH 兜底+协作取消+越界修复；**隔离测试定案：需 ets2la_plugin.dll 共存激活数组**（见 docs/validation/semaphore-bridge-2026-08-10.md）；待补验证：退出游戏不崩溃（v8 卸载修复） |
 
 ### P0-C Telemetry 稳定性（v0.2 §75）
 
@@ -75,14 +77,14 @@
 
 | ID | 任务 | 完成条件 | 状态 |
 |---|---|---|---|
-| D1 | ETS2 only vs ETS2+Core 基准脚本（FPS/1% low/frametime） | 对比数据 | ⏳ |
+| D1 | ETS2 only vs ETS2+Core 基准脚本（FPS/1% low/frametime） | 对比数据 | ✅ **验收通过**（2026-08-10）：avg 150.2→148.2（-1.3% ≤1-2%）、1% low 94.2→94.9（+0.7% 无回退 ≤2%）；PresentMon 2.5.1 + analyze.sh 可靠管道（mawk 无 asort，已用 awk 排序替代） |
 
 ### P0 交叉任务
 
 | ID | 任务 | 完成条件 | 状态 |
 |---|---|---|---|
-| X1 | 仓库骨架：目录结构（v0.2 §72 精简到 P0）、.gitignore、README | 初始提交完成 | ⏳ |
-| X2 | 决策记录文件（docs/decisions/，记录每次关键选择） | 随项目维护 | ⏳ |
+| X1 | 仓库骨架：目录结构（v0.2 §72 精简到 P0）、.gitignore、README | 初始提交完成 | ✅ 已完成（含 GitHub 推送） |
+| X2 | 决策记录文件（docs/decisions/，记录每次关键选择） | 随项目维护 | 🔄 关键决策已入 PLAN §2；待正式化 docs/decisions/ |
 
 ---
 
