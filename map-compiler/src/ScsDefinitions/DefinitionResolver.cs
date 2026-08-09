@@ -12,6 +12,7 @@ public sealed class DefinitionResolver
 {
     private readonly Dictionary<string, RoadLookDefinition> _roadLooks = new();
     private readonly Dictionary<string, TrafficLaneDefinition> _trafficLanes = new();
+    private readonly Dictionary<string, TrafficRuleDefinition> _trafficRules = new();
     private readonly Dictionary<string, CountryDefinition> _countries = new();
     private readonly Dictionary<string, CityDefinition> _cities = new();
     private readonly Dictionary<string, CompanyDefinition> _companies = new();
@@ -19,13 +20,18 @@ public sealed class DefinitionResolver
 
     public IReadOnlyDictionary<string, RoadLookDefinition> RoadLooks => _roadLooks;
     public IReadOnlyDictionary<string, TrafficLaneDefinition> TrafficLanes => _trafficLanes;
+    public IReadOnlyDictionary<string, TrafficRuleDefinition> TrafficRules => _trafficRules;
     public IReadOnlyDictionary<string, CountryDefinition> Countries => _countries;
     public IReadOnlyDictionary<string, CityDefinition> Cities => _cities;
     public IReadOnlyDictionary<string, CompanyDefinition> Companies => _companies;
     public IReadOnlyDictionary<string, FerryDefinition> Ferries => _ferries;
 
-    /// <summary>加载的 definition 文件数（诊断）。</summary>
+    /// <summary>尝试加载的 definition 文件数（含失败，诊断口径）。</summary>
     public int LoadedFiles { get; private set; }
+
+    /// <summary>加载失败的 definition 文件（路径 → 异常信息），空 = 全部成功。</summary>
+    public IReadOnlyList<(string Path, string Error)> FailedFiles => _failedFiles;
+    private readonly List<(string Path, string Error)> _failedFiles = new();
 
     public DefinitionResolver(IScsResourceProvider provider) => LoadAll(provider);
 
@@ -35,6 +41,7 @@ public sealed class DefinitionResolver
         => _roadLooks.TryGetValue("road." + name, out var v) ? v
          : _roadLooks.TryGetValue(name, out var w) ? w : null;
     public TrafficLaneDefinition? GetTrafficLane(string name) => _trafficLanes.TryGetValue(name, out var v) ? v : null;
+    public TrafficRuleDefinition? GetTrafficRule(string name) => _trafficRules.TryGetValue(name, out var v) ? v : null;
     public CountryDefinition? GetCountry(string name) => _countries.TryGetValue(name, out var v) ? v : null;
     public CityDefinition? GetCity(string name)
         => _cities.TryGetValue(name, out var v) ? v
@@ -54,9 +61,13 @@ public sealed class DefinitionResolver
             ("/def/ferry.sii", null),
         };
         // 1.60 模板化 road look：road_look.template*.sii（含 road.xxx 模板 look 与 tmpl_var）
-        files.AddRange(p.Enumerate("/def/world")
-            .Where(x => x.EndsWith(".sii") && x.Contains("road_look"))
-            .Select(x => (x, (string?)null)));
+        // 固定清单已在上面；枚举按 Contains("road_look") 会重复匹配自身 → 去重
+        var seen = new HashSet<string>(files.Select(f => f.Path), StringComparer.OrdinalIgnoreCase);
+        foreach (var x in p.Enumerate("/def/world")
+            .Where(x => x.EndsWith(".sii") && x.Contains("road_look") && seen.Add(x)))
+            files.Add((x, null));
+        // traffic rule 定义（traffic_lane 的 traffic_rules[] 引用同一命名空间）
+        if (seen.Add("/def/world/traffic_rules.sii")) files.Add(("/def/world/traffic_rules.sii", null));
         foreach (var x in p.Enumerate("/def/company").Where(x => x.EndsWith(".sui")))
             files.Add((x, null));
         // /def/country/<name>/speed_limits.sii → country = 目录名
@@ -69,7 +80,12 @@ public sealed class DefinitionResolver
         {
             SiiDocument doc;
             try { doc = DefinitionLoader.Load(p, f); }
-            catch { continue; }     // 单个 definition 文件损坏不阻断整体（诊断计数仍加）
+            catch (Exception ex)
+            {
+                // 单个 definition 文件失败不阻断整体，但必须可观测（P1-03 评审 MAJOR-2）
+                _failedFiles.Add((f, $"{ex.GetType().Name}: {ex.Message}"));
+                continue;
+            }
             LoadedFiles++;
             foreach (var u in doc.Units) RouteUnit(u, country);
         }
@@ -110,6 +126,14 @@ public sealed class DefinitionResolver
                     foreach (var v in u.Values("traffic_rules[]")) if (v.Kind == SiiValueKind.Token) tl.TrafficRules.Add(v.Str!);
                 });
                 break;
+            case "traffic_rule_data":
+                _trafficRules[u.Name] = new TrafficRuleDefinition
+                {
+                    Name = u.Name,
+                    SpeedClass = Str(u, "speed_class"),
+                    Rank = Int(u, "rank"),
+                };
+                break;
             case "country_speed_limit":
                 if (country != null)
                 {
@@ -137,7 +161,7 @@ public sealed class DefinitionResolver
                 break;
             default:
                 if (u.Class.EndsWith("ferry_data"))
-                    _ferries[u.Name] = new FerryDefinition { Name = u.Name, DisplayName = Str(u, "name") ?? Str(u, "ferry_name") };
+                    _ferries[u.Name] = new FerryDefinition { Name = u.Name, DisplayName = Str(u, "name") ?? Str(u, "ferry_name") ?? Str(u, "ferry_name_localized") };
                 break;
         }
     }

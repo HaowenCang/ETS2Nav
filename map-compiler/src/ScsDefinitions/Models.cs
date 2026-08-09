@@ -34,6 +34,14 @@ public sealed class TrafficLaneDefinition
     public bool AllowsOvertake => TrafficRules.Contains("traffic_rule.overtake_alw");
 }
 
+/// <summary>Traffic Rule 定义——来自 /def/world/traffic_rules.sii（traffic_lane 的 traffic_rules[] 同命名空间）。</summary>
+public sealed class TrafficRuleDefinition
+{
+    public required string Name { get; init; }          // traffic_rule.road / traffic_rule.overtake_alw
+    public string? SpeedClass { get; init; }
+    public int Rank { get; init; }
+}
+
 /// <summary>国家限速条目（country_speed_limit 的并行数组展开，P1 计划 §16）。</summary>
 public sealed class CountrySpeedLimit
 {
@@ -67,10 +75,9 @@ public sealed class CompanyDefinition
     public string? SortName { get; init; }
 }
 
-/// <summary>渡口/隧道定义——/def/ferry/*.sui。</summary>
+/// <summary>渡口/隧道定义——/def/ferry/*.sui。DisplayName 可能为本地化键（@@xx@@），与 city 一致。</summary>
 public sealed class FerryDefinition
 {
     public required string Name { get; init; }          // ferry.calais 等
     public string? DisplayName { get; init; }
-    public string? PortName { get; init; }
 }

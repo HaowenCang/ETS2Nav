@@ -349,7 +349,7 @@ public sealed class SectorFile
         // kdop flags 4 字节已读；随后（对照 TruckLib RoadSerializer 1.60 布局）：
         // road_flags u32 → RoadType → RightTrafficRule → LeftTrafficRule → RightVariant → LeftVariant
         // → 四边 token → terrain×2 → look×2 → material → railing×3 → height×2 → node×2 → length
-        r.ReadUInt32();          // road_flags
+        uint roadFlags = r.ReadUInt32();          // rflag1+dlc+rflag3+rflag4（LE 与 TruckLib 4×ReadByte 等价）
         string roadLook = r.ReadToken();
         string rightTrafficRule = r.ReadToken();
         string leftTrafficRule = r.ReadToken();
@@ -385,7 +385,8 @@ public sealed class SectorFile
             IsCityRoad = (flags & (1u << 19)) != 0,
             NoAiVehicles = (flags & (1u << 22)) != 0,
             Secret = (flags & (1u << 16)) != 0,
-            GpsAvoid = (flags & (1u << 28)) != 0,
+            // GpsAvoid 在 road_flags 第 4 字节 bit4（TruckLib rflag4），而非 kdop flags（P1-03 评审 M1）
+            GpsAvoid = (roadFlags & (1u << 28)) != 0,
         };
     }
 

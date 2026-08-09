@@ -17,9 +17,10 @@ var installDir = Arg(args, "--install");   // 游戏安装根目录（经 GameIn
 string dir = Arg(args, "--dir") ?? @"E:\Projects\Pi\ETS2Nav\vendor\extracted\base_map\map\europe";
 
 // 资源层（P1-02）：所有 sector 读取经 IScsResourceProvider；上层不直接触碰文件系统
-IScsResourceProvider overlay = installDir != null
+// DirectoryProvider/OverlayProvider 均实现 IDisposable（P1-03 评审 m2：句柄所有权）
+using OverlayProvider overlay = installDir != null
     ? BuildInstallOverlay(installDir)
-    : new DirectoryProvider(dir);
+    : new OverlayProvider(new DirectoryProvider(dir));
 
 var secNames = (Arg(args, "--sectors") ?? "")
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
@@ -44,14 +45,14 @@ foreach (var name in secNames)
         var vp = $"/map/europe/{name}{ext}";
         if (!overlay.Exists(vp)) continue;
         using var s = overlay.Open(vp);
-        sectors.Add(SectorFile.Read(s, name + ext));
+        sectors.Add(SectorFile.Read(s, name));   // SectorName 不带扩展名（P1-03 评审 m3）
     }
 }
 Console.WriteLine($"已加载 {sectors.Count} 个 sector（{sectors.Sum(s => s.Items.Count)} items / {sectors.Sum(s => s.Nodes.Count)} nodes）");
 var graph = RoadGraph.Build(sectors);
 
-// --install 模式：GameInstall.Detect + BuildOverlay（含 DLC 地图过滤）
-static IScsResourceProvider BuildInstallOverlay(string root)
+// --install 模式：GameInstall.Detect + BuildOverlay（含 DLC 地图过滤）；返回 OverlayProvider（IDisposable）
+static OverlayProvider BuildInstallOverlay(string root)
 {
     var install = GameInstall.Detect(root);
     Console.WriteLine($"检测到游戏安装：v{install.GameVersion}，{install.Archives.Count} archives / {install.EnabledDlc.Count} DLC");
@@ -76,25 +77,45 @@ if (cmdArgs.Contains("--defs"))
 {
     // P1-03 完成条件验证：sector 引用的 road type / traffic rule / lane 定义链是否全部可解析
     var res = new ScsDefinitions.DefinitionResolver(overlay);
+    if (res.FailedFiles.Count > 0)
+    {
+        Console.WriteLine($"definition 加载失败 {res.FailedFiles.Count} 文件：");
+        foreach (var (f, err) in res.FailedFiles.Take(10)) Console.WriteLine($"  FAIL {f}: {err}");
+    }
     var lookRefs = sectors.SelectMany(s => s.Items.OfType<RoadItem>()).Select(r => r.RoadLook).Distinct().OrderBy(x => x).ToList();
     var ruleRefs = sectors.SelectMany(s => s.Items.OfType<RoadItem>())
         .SelectMany(r => new[] { r.RightTrafficRule, r.LeftTrafficRule }).Where(x => x.Length > 0).Distinct().OrderBy(x => x).ToList();
     var missingLooks = lookRefs.Where(x => res.GetRoadLook(x) is null).ToList();
+    // road item 的 TrafficRule 字段实为 speed_class 值（限速查询键，1.60 实测：local_road/expressway/motorway）——
+    // 校验其 ∈ 国家限速表 lane_speed_class 全集
+    var knownSpeedClasses = res.Countries.Values
+        .SelectMany(c => c.SpeedLimits.Values.SelectMany(m => m.Keys))
+        .Concat(res.TrafficLanes.Values.Select(tl => tl.SpeedClass))
+        .ToHashSet();
+    var missingRules = ruleRefs.Where(x => !knownSpeedClasses.Contains(x)).ToList();
     // 链路：road look → lanes → traffic_lane 定义
     var missingLanes = res.RoadLooks.Values
         .SelectMany(rl => rl.LanesLeft.Concat(rl.LanesRight))
         .Distinct().Where(l => res.GetTrafficLane(l) is null).ToList();
-    Console.WriteLine($"definition 统计：{res.LoadedFiles} 文件 / road_look {res.RoadLooks.Count} / traffic_lane {res.TrafficLanes.Count} / country {res.Countries.Count} / city {res.Cities.Count} / company {res.Companies.Count} / ferry {res.Ferries.Count}");
-    Console.WriteLine($"sector 引用：road type {lookRefs.Count} 种，traffic rule {ruleRefs.Count} 种");
-    Console.WriteLine($"缺失 road type：{missingLooks.Count}");
-    foreach (var m in missingLooks) Console.WriteLine($"  MISSING {m}");
-    Console.WriteLine($"缺失 traffic_lane 定义：{missingLanes.Count}");
-    foreach (var m in missingLanes) Console.WriteLine($"  MISSING {m}");
+    // 语义对象对照：Berlin 的 company/city 引用与 germany 限速存在性
+    var companyRefs = sectors.SelectMany(s => s.Items.OfType<CompanyItem>()).Select(c => c.CompanyName).Distinct().OrderBy(x => x).ToList();
+    var cityRefs = sectors.SelectMany(s => s.Items.OfType<CityItem>()).Select(c => c.City).Distinct().OrderBy(x => x).ToList();
+    var missingCompanies = companyRefs.Where(x => res.GetCompany(x) is null).ToList();
+    var missingCities = cityRefs.Where(x => res.GetCity(x) is null).ToList();
+    var germany = res.GetCountry("germany");
+    Console.WriteLine($"definition 统计：{res.LoadedFiles} 文件 / road_look {res.RoadLooks.Count} / traffic_lane {res.TrafficLanes.Count} / traffic_rule {res.TrafficRules.Count} / country {res.Countries.Count} / city {res.Cities.Count} / company {res.Companies.Count} / ferry {res.Ferries.Count}");
+    Console.WriteLine($"sector 引用：road type {lookRefs.Count} 种，traffic rule {ruleRefs.Count} 种，company {companyRefs.Count} 种，city {cityRefs.Count} 种");
+    Console.WriteLine($"缺失 road type：{missingLooks.Count}   缺失 traffic rule：{missingRules.Count}   缺失 traffic_lane 定义：{missingLanes.Count}   缺失 company：{missingCompanies.Count}   缺失 city：{missingCities.Count}   germany 限速：{(germany?.SpeedLimits.ContainsKey("car") == true ? "OK" : "缺失")}");
+    foreach (var m in missingLooks.Take(10)) Console.WriteLine($"  MISSING road {m}");
+    foreach (var m in missingRules.Take(10)) Console.WriteLine($"  MISSING rule {m}");
+    foreach (var m in missingCompanies.Take(10)) Console.WriteLine($"  MISSING company {m}");
+    foreach (var m in missingCities.Take(10)) Console.WriteLine($"  MISSING city {m}");
     var sample = res.GetRoadLook(lookRefs.FirstOrDefault() ?? "");
     if (sample != null)
         Console.WriteLine($"样本 {lookRefs.First()}: {sample.DisplayName}，车道 L={sample.LanesLeft.Count} R={sample.LanesRight.Count}");
-    if (missingLooks.Count == 0)
-        Console.WriteLine("P1-03 完成条件满足：Berlin road 引用的 road type 全部解析为 typed model");
+    if (missingLooks.Count == 0 && missingRules.Count == 0 && missingCompanies.Count == 0 && missingCities.Count == 0
+        && germany?.SpeedLimits.ContainsKey("car") == true)
+        Console.WriteLine("P1-03 完成条件满足：Berlin 引用的 road/company/city definition 全部解析为 typed model");
 }
 
 if (cmdArgs.Contains("--validate"))

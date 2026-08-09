@@ -18,16 +18,6 @@ public static class DefinitionLoader
         return doc;
     }
 
-    /// <summary>批量加载（各文件独立展开，units 合并；同 token 后者覆盖前者——定义覆盖语义）。</summary>
-    public static SiiDocument LoadMany(IScsResourceProvider provider, IEnumerable<string> paths)
-    {
-        var doc = new SiiDocument();
-        var visited = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
-        foreach (var p in paths)
-            LoadInto(provider, Normalize(p), doc, visited);
-        return doc;
-    }
-
     private static void LoadInto(IScsResourceProvider provider, string vp, SiiDocument doc, HashSet<string> visited)
     {
         vp = Normalize(vp);
@@ -39,10 +29,10 @@ public static class DefinitionLoader
         using (var r = new StreamReader(s))
             text = r.ReadToEnd();
         var parsed = SiiParser.Parse(text);
-        // 先递归 include（相对当前文件目录），再合并自身 units（覆盖语义：自身优先）
+        // 先递归 include（相对当前文件目录；绝对路径按虚拟根解析），再合并自身 units（覆盖语义：自身优先）
         var dir = vp[..(vp.LastIndexOf('/') + 1)];
         foreach (var inc in parsed.Includes)
-            LoadInto(provider, dir + inc, doc, visited);
+            LoadInto(provider, inc.StartsWith('/') ? inc : dir + inc, doc, visited);
         foreach (var u in parsed.Units) doc.Units.Add(u);
     }
 

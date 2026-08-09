@@ -1,5 +1,7 @@
 // SCS SII 文本格式解析器（独立实现，基于官方 def 文件观察与社区格式描述）
 // GPL-3.0 — ETS2Nav 项目
+// 2026-08 corpus 驱动增强（P1-03 评审修复）：行尾 // 注释、多行字符串、块内 @include、
+// 元组 f 后缀、hex 值、空文件、裸 .sui 以 @include 开头、/** 块注释、header 尾注释、BOM
 
 namespace ScsSii;
 
@@ -50,35 +52,37 @@ public sealed class SiiUnit
 public sealed class SiiDocument
 {
     public List<SiiUnit> Units { get; } = new();
-    public List<string> Includes { get; } = new();      // @include 路径
+    public List<string> Includes { get; } = new();      // @include 路径（顶层与块内）
 }
 
 public static class SiiParser
 {
     /// <summary>解析 SII 文本。失败抛 SiiParseException 并带行号。
-    /// 支持两种顶层：标准 SiiNunit 包装，以及裸 unit 序列（.sui include 片段，无 SiiNunit）。</summary>
+    /// 支持三种形态：标准 SiiNunit 包装、裸 unit 序列（.sui include 片段）、空文件。</summary>
     public static SiiDocument Parse(string text)
     {
         var doc = new SiiDocument();
-        var lines = text.Replace("\r\n", "\n").Split('\n');
+        var lines = text.TrimStart('\uFEFF').Replace("\r\n", "\n").Split('\n');
         int i = 0;
-        var (topClass, topName) = NextUnitHeader(lines, ref i);
-        if (topClass == "SiiNunit")
+        var (topClass, topName) = PeekHeader(lines, ref i);
+        if (topClass is null || topClass == "}")
+            return doc;                                  // 空文件 / 仅注释 / 裸 '}'
+        if (topClass == "@include")
+        {
+            doc.Includes.Add(topName!);                  // 裸 .sui 以 @include 开头（academy goal 系列）
+            i++;
+        }
+        else if (topClass == "SiiNunit")
         {
             i++; // 消费顶层 header 行
             SkipToOpenBrace(lines, ref i);
-            ParseTopLevel(lines, ref i, doc);
-        }
-        else if (topClass is null || topClass == "}")
-        {
-            // 空文件
         }
         else
         {
-            // 裸 unit 文件：当前 header 即为第一个 unit（不含 SiiNunit）
-            ParseUnit(lines, ref i, topClass, topName, doc);
-            ParseTopLevel(lines, ref i, doc);
+            // 裸 unit 文件：当前 header 即为第一个 unit
+            ParseUnit(lines, ref i, topClass, topName!, doc);
         }
+        ParseTopLevel(lines, ref i, doc);
         return doc;
     }
 
@@ -93,14 +97,14 @@ public static class SiiParser
                 i++; // 顶层闭括号
                 break;
             }
-            if (cls.StartsWith("@include"))
+            if (cls == "@include")
             {
-                doc.Includes.Add(name);
+                doc.Includes.Add(name!);
                 i++;
                 continue;
             }
             i++; // 消费 header 行
-            ParseUnit(lines, ref i, cls, name, doc);
+            ParseUnit(lines, ref i, cls, name!, doc);
         }
     }
 
@@ -112,7 +116,7 @@ public static class SiiParser
         if (inlineBrace || TrySkipToOpenBraceOrLineEnd(lines, ref i))
         {
             var unit = new SiiUnit { Class = cls, Name = name };
-            ParseAttributes(lines, ref i, unit);
+            ParseAttributes(lines, ref i, unit, doc);
             doc.Units.Add(unit);
         }
         else
@@ -122,35 +126,56 @@ public static class SiiParser
         }
     }
 
-    private static void ParseAttributes(string[] lines, ref int i, SiiUnit unit)
+    private static void ParseAttributes(string[] lines, ref int i, SiiUnit unit, SiiDocument doc)
     {
         while (i < lines.Length)
         {
             var (key, value, consumed) = ParseAttribute(lines, ref i);
             if (key == "}") { i++; return; }
+            if (key == "@include")
+            {
+                // 块内 @include（paint_job 等 2996 文件实测）：属性片段合并语义未建模，记录路径供展开
+                doc.Includes.Add(value!.Str!);
+                i++;
+                continue;
+            }
             if (key is null) { i++; continue; }   // 空行/注释
-            unit.Attributes.Add((key, value));
-            i++;
+            unit.Attributes.Add((key, value!));
+            i += consumed;   // 多行字符串可能跨行（consumed > 1）
         }
     }
 
-    /// <summary>解析一行属性。返回 null（空行/注释）或 ("}", null) 表示块结束。</summary>
+    /// <summary>解析一行属性。返回 null（空行/注释）、("}", null) 块结束、("@include", path)。</summary>
     private static (string? Key, SiiValue? Value, int Consumed) ParseAttribute(string[] lines, ref int i)
     {
         string line = lines[i];
         if (line.Trim() == "}") return ("}", null, 1);
         var (key, rest) = SplitKey(line);
         if (key is null) return (null, null, 1);
-        // 值可能跨行（罕见；tuple 通常单行）。此处仅支持单行值 + 行尾注释。
+        if (key == "@include") return ("@include", SiiValue.OfString(rest), 1);
         string valueText = StripComment(rest).Trim();
         if (valueText.Length == 0) throw new SiiParseException($"属性 {key} 缺值（行 {i + 1}）");
+        // 多行字符串：值以 " 开头但未闭合 → 跨行拼接（prefab.sii/intro_data.sii 等实测）
+        if (valueText.StartsWith('"') && !IsStringClosed(valueText))
+        {
+            int consumed = 1;
+            while (i + consumed < lines.Length)
+            {
+                valueText += "\n" + lines[i + consumed].TrimEnd('\r');
+                consumed++;
+                if (IsStringClosed(valueText)) break;
+            }
+            if (!IsStringClosed(valueText)) throw new SiiParseException($"字符串未闭合（行 {i + 1}）");
+            return (key, SiiValue.OfString(valueText[1..^1]), consumed);
+        }
         return (key, ParseValue(valueText, i + 1), 1);
     }
 
     private static (string?, string) SplitKey(string line)
     {
         var t = line.TrimStart();
-        if (t.Length == 0 || t[0] == '#' || t.StartsWith("//")) return (null, "");
+        if (t.Length == 0 || t[0] == '#' || t.StartsWith("//") || t.StartsWith("/**")) return (null, "");
+        if (t.StartsWith("@include")) return ("@include", ExtractIncludePath(t));
         int colon = t.IndexOf(':');
         if (colon < 0) throw new SiiParseException($"无法解析行：{line.Trim()}");
         var key = t[..colon].Trim();
@@ -164,18 +189,36 @@ public static class SiiParser
         return (key, t[(colon + 1)..]);
     }
 
+    /// <summary>字符串外剥离行尾注释（# 与 //）。字符串内保留；转义引号不切换字符串态。</summary>
     private static string StripComment(string s)
     {
-        // 字符串外的 '#' 起注释。逐字符处理，保留字符串内 '#'
         var sb = new System.Text.StringBuilder(s.Length);
         bool inStr = false;
-        foreach (char c in s)
+        for (int k = 0; k < s.Length; k++)
         {
-            if (c == '"') inStr = !inStr;
-            else if (c == '#' && !inStr) break;
-            sb.Append(c);
+            char c = s[k];
+            if (c == '"' && (k == 0 || s[k - 1] != '\\')) { inStr = !inStr; sb.Append(c); }
+            else if (!inStr && c == '#') break;
+            else if (!inStr && c == '/' && k + 1 < s.Length && s[k + 1] == '/') break;
+            else sb.Append(c);
         }
         return sb.ToString();
+    }
+
+    /// <summary>引号配对（转义引号除外）。偶数 = 已闭合。</summary>
+    private static bool IsStringClosed(string s)
+    {
+        int quotes = 0;
+        for (int k = 0; k < s.Length; k++)
+            if (s[k] == '"' && (k == 0 || s[k - 1] != '\\')) quotes++;
+        return quotes % 2 == 0;
+    }
+
+    private static string ExtractIncludePath(string t)
+    {
+        var q = StripComment(t["@include".Length..]).Trim();
+        if (q.Length >= 2 && q.StartsWith('"') && q.EndsWith('"')) q = q[1..^1];
+        return q;
     }
 
     private static SiiValue ParseValue(string v, int lineNo)
@@ -187,19 +230,35 @@ public static class SiiParser
         }
         if (v.StartsWith('(') && v.EndsWith(')'))
         {
-            var parts = v[1..^1].Split(',', StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
+            // 分隔符支持逗号与分号（corpus 实测：部分文件用 (1.000000; 0.000000) 分号形式）
+            var parts = v[1..^1].Split(new[] { ',', ';' }, StringSplitOptions.TrimEntries | StringSplitOptions.RemoveEmptyEntries);
             var nums = new double[parts.Length];
             for (int k = 0; k < parts.Length; k++)
-                if (!double.TryParse(parts[k], System.Globalization.CultureInfo.InvariantCulture, out nums[k]))
-                    throw new SiiParseException($"元组元素非数字：{parts[k]}（行 {lineNo}）");
+                nums[k] = ParseNumber(parts[k], lineNo, "元组元素");
             return SiiValue.OfTuple(nums);
         }
         if (v == "true") return SiiValue.OfBool(true);
         if (v == "false") return SiiValue.OfBool(false);
         // 数字优先于 token（避免 "21.0" 因含小数点被误判为引用）
-        if (double.TryParse(v, System.Globalization.CultureInfo.InvariantCulture, out var d)) return SiiValue.OfNumber(d);
+        try { return SiiValue.OfNumber(ParseNumber(v, lineNo)); }
+        catch (SiiParseException) { }
         // 其余视为 token/枚举/标识符
         return SiiValue.OfToken(v);
+    }
+
+    /// <summary>SCS 数值：支持 f/F 后缀（0.0f）、0x 十六进制、小数、科学计数法。</summary>
+    private static double ParseNumber(string v, int lineNo, string what = "数字")
+    {
+        var t = v.Trim();
+        if (t.EndsWith('f') || t.EndsWith('F')) t = t[..^1];
+        if (t.StartsWith("0x", StringComparison.OrdinalIgnoreCase))
+        {
+            if (ulong.TryParse(t[2..], System.Globalization.NumberStyles.HexNumber, null, out var h))
+                return h;
+            throw new SiiParseException($"{what}非十六进制：{v}（行 {lineNo}）");
+        }
+        if (double.TryParse(t, System.Globalization.CultureInfo.InvariantCulture, out var d)) return d;
+        throw new SiiParseException($"{what}非数字：{v}（行 {lineNo}）");
     }
 
     // ---- 行迭代辅助 ----
@@ -210,23 +269,18 @@ public static class SiiParser
         {
             var t = lines[i].Trim();
             if (t.Length == 0 || t.StartsWith('#') || t.StartsWith("//")) { i++; continue; }
-            if (t == "}") return ("}", null);
-            if (t.StartsWith("@include"))
+            if (t.StartsWith("/**"))
             {
-                var q = t["@include".Length..].Trim();
-                var path = q.StartsWith('"') && q.EndsWith('"') ? q[1..^1] : q;
-                return ("@include", path);
+                // C 风格块注释：跳至 */ 所在行（mail_data.sii 实测）
+                while (i < lines.Length && !lines[i].Contains("*/")) i++;
+                if (i < lines.Length) i++;
+                continue;
             }
+            if (t == "}") return ("}", null);
+            if (t.StartsWith("@include")) return ("@include", ExtractIncludePath(t));
             return SplitHeader(t);
         }
         return (null, null);
-    }
-
-    private static (string Class, string Name) NextUnitHeader(string[] lines, ref int i)
-    {
-        var (c, n) = PeekHeader(lines, ref i);
-        if (c is null || c == "}") throw new SiiParseException("未找到 unit header");
-        return (c, n!);
     }
 
     private static (string Class, string Name) SplitHeader(string t)
@@ -238,7 +292,8 @@ public static class SiiParser
             if (t.Contains(' ')) throw new SiiParseException($"unit header 缺 '：'：{t}");
             return (t, "");
         }
-        return (t[..colon].Trim(), t[(colon + 1)..].Trim());
+        var name = StripComment(t[(colon + 1)..]).Trim();   // header 行尾注释剥离（m1）
+        return (t[..colon].Trim(), name);
     }
 
     private static void SkipToOpenBrace(string[] lines, ref int i)
@@ -247,7 +302,8 @@ public static class SiiParser
         {
             var t = lines[i].Trim();
             if (t == "{") { i++; return; }
-            if (t.Length > 0 && !t.StartsWith('#') && !t.StartsWith("//")) throw new SiiParseException($"期望 '{{'（行 {i + 1}）");
+            if (t.Length > 0 && !t.StartsWith('#') && !t.StartsWith("//") && !t.StartsWith("/**"))
+                throw new SiiParseException($"期望 '{{'（行 {i + 1}）");
             i++;
         }
         throw new SiiParseException("文件在 '{{' 前结束");
@@ -260,10 +316,9 @@ public static class SiiParser
         {
             var t = lines[i].Trim();
             if (t == "{") { i++; return true; }
-            if (t.Length > 0 && !t.StartsWith('#') && !t.StartsWith("//"))
+            if (t.Length > 0 && !t.StartsWith('#') && !t.StartsWith("//") && !t.StartsWith("/**"))
             {
-                // header 之后的非 '{' 行：unit 无块体（如 `foo : .bar` 单行定义）——不消费该行？
-                // 该行就是 header 自身（无块），直接返回 false 且不推进（调用方已消费 header）。
+                // header 之后的非 '{' 行：unit 无块体（如 `foo : .bar` 单行定义）——不消费该行
                 return false;
             }
             i++;

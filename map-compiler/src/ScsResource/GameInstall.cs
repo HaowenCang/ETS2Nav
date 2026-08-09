@@ -36,7 +36,7 @@ public sealed class GameInstall
         var dlcDir = Path.Combine(gameDir, "dlc");
         if (Directory.Exists(dlcDir))
         {
-            foreach (var f in Directory.EnumerateFiles(dlcDir, "*.scs", SearchOption.AllDirectories))
+            foreach (var f in Directory.EnumerateFiles(dlcDir, "*.scs", SearchOption.TopDirectoryOnly))
             {
                 var fi = new FileInfo(f);
                 var name = Path.GetFileName(f);
