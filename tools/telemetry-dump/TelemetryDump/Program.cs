@@ -22,7 +22,6 @@ catch (FileNotFoundException)
     Console.WriteLine("③ 查看游戏 game.log 应出现 \"ETS2Nav bridge initialized\"。");
     return;
 }
-using (mmf)
 using var view = mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
 
 var lastSequence = -1u;
