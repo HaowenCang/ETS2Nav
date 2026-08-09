@@ -1,26 +1,22 @@
-// semaphore-scan v4（调试）：输出静态候选的原始字段 + 玩家坐标，不做过滤
+// semaphore-scan v5：状态机行为验证版
+// 决定性特征：真实信号灯在采样窗口内（10s）必然发生 state 转换（RED<->GREEN 等）
+//   + time_remaining 递减并在转换时重置。随机内存/零填充不具备此行为。
+// 流程：静态候选 → 排除零填充 → 10 秒跟踪（100ms/帧）→ 状态机验证
+// 用法：游戏在信号灯路口附近（灯在工作）时执行
+
 using System.Diagnostics;
-using System.IO.MemoryMappedFiles;
 using System.Runtime.InteropServices;
 
-(double X, double Z)? playerPos = null;
-try
-{
-    using var mmf = MemoryMappedFile.OpenExisting(@"Local\ETS2NavTelemetry");
-    using var view = mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
-    playerPos = (view.ReadDouble(0x38), view.ReadDouble(0x48));
-    Console.WriteLine($"玩家坐标: ({playerPos.Value.X:F1}, {playerPos.Value.Z:F1})");
-}
-catch (FileNotFoundException) { Console.WriteLine("玩家坐标不可用（scs-nav-bridge 未加载）"); }
-
 var proc = Process.GetProcessesByName("eurotrucks2").FirstOrDefault();
-if (proc is null) { Console.WriteLine("未找到 eurotrucks2"); Console.ReadKey(); return; }
+if (proc is null) { Console.WriteLine("未找到 eurotrucks2 进程"); Console.ReadKey(); return; }
 Console.WriteLine($"PID={proc.Id}");
 
 int[] validStates = [0, 1, 2, 4, 8, 32];
-int shown = 0;
+var rawCandidates = new List<long>();
 long scanned = 0;
 var addr = IntPtr.Zero;
+
+// 第一轮：静态候选（排除零填充）
 while (Native.VirtualQueryEx(proc.Handle, addr, out var mbi, (uint)Marshal.SizeOf<Native.MEMORY_BASIC_INFORMATION>()) != 0)
 {
     addr = (IntPtr)((long)mbi.BaseAddress + (long)mbi.RegionSize);
@@ -33,29 +29,72 @@ while (Native.VirtualQueryEx(proc.Handle, addr, out var mbi, (uint)Marshal.SizeO
     if (!Native.ReadProcessMemory(proc.Handle, mbi.BaseAddress, buf, buf.Length, out _)) continue;
     scanned += buf.Length;
 
-    for (int i = 0; i + 48 <= buf.Length; i += 4)
+    for (int i = 0; i + 96 <= buf.Length; i += 4)
     {
         int state = BitConverter.ToInt32(buf, i + 44);
         if (Array.IndexOf(validStates, state) < 0) continue;
-        int type = BitConverter.ToInt32(buf, i + 36);
-        if (type is not (1 or 2)) continue;
+        // 排除零填充：position/time/state 全零且下一槽全零
+        bool zeroSlot = BitConverter.ToInt32(buf, i) == 0 && BitConverter.ToInt32(buf, i + 4) == 0
+            && BitConverter.ToInt32(buf, i + 8) == 0 && BitConverter.ToSingle(buf, i + 40) == 0
+            && state == 0;
+        bool nextZero = BitConverter.ToInt32(buf, i + 48) == 0 && BitConverter.ToInt32(buf, i + 52) == 0
+            && BitConverter.ToInt32(buf, i + 56) == 0 && BitConverter.ToSingle(buf, i + 88) == 0
+            && BitConverter.ToInt32(buf, i + 92) == 0;
+        if (zeroSlot && nextZero) continue;
+        // time 范围
         float time = BitConverter.ToSingle(buf, i + 40);
         if (time is < -1 or > 300) continue;
-        float px = BitConverter.ToSingle(buf, i);
-        float pz = BitConverter.ToSingle(buf, i + 8);
-        if (Math.Abs(px) > 500000 || Math.Abs(pz) > 500000) continue;
-        short cx = BitConverter.ToInt16(buf, i + 12);
-        short cy = BitConverter.ToInt16(buf, i + 14);
-        double wx1 = px + cx * 512.0, wz1 = pz + cy * 512.0;
-        string dist1 = playerPos is { } pp ? $"{(wx1 - pp.X):F0},{(wz1 - pp.Z):F0}" : "-";
-        string dist2 = playerPos is { } qq ? $"{(px - qq.X):F0},{(pz - qq.Z):F0}" : "-";
-        if (shown++ < 40)
-            Console.WriteLine($"0x{((long)mbi.BaseAddress + i):x12} pos=({px:F0},{BitConverter.ToSingle(buf, i + 4):F0},{pz:F0}) cx={cx} cy={cy} type={type} time={time:F1} state={state} d1=({dist1}) d2=({dist2})");
+        rawCandidates.Add((long)mbi.BaseAddress + i);
     }
 }
-Console.WriteLine($"扫描 {scanned / 1024 / 1024} MB，静态候选 {shown}（前 40 条）");
+Console.WriteLine($"静态候选（非零填充）：{rawCandidates.Count} 处（扫描 {scanned / 1024 / 1024} MB）");
+
+// 第二轮：10 秒跟踪（100ms/帧），验证状态机行为
+const int frames = 100;
+var active = rawCandidates.Select(a => (Addr: a, States: new int[frames], Times: new float[frames], Valid: 0)).ToList();
+var sw = Stopwatch.StartNew();
+for (int f = 0; f < frames; f++)
+{
+    foreach (var c in active)
+    {
+        var one = new byte[48];
+        if (Native.ReadProcessMemory(proc.Handle, (IntPtr)c.Addr, one, 48, out _))
+        {
+            c.States[f] = BitConverter.ToInt32(one, 44);
+            c.Times[f] = BitConverter.ToSingle(one, 40);
+            c.Valid++;
+        }
+    }
+    if (f < frames - 1) Thread.Sleep(100);
+}
+Console.WriteLine($"跟踪完成（{sw.Elapsed.TotalSeconds:F1}s）");
+
+// 判定：state 变化 ≥1 次 且 time 存在递减段（>1s）
+var confirmed = new List<(long Addr, int Transitions, float MaxDrop)>();
+foreach (var c in active)
+{
+    if (c.Valid < 30) continue;
+    int transitions = 0;
+    for (int f = 1; f < frames; f++)
+        if (c.States[f] != 0 && c.States[f - 1] != 0 && c.States[f] != c.States[f - 1])
+            transitions++;
+    // time 最大递减（允许 0 值跳过）
+    float maxDrop = 0;
+    for (int f = 1; f < frames; f++)
+    {
+        float a = c.Times[f - 1], b = c.Times[f];
+        if (a > 0.5f && b >= 0 && a - b > maxDrop) maxDrop = a - b;
+    }
+    if (transitions >= 1 || maxDrop > 2.0f)
+        confirmed.Add((c.Addr, transitions, maxDrop));
+}
+Console.WriteLine($"状态机验证通过：{confirmed.Count} 处");
+foreach (var (a, tr, md) in confirmed.Take(30))
+    Console.WriteLine($"  0x{a:x12}  转换×{tr}  最大递减 {md:F1}s");
+
 var outPath = Path.Combine(AppContext.BaseDirectory, "semaphore-scan-results.txt");
-File.WriteAllLines(outPath, new[] { $"player=({playerPos?.X:F1},{playerPos?.Z:F1})", $"candidates={shown}" });
+File.WriteAllLines(outPath, confirmed.Select(c => $"0x{c.Addr:x12} t={c.Transitions} drop={c.MaxDrop:F1}"));
+Console.WriteLine($"结果已保存：{outPath}（{confirmed.Count} 处）");
 Console.WriteLine("按任意键退出...");
 Console.ReadKey();
 
