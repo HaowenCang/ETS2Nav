@@ -7,17 +7,17 @@
 
 ## §1 当前状态
 
-**最后更新**：2026-08-10（P1 启动：P1-00 Baseline Freeze 进行中）
+**最后更新**：2026-08-10（P1 推进：P1-00~P1-04 完成/收尾，P1-02 上层迁移进行中）
 
 - [x] **P0 阶段**（✅ 门评审通过 2026-08-10，tag v0.1.0-p0；A6/A8 工具并入 P1-01）
-- [ ] **P1 Map Compiler**（🔄 进行中：P1-00 Baseline Freeze；执行基线 = P1-map-compiler-plan.md）
+- [ ] **P1 Map Compiler**（🔄 进行中：P1-00/P1-03/P1-04 完成，P1-02 上层迁移收尾；执行基线 = P1-map-compiler-plan.md）
 - [ ] P2 Navigation Core
 - [ ] P3 Driving Assistant
 - [ ] P4 正式 UI
 - [ ] P5 全欧洲测试
 - [ ] P6 性能优化与发布
 
-**当前任务**：P1 启动（Map Compiler 完整化 + TruckLib 复用评估）。**P0-D 验收通过**（avg -1.3% / 1%low +0.7%）；**P0-B 数据源重大定案**：ETS2LA 插件共存激活信号灯数组（隔离测试定案：仅 ets2la_plugin.dll 单文件激活，无主程序依赖，方案 C：先共存推进后评估逆向）。
+**当前任务**：P1-02 上层迁移（Sector/Sii/Graph 改经 Overlay）→ 完成后进入 P1-05 Semantic Graph。**P1 近期完成**：P1-03 Definition Layer（61 测试，全欧洲 1358 sector 零错误）、P1-04 Prefab Navigation Parser（Berlin 220/220 prefab、928 movements）。**P0-D 验收通过**（avg -1.3% / 1%low +0.7%）；**P0-B 数据源重大定案**：ETS2LA 插件共存激活信号灯数组（隔离测试定案：仅 ets2la_plugin.dll 单文件激活，无主程序依赖，方案 C：先共存推进后评估逆向）。
 
 **已建立**：执行计划（本文件）、本地 git 仓库、.gitignore、GitHub 仓库（HaowenCang/ETS2Nav private）。
 
@@ -44,14 +44,14 @@
 | ID | 任务 | 完成条件 | 状态 |
 |---|---|---|---|
 | A1 | 下载官方 SDK 1.14 与 scs_extractor（官方 wiki） | 压缩包入库（vendor/） | ✅ 已入库 vendor/scs_sdk_1_14（含官方头文件/示例）、vendor/scs_extractor_1_55（exe） |
-| A2 | 解包 base.scs，研读 `def/world/semaphore_profile.sii`、def 资源结构 | 形成格式笔记（docs/format-notes/） | 🔄 def.scs 已解包（66928 条目），笔记已写；base_map.scs 解包后台运行中 |
+| A2 | 解包 base.scs，研读 `def/world/semaphore_profile.sii`、def 资源结构 | 形成格式笔记（docs/format-notes/） | ✅ def.scs 已解包（66928 条目）+ base_map 全欧洲 1358 sector 解析零错误（P1-03 实证）；笔记 docs/format-notes/（hashfs.md 等） |
 | A3 | Map Compiler 骨架（语言按 v0.2 §12：C# 优先；独立实现，不复制 GPL 代码） | 可解包 .scs HashFS、列出 archive 内容 | ✅ 全部完成：HashFS v1/v2 读取器 + ScsSector 解析器（17 种 item 类型 + 节点表）；**282 sector 与 TruckLib 逐项对照零差异**（174735 items / 248410 nodes，24 单测全过） |
 | A4 | 单城市解析：sector → prefab → navigation path | 从代表性城市（含十字口/环岛/高速出入口/公司/加油站）提取结构化数据 | ✅ 柏林区域 16 sector 加载（中心 (12725,-9846)，覆盖 sec+0002/+0003-0002/-0003 等） |
 | A5 | 有向图构建（Routing + Junction Graph，v0.2 §13–15） | 单城市图可查询 | ✅ ScsGraph：全局节点表 + 跨 sector 连接 + prefab 全连接近似（双向边）；柏林核心城区：道路节点 2426/主分量 87%，+缓冲 16 sector：道路节点 6194/主分量 80% |
 | A6 | Graph Validation 基础（v0.2 §17 结构/方向检测） | 检测器可运行并输出报告 | ✅ 并入 P1-01（ScsValidation 拆分正式化） |
-| A7 | 100–500 随机 OD 测试（v0.2 §66） | 断路/非法掉头/逆行报告 | 🔄 框架已跑通：主分量内 200/200 OD 100% 可达（随机种子固定）；边界小分量已定位为截断效应，待 A6 正式化 |
+| A7 | 100–500 随机 OD 测试（v0.2 §66） | 断路/非法掉头/逆行报告 | ✅ 框架已跑通：主分量内 200/200 OD 100% 可达（随机种子固定）；边界小分量已定位为截断效应；正式化并入 P1-01（ScsValidation）+ P1-06（Berlin Gate） |
 | A8 | map-inspector + graph-debugger 工具（v0.2 §74） | 可查看节点/边并点击 A/B 出路线 | ✅ 并入 P1-01（CLI + MapLibre Web + Dijkstra） |
-| **门** | **无需 QGIS 人工编辑，单城市 routing graph 基本正确（v0.2 §75）** | — | ⏳ |
+| **门** | **无需 QGIS 人工编辑，单城市 routing graph 基本正确（v0.2 §75）** | — | ✅ 2026-08-10 P0 门评审通过（tag v0.1.0-p0）；柏林核心城区主分量 87%，缓冲区 80% |
 
 ### P0-B 红绿灯 ±1 s（最高功能可行性风险，v0.2 §64–65）
 
@@ -65,7 +65,7 @@
 | B6 | 实验 TL-02 Phase Anchor（H1 全局 vs H2 局部，v0.2 §30） | 判定相位锚定模型 | ✅ **H2 确认**：sim 连续窗口内驶离返回后相位跳变（5.9→27.5s mod 周期）；纯计算倒计时不可行，需观测锚定+外推（见 docs/validation/tl02-phase-anchor-2026-08-09.md） |
 | B7 | 实验 TL-03 Warp / TL-04 Reset / TL-05 Special Profiles（v0.2 §64） | 行为建模 | ⏳（v0.3 与逆向激活评估一并规划） |
 | **门** | Go/No-Go：Case A/B（|e|≤1 s，v0.2 §65）→ 倒计时入 V1；Case C → STATE_ONLY；Case D → UNAVAILABLE | — | ✅ **Go（Case B）**：TL-01 时钟域确定（1:1 真实秒）、TL-02 H2 加载锚定确认、同窗口外推实测最大误差 0.483s ≤1s 验收（见 docs/validation/p0b-traffic-light-conclusions-2026-08-09.md）；倒计时方案：观测锚定+段长学习+外推，未锚定期间 STATE_ONLY |
-| B8 | **自研精确数据源 semaphore-bridge**（v0.2 §64 超越项） | 游戏内内存读取，共享内存 Local\ETS2NavSemaphore | ✅ **v8 定稿**：48B/灯布局反查定案（pos+cx/cy+quat+type+time+state+id）；SEH 兜底+协作取消+越界修复；**隔离测试定案：需 ets2la_plugin.dll 共存激活数组**（见 docs/validation/semaphore-bridge-2026-08-10.md）；待补验证：退出游戏不崩溃（v8 卸载修复） |
+| B8 | **自研精确数据源 semaphore-bridge**（v0.2 §64 超越项） | 游戏内内存读取，共享内存 Local\ETS2NavSemaphore | ✅ **v8 定稿**：48B/灯布局反查定案（pos+cx/cy+quat+type+time+state+id）；SEH 兜底+协作取消+越界修复；**隔离测试定案：需 ets2la_plugin.dll 共存激活数组**（见 docs/validation/semaphore-bridge-2026-08-10.md）；退出游戏不崩溃已由 C1 实测闭环（2026-08-10） |
 
 ### P0-C Telemetry 稳定性（v0.2 §75）
 
@@ -106,11 +106,11 @@
 
 | ID | 任务 | 完成条件 | 状态 |
 |---|---|---|---|
-| P1-00 | Baseline Freeze（README/PLAN/ADR/决策记录） | P1 baseline documented | 🔄 进行中（ADR-001~007 已建） |
-| P1-01 | Validation & Debug Tooling（GraphValidator 拆分 + severity + diagnostics + map-inspector + graph-debugger） | Berlin P0 graph 可完整可视化并显示 validation error | ⏳ |
-| P1-02 | Resource Resolver（IScsResourceProvider + HashFs/Directory/Overlay + DLC 检测 + fingerprint） | 所有上层模块仅经 virtual resource API 读取 | 🔄 Resolver 层完成（8 测试）+ 评审修复（Dispose/ResolveSource/指纹 UTC/路径穿越/探测警告）；**上层迁移（Sector/Sii/Graph 改经 Overlay）未开始** |
-| P1-03 | Definition Layer（SII corpus + include + road look + country/city/company/semaphore/ferry/train + sign 基础） | Berlin 所需定义全部解析为 typed model | ⏳ |
-| P1-04 | Prefab Navigation Parser（descriptor/connector/curves/navigation lanes/movement/signal ID） | semantic corpus 全部典型 prefab 恢复合法 movement | ⏳ |
+| P1-00 | Baseline Freeze（README/PLAN/ADR/决策记录） | P1 baseline documented | ✅ 2026-08-10：ADR-001~007 建齐 + P1-map-compiler-plan.md 执行基线定稿 |
+| P1-01 | Validation & Debug Tooling（GraphValidator 拆分 + severity + diagnostics + map-inspector + graph-debugger） | Berlin P0 graph 可完整可视化并显示 validation error | ✅ 工具全部落地（2026-08-10）：ScsValidation（6 测试）+ map-inspector（--defs/--prefab）+ graph-debugger；Berlin 可视化验收并入 P1-06 Gate |
+| P1-02 | Resource Resolver（IScsResourceProvider + HashFs/Directory/Overlay + DLC 检测 + fingerprint） | 所有上层模块仅经 virtual resource API 读取 | 🔄 Resolver 层完成（8 测试）+ 评审修复（Dispose/ResolveSource/指纹 UTC/路径穿越/探测警告）；**上层迁移（Sector/Sii/Graph 改经 Overlay）进行中** |
+| P1-03 | Definition Layer（SII corpus + include + road look + country/city/company/semaphore/ferry/train + sign 基础） | Berlin 所需定义全部解析为 typed model | ✅ 2026-08-10：SiiParser corpus 增强（失败率 6.4%→0.3%，余量全在 vehicle/climate 非地图语义）+ DefinitionResolver 诊断（FailedFiles/traffic_rule 模型/去重）+ GpsAvoid 读 road_flags（TruckLib rflag4 bit4）；61 测试；全欧洲 1358 sector 零错误；笔记 road-look.md |
+| P1-04 | Prefab Navigation Parser（descriptor/connector/curves/navigation lanes/movement/signal ID） | semantic corpus 全部典型 prefab 恢复合法 movement | ✅ 2026-08-10：ScsPrefab（PpdReader v0x19 对照 TruckLib.Models + PrefabResolver token→PPD 映射 + PrefabMovements movement 恢复含转向分类/信号灯绑定 + 字符集数组化/哈希 token 容错）；Berlin 220/220 prefab、928 movements；4 测试；笔记 prefab-descriptor.md |
 | P1-05 | Semantic Graph（SemanticMap + RoadSegment + JunctionMovement + RoutingGraphBuilder + JunctionGraphBuilder；删除双向/全连接近似） | Berlin 正式 semantic graph 可生成 | ⏳ |
 | P1-06 | **Berlin Semantic Gate**（独立 Gate：≥500 deterministic random OD，0 fatal / 0 已知非法 movement / 0 逆行） | Gate 通过 | ⏳ |
 | P1-07 | Germany Scale Test（完整 Germany build + validation 无 blocker + random OD ≥500） | 通过 | ⏳ |
@@ -128,10 +128,10 @@ P1 Gates（G1~G13）见 P1-map-compiler-plan.md §126–§138；Exit Criteria §
 
 | ID | 风险 | 等级 | 缓解 | 状态 |
 |---|---|---|---|---|
-| R1 | Prefab Navigation Semantics | Critical | semantic corpus + oracle 对照 + graph-debugger + 逐 family 扩展 | ⏳ P1-04 前置 |
-| R2 | Road Direction Semantics | Critical | road look + node direction + telemetry traces + fixtures | ⏳ P1-03/P1-05 |
+| R1 | Prefab Navigation Semantics | Critical | semantic corpus + oracle 对照 + graph-debugger + 逐 family 扩展 | 🔄 P1-04 完成（movement 恢复工具链就绪）；语义合法性验证待 P1-05/P1-06 |
+| R2 | Road Direction Semantics | Critical | road look + node direction + telemetry traces + fixtures | 🔄 P1-03 完成（Road 字段对照 TruckLib 定稿 + road-look.md 勘误）；graph 语义验证待 P1-05 |
 | R3 | Full Europe Format Diversity | High | Berlin → Germany → Europe 分阶段 | ⏳ P1-07/P1-13 |
-| R4 | Definition Override | High | Resource Resolver 先行（P1-02） | 🔄 Resolver 层完成，上层迁移待 P1-03 |
+| R4 | Definition Override | High | Resource Resolver 先行（P1-02） | 🔄 Resolver 层完成，上层迁移进行中（P1-02） |
 | R5 | Sign/Speed Semantics | Medium/High | Telemetry speed limit ground truth | ⏳ P1-09 |
 | R6 | TruckLib License | Medium | oracle-only 定位（ADR-005） | ✅ 已定案 |
 | R7 | Dataset Schema Premature Freeze | Medium | 语义图稳定后冻结 v1 | ⏳ P1-11 |
