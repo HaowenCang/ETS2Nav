@@ -12,6 +12,7 @@
     <ProjectReference Include="..\..\..\map-compiler\src\ScsValidation\ScsValidation.csproj" />
     <ProjectReference Include="..\..\..\map-compiler\src\ScsGraph\ScsGraph.csproj" />
     <ProjectReference Include="..\..\..\map-compiler\src\ScsSector\ScsSector.csproj" />
+    <ProjectReference Include="..\..\..\map-compiler\src\ScsResource\ScsResource.csproj" />
   </ItemGroup>
 
 </Project>

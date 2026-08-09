@@ -207,6 +207,15 @@ public sealed class SectorFile
         return sec;
     }
 
+    /// <summary>从资源层打开的流读取（P1-02：上层仅经 IScsResourceProvider 读取）。</summary>
+    public static SectorFile Read(Stream stream, string sectorName)
+    {
+        using var r = new BinaryReader(stream, System.Text.Encoding.UTF8, leaveOpen: true);
+        var sec = Read(stream, r);
+        sec.SectorName = sectorName;
+        return sec;
+    }
+
     /// <summary>从已定位的流读取（供调试/增量解析）。</summary>
     internal static SectorFile Read(Stream fs, BinaryReader r)
     {

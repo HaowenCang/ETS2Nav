@@ -8,26 +8,55 @@
 using System.Text.Json;
 using ScsGraph;
 using ScsSector;
+using ScsResource;
 using ScsValidation;
 using ScsValidation.Validators;
 
 var cmdArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
+var installDir = Arg(args, "--install");   // 游戏安装根目录（经 GameInstall+Overlay 直接读 .scs）
 string dir = Arg(args, "--dir") ?? @"E:\Projects\Pi\ETS2Nav\vendor\extracted\base_map\map\europe";
-var secNames = (Arg(args, "--sectors") ?? "sec+0002-0002,sec+0002-0003,sec+0003-0002,sec+0003-0003,sec+0002-0001,sec+0002-0004,sec+0003-0001,sec+0003-0004")
-    .Split(',', StringSplitOptions.RemoveEmptyEntries);
+
+// 资源层（P1-02）：所有 sector 读取经 IScsResourceProvider；上层不直接触碰文件系统
+IScsResourceProvider overlay = installDir != null
+    ? BuildInstallOverlay(installDir)
+    : new DirectoryProvider(dir);
+
+var secNames = (Arg(args, "--sectors") ?? "")
+    .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+if (cmdArgs.Contains("--all-sectors"))
+{
+    secNames = overlay.Enumerate("/map/europe")
+        .Where(p => p.EndsWith(".base") && p.Contains("/sec+"))
+        .Select(p => Path.GetFileNameWithoutExtension(p))
+        .OrderBy(n => n)
+        .ToArray();
+}
+else if (secNames.Length == 0)
+{
+    secNames = new[] { "sec+0002-0002", "sec+0002-0003", "sec+0003-0002", "sec+0003-0003", "sec+0002-0001", "sec+0002-0004", "sec+0003-0001", "sec+0003-0004" };
+}
 
 var sectors = new List<SectorFile>();
 foreach (var name in secNames)
 {
     foreach (var ext in new[] { ".base", ".aux" })
     {
-        var path = Path.Combine(dir, name + ext);
-        if (!File.Exists(path)) continue;
-        sectors.Add(SectorFile.Read(path));
+        var vp = $"/map/europe/{name}{ext}";
+        if (!overlay.Exists(vp)) continue;
+        using var s = overlay.Open(vp);
+        sectors.Add(SectorFile.Read(s, name + ext));
     }
 }
 Console.WriteLine($"已加载 {sectors.Count} 个 sector（{sectors.Sum(s => s.Items.Count)} items / {sectors.Sum(s => s.Nodes.Count)} nodes）");
 var graph = RoadGraph.Build(sectors);
+
+// --install 模式：GameInstall.Detect + BuildOverlay（含 DLC 地图过滤）
+static IScsResourceProvider BuildInstallOverlay(string root)
+{
+    var install = GameInstall.Detect(root);
+    Console.WriteLine($"检测到游戏安装：v{install.GameVersion}，{install.Archives.Count} archives / {install.EnabledDlc.Count} DLC");
+    return install.BuildOverlay();
+}
 
 string? Arg(string[] a, string key)
 {
