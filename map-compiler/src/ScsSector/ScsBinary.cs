@@ -1,7 +1,7 @@
 // SCS 地图二进制格式基础读取器（独立实现）
 // Token：8 字节 u64，base-38 编码（字符集 \0 0-9 a-z _），低位=首字符
 // 固定点：i32 × 1/256（坐标）、1/10 等
-// MIT License — ETS2Nav 项目
+// GPL-3.0 — ETS2Nav 项目
 
 using System.Text;
 

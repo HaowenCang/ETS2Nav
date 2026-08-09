@@ -3,7 +3,7 @@
 // .base 文件布局：Header + u32 item_count + items（u32 type + base part）
 //   + u32 node_count + nodes + u32 vis_area_count + u64[] vis_area uids
 // 注意：item 的 data part 位于独立 .data 文件，P0 不解析。
-// MIT License — ETS2Nav 项目
+// GPL-3.0 — ETS2Nav 项目
 
 namespace ScsSector;
 

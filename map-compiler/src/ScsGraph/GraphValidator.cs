@@ -1,7 +1,7 @@
 // Graph Validation（v0.2 §17 基础：结构检测 + 方向检测雏形）。
 // 结构检测：自环、重复边、节点引用完整性、死端统计。
 // 方向检测：利用 MapNode.BackwardItemUid/ForwardItemUid 与 Road 方向的一致性。
-// MIT License — ETS2Nav 项目
+// GPL-3.0 — ETS2Nav 项目
 
 using ScsSector;
 

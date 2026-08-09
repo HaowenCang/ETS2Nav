@@ -1,7 +1,7 @@
 // HashFS（.scs 容器）读取器 v1/v2 独立实现。
 // 格式布局：社区逆向结论（见 docs/format-notes/hashfs.md），本实现独立编写。
 // v2 于游戏 1.50 引入：entry/metadata 表 zlib 压缩、二进制目录列表、打包纹理（GDeflate，暂不支持提取）。
-// MIT License — ETS2Nav 项目
+// GPL-3.0 — ETS2Nav 项目
 
 using System.IO.Compression;
 using System.Text;

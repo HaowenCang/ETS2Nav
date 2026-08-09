@@ -28,7 +28,7 @@
 | # | 事项 | 状态 | 决策 | 影响 |
 |---|---|---|---|---|
 | D1 | GitHub 远程仓库：名称、可见性 | ✅ 已确认 | `ETS2Nav`，**private** | 已创建并推送 |
-| D2 | 项目许可证 | ✅ 已确认 | **MIT**（Copyright 2026 HaowenCang） | LICENSE 已添加；仍遵守 v0.2 §12：不复制 GPL 实现 |
+| D2 | 项目许可证 | ✅ 已确认（2026-08-09 修订） | **GPL-3.0**（原 MIT；为复用 GPL 生态实现而改） | LICENSE 已更新；v0.2 §12 的"不复制 GPL 实现"约束解除，可复用 TruckLib/ETS2LA/TruckSim Maps |
 | D3 | ETS2 安装路径 | ✅ 已确认 | `E:\SteamLibrary\steamapps\common\Euro Truck Simulator 2` | P0-A 可用真实游戏文件 |
 | D4 | P0 内部优先级 | ✅ 已确认 | 按建议：骨架 + P0-A 先行，P0-B 静态部分（B1–B2）并行 | 任务排程生效 |
 
@@ -127,4 +127,4 @@
 - 最高功能风险：Traffic Light ±1 s（P0-B）——SDK 无运行时相位通道；相位锚定 H1/H2 未定；**禁止在设计阶段预设时钟模型**（v0.2 §28）。
 - 中等：speed camera、sign/exit number、speed-limit propagation、动态事件。
 - 低：Telemetry、POI、A*、rerouting、TTS、LAN、UI。
-- 合规：GPL-2.0（TruckLib）/GPL-3.0（TruckSim Maps）不直接复制或链接，仅作研究对照（v0.2 §12，许可证决定前默认）。
+- 合规（2026-08-09 修订）：项目已改 GPL-3.0，TruckLib（GPL-2.0）/TruckSim Maps（GPL-3.0）/ETS2LA（GPL-3.0）可直接复用；注意 GPL-2.0-only 与 GPL-3.0 的兼容性细节（TruckLib 需确认 or-later 条款或独立分发）。

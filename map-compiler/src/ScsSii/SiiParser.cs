@@ -1,5 +1,5 @@
 // SCS SII 文本格式解析器（独立实现，基于官方 def 文件观察与社区格式描述）
-// MIT License — ETS2Nav 项目
+// GPL-3.0 — ETS2Nav 项目
 
 namespace ScsSii;
 

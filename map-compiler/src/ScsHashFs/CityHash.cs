@@ -1,7 +1,7 @@
 // CityHash64 独立实现（SCS HashFS 使用的变体，与 cityhash-c 移植版逐操作一致）。
 // 算法公开规范；本实现以 64 位无符号运算 + unchecked 溢出（等价于 Python 参考的 & MASK）。
 // 用途：HashFS 路径哈希 CityHash64(utf8(salt + path_without_leading_slash))。
-// MIT License — ETS2Nav 项目
+// GPL-3.0 — ETS2Nav 项目
 
 namespace ScsHashFs;
 

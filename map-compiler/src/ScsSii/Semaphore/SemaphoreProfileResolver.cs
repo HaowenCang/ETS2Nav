@@ -1,6 +1,6 @@
 // Semaphore profile 模型与继承链解析（B2）
 // 基于 docs/format-notes/semaphore-profile.md 的格式结论
-// MIT License — ETS2Nav 项目
+// GPL-3.0 — ETS2Nav 项目
 
 using ScsSii;
 

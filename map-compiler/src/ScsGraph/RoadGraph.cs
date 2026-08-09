@@ -1,7 +1,7 @@
 // 道路图模型（v0.2 §14：紧凑结构）。
 // P0 简化：节点 = MapNode；边 = Road item（双向，方向细化待 road_look 车道数据）；
 // prefab 通过共享节点连接（prefab 内部连通性待 navigation path 细化）。
-// MIT License — ETS2Nav 项目
+// GPL-3.0 — ETS2Nav 项目
 
 using ScsSector;
 
