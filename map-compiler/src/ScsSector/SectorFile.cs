@@ -188,6 +188,8 @@ public sealed class SectorFile
     public uint CoreMapVersion { get; init; }
     public required string GameId { get; init; }
     public uint GameMapVersion { get; init; }
+    /// <summary>来源 sector 名（如 sec+0002+0003），供诊断/检查器定位。</summary>
+    public string? SectorName { get; set; }
     public required List<MapItem> Items { get; init; }
     public required List<MapNode> Nodes { get; init; }
     public required List<ulong> VisibilityAreaUids { get; init; }
@@ -200,7 +202,9 @@ public sealed class SectorFile
     {
         using var fs = File.OpenRead(path);
         using var r = new BinaryReader(fs);
-        return Read(fs, r);
+        var sec = Read(fs, r);
+        sec.SectorName = Path.GetFileNameWithoutExtension(path);
+        return sec;
     }
 
     /// <summary>从已定位的流读取（供调试/增量解析）。</summary>
@@ -240,6 +244,7 @@ public sealed class SectorFile
             CoreMapVersion = version,
             GameId = gameId,
             GameMapVersion = gameMapVersion,
+
             Items = items,
             Nodes = nodes,
             VisibilityAreaUids = vis,
