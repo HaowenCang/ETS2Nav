@@ -1,11 +1,27 @@
-// semaphore-scan v2：两轮动态验证的信号灯结构扫描器
-// 第一轮：静态特征匹配候选（state 枚举 + time float + 坐标 + 48B/灯）
-// 第二轮（500ms 后）：候选的 time_remaining 必须递减（Δ≈0.5-2s）→ 真信号灯
-// 排除模块映像区（低地址）减少误报
-// 用法：游戏在信号灯路口附近运行时执行；结果写入 semaphore-scan-results.txt
+// semaphore-scan v3：空间过滤版信号灯结构扫描器
+// 决定性特征：信号灯世界坐标 ≈ 玩家坐标（信号灯在路口，玩家在信号灯附近）
+//   世界坐标 = position + (cx, 0, cy) * 512（ETS2LA GetWorldCoordinates 语义）
+// 过滤链：静态特征 → 玩家距离（<1500m）→ 动态验证（time_remaining 递减）
+// 玩家坐标从 Local\ETS2NavTelemetry（我们自己的插件）读取
+// 用法：游戏在信号灯路口附近运行时执行
 
 using System.Diagnostics;
+using System.IO.MemoryMappedFiles;
 using System.Runtime.InteropServices;
+
+// 读取玩家坐标（scs-nav-bridge 共享内存）
+(double X, double Z)? playerPos = null;
+try
+{
+    using var mmf = MemoryMappedFile.OpenExisting("Local\\ETS2NavTelemetry");
+    using var view = mmf.CreateViewAccessor(0, 0, MemoryMappedFileAccess.Read);
+    playerPos = (view.ReadDouble(0x38), view.ReadDouble(0x48));
+    Console.WriteLine($"玩家坐标: ({playerPos.Value.X:F1}, {playerPos.Value.Z:F1})");
+}
+catch (FileNotFoundException)
+{
+    Console.WriteLine("未找到 ETS2NavTelemetry（scs-nav-bridge 插件未加载？）——空间过滤不可用");
+}
 
 var proc = Process.GetProcessesByName("eurotrucks2").FirstOrDefault();
 if (proc is null)
@@ -18,18 +34,17 @@ if (proc is null)
 Console.WriteLine($"PID={proc.Id}");
 
 int[] validStates = [0, 1, 2, 4, 8, 32];
-var candidates = new List<(long Addr, float Time)>();
+var candidates = new List<(long Addr, double X, double Z, float Time)>();
 long scanned = 0;
 var addr = IntPtr.Zero;
 
-// 第一轮：静态特征
+// 第一轮：静态特征 + 空间过滤
 while (Native.VirtualQueryEx(proc.Handle, addr, out var mbi, (uint)Marshal.SizeOf<Native.MEMORY_BASIC_INFORMATION>()) != 0)
 {
     addr = (IntPtr)((long)mbi.BaseAddress + (long)mbi.RegionSize);
     if (mbi.State != 0x1000) continue;
     int prot = (int)mbi.Protect;
     if (prot is 0 or 0x100 or 0x200 or 0x300 or 0x400 or 0x500 or 0x600 or 0x700) continue;
-    // 跳过模块映像区（基址附近，通常是静态数据误报源）
     if ((long)mbi.BaseAddress < 0x140000000) continue;
     long region = Math.Min((long)mbi.RegionSize, 8L * 1024 * 1024);
     var buf = new byte[region];
@@ -44,48 +59,50 @@ while (Native.VirtualQueryEx(proc.Handle, addr, out var mbi, (uint)Marshal.SizeO
         if (type is not (1 or 2)) continue;
         float time = BitConverter.ToSingle(buf, i + 40);
         if (time is < -1 or > 300) continue;
+        // 世界坐标 = position + (cx, 0, cy)*512
         float px = BitConverter.ToSingle(buf, i);
         float pz = BitConverter.ToSingle(buf, i + 8);
-        if (Math.Abs(px) > 500000 || Math.Abs(pz) > 500000) continue;
+        short cx = BitConverter.ToInt16(buf, i + 12);
+        short cy = BitConverter.ToInt16(buf, i + 14);
+        double wx = px + cx * 512.0;
+        double wz = pz + cy * 512.0;
+        if (Math.Abs(wx) > 500000 || Math.Abs(wz) > 500000) continue;
+        // 空间过滤：玩家坐标附近 1500m
+        if (playerPos is { } pp)
+        {
+            double dx = wx - pp.X, dz = wz - pp.Z;
+            if (dx * dx + dz * dz > 1500.0 * 1500.0) continue;
+        }
         int ns = BitConverter.ToInt32(buf, i + 48 + 44);
-        bool nextOk = ns == 0 || Array.IndexOf(validStates, ns) >= 0;
-        if (nextOk)
-            candidates.Add(((long)mbi.BaseAddress + i, time));
+        if (ns != 0 && Array.IndexOf(validStates, ns) < 0) continue;
+        candidates.Add(((long)mbi.BaseAddress + i, wx, wz, time));
     }
 }
-Console.WriteLine($"第一轮：扫描 {scanned / 1024 / 1024} MB，静态候选 {candidates.Count} 处");
+Console.WriteLine($"第一轮：静态+空间过滤后候选 {candidates.Count} 处");
 
 // 第二轮：动态验证（time_remaining 递减）
+var confirmed = new List<(long Addr, double X, double Z, float T0, float T1)>();
 if (candidates.Count > 0)
 {
     Console.WriteLine("等待 800ms 后验证递减...");
     Thread.Sleep(800);
-    var confirmed = new List<(long Addr, float T0, float T1)>();
-    foreach (var (caddr, t0) in candidates)
+    foreach (var (caddr, wx, wz, t0) in candidates)
     {
-        // 读取同一地址当前 time（跨页处理：候选在缓冲区中的偏移未知，直接按地址读 48 字节）
         var one = new byte[48];
         if (!Native.ReadProcessMemory(proc.Handle, (IntPtr)caddr, one, 48, out _)) continue;
         float t1 = BitConverter.ToSingle(one, 40);
         float dt = t0 - t1;
-        // 递减 0.2~2.5s（800ms 间隔）→ 真实倒计时；红绿灯转换瞬间 t1 可能重置（周期跳变），容差放宽
         if (dt is > 0.05f and < 5.0f)
-            confirmed.Add((caddr, t0, t1));
+            confirmed.Add((caddr, wx, wz, t0, t1));
     }
     Console.WriteLine($"动态验证通过：{confirmed.Count} 处");
-    foreach (var (caddr, t0, t1) in confirmed.Take(50))
-        Console.WriteLine($"  0x{caddr:x12}  time {t0:F1}s -> {t1:F1}s");
+    foreach (var (caddr, wx, wz, t0, t1) in confirmed.Take(50))
+        Console.WriteLine($"  0x{caddr:x12}  世界({wx:F0},{wz:F0})  time {t0:F1}s->{t1:F1}s");
+}
 
-    var outPath = Path.Combine(AppContext.BaseDirectory, "semaphore-scan-results.txt");
-    File.WriteAllLines(outPath, confirmed.Select(c => $"0x{c.Addr:x12}"));
-    Console.WriteLine($"结果已保存：{outPath}（{confirmed.Count} 处）");
-}
-else
-{
-    Console.WriteLine("无候选。请确认：游戏在驾驶界面、信号灯路口附近、灯在工作。");
-    var outPath = Path.Combine(AppContext.BaseDirectory, "semaphore-scan-results.txt");
-    File.WriteAllLines(outPath, Array.Empty<string>());
-}
+var outPath = Path.Combine(AppContext.BaseDirectory, "semaphore-scan-results.txt");
+File.WriteAllLines(outPath, confirmed.Select(c => $"0x{c.Addr:x12}  ({c.X:F0},{c.Z:F0})  t={c.T0:F1}->{c.T1:F1}"));
+Console.WriteLine($"结果已保存：{outPath}（{confirmed.Count} 处）");
 Console.WriteLine("按任意键退出...");
 Console.ReadKey();
 
