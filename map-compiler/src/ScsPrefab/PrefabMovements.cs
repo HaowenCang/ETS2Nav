@@ -98,6 +98,10 @@ public static class PrefabMovements
                     LowProbability = first.LowProbability,
                     TurnAngle = TurnAngleBetween(first, last),
                 });
+                // 到达 Physical 节点即停：换线属于另一 movement（避免多跳组合爆炸；SCS 语义）
+                path.RemoveAt(path.Count - 1);
+                visited[target] = false;
+                continue;
             }
             Dfs(pd, target, entryCtrl, path, visited, result, token, semaphores, adj, physical);
             path.RemoveAt(path.Count - 1);

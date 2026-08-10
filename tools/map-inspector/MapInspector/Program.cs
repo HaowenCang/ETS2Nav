@@ -73,6 +73,84 @@ if (cmdArgs.Contains("--stats"))
         Console.WriteLine($"  {g.Key}: {g.Sum(s => s.Items.Count)} items / {g.Sum(s => s.Nodes.Count)} nodes");
 }
 
+if (cmdArgs.Contains("--gate"))
+{
+    // P1-06 Berlin Semantic Gate：fatal/OD/已知非法 movement/公司 access/spot check
+    var defs = new ScsDefinitions.DefinitionResolver(overlay);
+    var prefabs = new ScsPrefab.PrefabResolver(overlay);
+    var builder = new ScsMapModel.SemanticMapBuilder(defs, prefabs);
+    var map = builder.Build(sectors);
+    var rgraph = ScsMapModel.RoutingGraphBuilder.Build(map, sectors);
+    var issues = new List<string>();
+
+    // 1) fatal：自环 movement / 重复 road uid
+    var roadUids = new HashSet<ulong>();
+    foreach (var r in map.Roads) if (!roadUids.Add(r.Uid)) issues.Add($"重复 road uid {r.Uid:x16}");
+    int selfLoopMv = 0;
+    foreach (var j in map.Junctions)
+        selfLoopMv += j.Movements.Count(m => m.EntryNodeUid == m.ExitNodeUid);
+    if (selfLoopMv > 0) issues.Add($"自环 movement {selfLoopMv}");
+
+    // 2) 已知非法 movement：单向 road 入口端无入边（死路）
+    var hasInEdge = new bool[rgraph.NodeCount];
+    for (int e = 0; e < rgraph.EdgeCount; e++)
+        hasInEdge[rgraph.EdgeEnds(e).To] = true;
+    int oneWayDeadEnd = 0;
+    foreach (var r in map.Roads)
+    {
+        if (r.Direction is not (ScsMapModel.RoadDirection.ForwardOnly or ScsMapModel.RoadDirection.BackwardOnly)) continue;
+        if (!rgraph.TryGetNodeIndex(r.Node0, out int a)) continue;
+        if (!hasInEdge[a]) oneWayDeadEnd++;
+    }
+
+    // 3) OD 500 deterministic（固定种子 + 有边节点固定采样）
+    var nodeUids = rgraph.NodeUids;
+    var withEdge = new List<int>();
+    for (int i = 0; i < rgraph.NodeCount; i++)
+        if (rgraph.OutEdges(i).Count > 0) withEdge.Add(i);
+    var rng = new Random(20260810);   // deterministic seed
+    int od = 500, ok = 0;
+    for (int i = 0; i < od; i++)
+    {
+        int a = withEdge[rng.Next(withEdge.Count)];
+        int b = withEdge[rng.Next(withEdge.Count)];
+        if (a == b) { i--; continue; }
+        if (BfsReachable(rgraph, a, b)) ok++;
+    }
+
+    // 4) company access 可达性（access 节点到最大分量内节点）
+    var cc = rgraph.ConnectedComponents();
+    int accessOk = map.Companies.Count(c => c.AccessNodeUid != null && rgraph.TryGetNodeIndex(c.AccessNodeUid.Value, out _));
+
+    // 5) fuel/service/garage access（NodeUid 有边即接入路由网络）
+    int fuelOk = 0, fuelTotal = 0, serviceOk = 0, serviceTotal = 0, garageOk = 0, garageTotal = 0;
+    foreach (var sec in sectors)
+    {
+        foreach (var f in sec.Items.OfType<FuelPumpItem>()) { fuelTotal++; if (rgraph.TryGetNodeIndex(f.NodeUid, out _)) fuelOk++; }
+        foreach (var sv in sec.Items.OfType<ServiceItem>()) { serviceTotal++; if (rgraph.TryGetNodeIndex(sv.NodeUid, out _)) serviceOk++; }
+        foreach (var gr in sec.Items.OfType<GarageItem>()) { garageTotal++; if (rgraph.TryGetNodeIndex(gr.NodeUid, out _)) garageOk++; }
+    }
+
+    Console.WriteLine($"GATE fatal：{issues.Count}（{string.Join("; ", issues)}）");
+    Console.WriteLine($"GATE 单向 road 死端：{oneWayDeadEnd}");
+    Console.WriteLine($"GATE OD {od}：{ok}/{od}（{100.0 * ok / od:F1}%）");
+    Console.WriteLine($"GATE 连通：分量 {cc.Components} 最大 {cc.LargestComponent}");
+    Console.WriteLine($"GATE 公司 access：{accessOk}/{map.Companies.Count}");
+    Console.WriteLine($"GATE fuel {fuelOk}/{fuelTotal}，service {serviceOk}/{serviceTotal}，garage {garageOk}/{garageTotal}");
+    // spot check：十字路口 movement 结构
+    var cross = map.Junctions.Where(j => j.Movements.Count >= 6).Take(3).ToList();
+    Console.WriteLine($"GATE spot 十字路口 {cross.Count} 个：");
+    foreach (var j in cross)
+    {
+        var turns = j.Movements.GroupBy(m => m.TurnType).ToDictionary(g => g.Key, g => g.Count());
+        var t = string.Join(" ", turns.OrderBy(k => k.Key).Select(k => $"turn{k.Key}x{k.Value}"));
+        var lamps = j.Movements.Count(m => m.SemaphoreId >= 0);
+        Console.WriteLine($"  {j.PrefabToken}: nodes={j.NodeUids.Length} mv={j.Movements.Count} [{t}] 带灯 {lamps}");
+    }
+    bool pass = issues.Count == 0 && oneWayDeadEnd == 0 && ok >= od * 0.9;
+    Console.WriteLine(pass ? "GATE 初步通过（OD≥90% + 0 fatal + 0 死端）" : "GATE 未通过——见上");
+}
+
 if (cmdArgs.Contains("--semantic"))
 {
     // P1-05：SemanticMap + RoutingGraph（正式链路）
@@ -333,4 +411,24 @@ if (geojsonArg != null)
     };
     File.WriteAllText(geojsonArg, JsonSerializer.Serialize(fc));
     Console.WriteLine($"已导出 {features.Count} 个要素到 {geojsonArg}");
+}
+
+static bool BfsReachable(ScsGraph.RoutingGraph g, int from, int to)
+{
+    if (from == to) return true;
+    var q = new Queue<int>();
+    var seen = new bool[g.NodeCount];
+    q.Enqueue(from);
+    seen[from] = true;
+    while (q.Count > 0)
+    {
+        int u = q.Dequeue();
+        foreach (int e in g.OutEdges(u))
+        {
+            var (_, v) = g.EdgeEnds(e);
+            if (v == to) return true;
+            if (!seen[v]) { seen[v] = true; q.Enqueue(v); }
+        }
+    }
+    return false;
 }
