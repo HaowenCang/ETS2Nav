@@ -24,11 +24,13 @@ using OverlayProvider overlay = installDir != null
 
 var secNames = (Arg(args, "--sectors") ?? "")
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
-if (cmdArgs.Contains("--all-sectors"))
+if (cmdArgs.Contains("--all-sectors") || cmdArgs.Contains("--region"))
 {
+    var region = Arg(args, "--region") ?? "europe";
     secNames = overlay.Enumerate("/map/europe")
         .Where(p => p.EndsWith(".base") && p.Contains("/sec+"))
         .Select(p => Path.GetFileNameWithoutExtension(p))
+        .Where(n => RegionMatches(n, region))
         .OrderBy(n => n)
         .ToArray();
 }
@@ -411,6 +413,21 @@ if (geojsonArg != null)
     };
     File.WriteAllText(geojsonArg, JsonSerializer.Serialize(fc));
     Console.WriteLine($"已导出 {features.Count} 个要素到 {geojsonArg}");
+}
+
+/// <summary>区域 sector 匹配（德国 = x∈[-1,3]、z∈[-6,3] 的 4096 网格，按城市坐标 bbox 实测）。</summary>
+static bool RegionMatches(string name, string region)
+{
+    var m = System.Text.RegularExpressions.Regex.Match(name, @"^sec\+(\d+)([+-])(\d+)$");
+    if (!m.Success) return false;
+    int x = int.Parse(m.Groups[1].Value);
+    int y = int.Parse(m.Groups[3].Value) * (m.Groups[2].Value == "-" ? -1 : 1);
+    return region switch
+    {
+        "germany" => x >= -1 && x <= 3 && y >= -6 && y <= 3,
+        "europe" => true,
+        _ => false,
+    };
 }
 
 static bool BfsReachable(ScsGraph.RoutingGraph g, int from, int to)
