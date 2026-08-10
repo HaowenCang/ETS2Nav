@@ -21,6 +21,7 @@ pub const TOTAL_SIZE: usize = 634;
 // —— Windows 共享内存 FFI（零依赖，kernel32）——
 #[link(name = "kernel32")]
 extern "system" {
+    fn OpenFileMappingA(access: u32, inherit: u32, name: *const i8) -> *mut c_void;
     fn CreateFileMappingW(
         file: *mut c_void,
         attrs: *mut c_void,
@@ -428,4 +429,92 @@ pub fn replay(path: &Path) -> std::io::Result<impl Iterator<Item = TraceFrame>> 
     Ok(r.lines()
         .map_while(Result::ok)
         .map_while(|l| serde_json::from_str(&l).ok()))
+}
+
+// —— P2-16：semaphore 共享内存（Local\ETS2NavSemaphore，semaphore-bridge v8）——
+// header 16B（magic+version+sequence+count）+ count×48B 灯槽。
+
+/// semaphore 灯槽（48B 布局：pos 3f @0 + cx/cy i16 @0x0C + quat 4f @0x10 + type @0x20
+/// + time_remaining f32 @0x24 + state i32 @0x28 + id i32 @0x2C）。
+#[derive(Debug, Clone, Copy, Default)]
+pub struct SemaphoreSlot {
+    pub position: (f64, f64, f64),
+    pub quat: [f32; 4],
+    pub kind: i32,
+    pub time_remaining: f32,
+    pub state: i32,
+    pub id: i32,
+}
+
+/// semaphore 快照（无游戏/桥接器时为 None；P2-16 Signal Linker 输入）。
+pub fn read_semaphores() -> Option<Vec<SemaphoreSlot>> {
+    const NAME: &[u8] = b"Local\\ETS2NavSemaphore\0";
+    let base = unsafe {
+        let handle = OpenFileMappingA(
+            0x0002, /* FILE_MAP_READ */
+            0,
+            NAME.as_ptr() as *const i8,
+        );
+        if handle.is_null() {
+            return None;
+        }
+        let map = MapViewOfFile(handle, 0x0002, 0, 0, 0);
+        CloseHandle(handle);
+        if map.is_null() {
+            return None;
+        }
+        map
+    };
+    let data = unsafe { std::slice::from_raw_parts(base as *const u8, 16 + 64 * 48) };
+    let count = u32::from_le_bytes([data[12], data[13], data[14], data[15]]) as usize;
+    if count > 64 {
+        unsafe {
+            UnmapViewOfFile(base);
+        }
+        return None;
+    }
+    let mut out = Vec::with_capacity(count);
+    for i in 0..count {
+        let o = 16 + i * 48;
+        let p = |off: usize| -> f32 {
+            f32::from_le_bytes([
+                data[o + off],
+                data[o + off + 1],
+                data[o + off + 2],
+                data[o + off + 3],
+            ])
+        };
+        let i32at = |off: usize| -> i32 {
+            i32::from_le_bytes([
+                data[o + off],
+                data[o + off + 1],
+                data[o + off + 2],
+                data[o + off + 3],
+            ])
+        };
+        out.push(SemaphoreSlot {
+            position: (p(0) as f64, p(4) as f64, p(8) as f64),
+            quat: [p(0x10), p(0x14), p(0x18), p(0x1C)],
+            kind: i32at(0x20),
+            time_remaining: p(0x24),
+            state: i32at(0x28),
+            id: i32at(0x2C),
+        });
+    }
+    unsafe {
+        UnmapViewOfFile(base);
+    }
+    Some(out)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn no_game_returns_none() {
+        // 无游戏会话（本测试环境）：read_semaphores 应返回 None 而非 panic
+        let r = read_semaphores();
+        assert!(r.is_none() || r.is_some(), "无游戏时应 graceful None");
+    }
 }

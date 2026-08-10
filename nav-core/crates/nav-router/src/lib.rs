@@ -11,5 +11,6 @@ pub mod maneuver;
 pub mod reroute;
 pub mod roundabout;
 pub mod search;
+pub mod signal;
 pub mod snap;
 pub mod tracker;
