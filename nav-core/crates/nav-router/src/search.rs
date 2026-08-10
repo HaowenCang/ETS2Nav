@@ -58,6 +58,8 @@ pub struct RouteRequest<'a> {
     pub goal: VirtualEndpoint,
     pub profile: RouteProfile,
     cost: EdgeCostProvider,
+    /// 每边额外成本（P2-10 overlap penalty 注入；空 = 无惩罚）。
+    pub edge_penalties: Vec<f64>,
 }
 
 impl<'a> RouteRequest<'a> {
@@ -73,12 +75,36 @@ impl<'a> RouteRequest<'a> {
             goal,
             profile,
             cost: EdgeCostProvider::new(profile),
+            edge_penalties: Vec::new(),
         }
     }
 
-    /// 边主成本（profile 决定）。
+    /// 边主成本（profile 决定）+ 注入 penalty（P2-10）。
     fn edge_cost(&self, eid: u32) -> f64 {
-        self.cost.edge_cost(self.graph, eid)
+        let base = self.cost.edge_cost(self.graph, eid);
+        if eid as usize >= self.edge_penalties.len() {
+            base
+        } else {
+            base + self.edge_penalties[eid as usize]
+        }
+    }
+
+    /// 带边惩罚的构造（P2-10 overlap penalty 重搜，§81）。
+    pub fn with_penalties(
+        graph: &'a CompactGraph,
+        start: VirtualEndpoint,
+        goal: VirtualEndpoint,
+        profile: RouteProfile,
+        penalties: Vec<f64>,
+    ) -> Self {
+        RouteRequest {
+            graph,
+            start,
+            goal,
+            profile,
+            cost: EdgeCostProvider::new(profile),
+            edge_penalties: penalties,
+        }
     }
 
     /// 边时间成本（metrics/ETA）。
