@@ -22,6 +22,7 @@ fn main() {
         ("route-verify", _) if args.len() >= 3 => route_verify(&args[2]),
         ("roundabout-stats", _) if args.len() >= 3 => roundabout_stats(&args[2]),
         ("dest", _) if args.len() >= 4 => dest_cli(&args[2], &args[3]),
+        ("signal", _) if args.len() >= 4 => signal_cli(&args[2], &args[3]),
         _ => {
             eprintln!("用法:");
             eprintln!("  nav-core-cli dataset info <dataset-dir>");
@@ -224,6 +225,80 @@ fn roundabout_stats(dataset_dir: &str) {
             );
             shown += 1;
         }
+    }
+}
+
+/// signal：路线受控 movement 静态绑定 + runtime 关联（§111-117）。
+fn signal_cli(xz: &str, dataset_dir: &str) {
+    let parts: Vec<&str> = xz.split(':').collect();
+    let (x1, z1) = {
+        let v: Vec<&str> = parts[0].split(',').collect();
+        (v[0].trim().parse().unwrap(), v[1].trim().parse().unwrap())
+    };
+    let (x2, z2) = {
+        let v: Vec<&str> = parts[1].split(',').collect();
+        (v[0].trim().parse().unwrap(), v[1].trim().parse().unwrap())
+    };
+    let (routing, _j) = nav_dataset::load_dataset(std::path::Path::new(dataset_dir))
+        .unwrap_or_else(|e| {
+            eprintln!("加载 dataset 失败: {e}");
+            std::process::exit(1);
+        });
+    let graph = nav_graph::CompactGraph::build(&routing);
+    let spatial = nav_spatial::SpatialIndex::build(&graph, nav_spatial::DEFAULT_CELL_SIZE);
+    let s1 = nav_router::snap::snap_nearest(&graph, &spatial, x1, z1, 300.0).unwrap();
+    let s2 = nav_router::snap::snap_nearest(&graph, &spatial, x2, z2, 300.0).unwrap();
+    let mut router = nav_router::search::Router::new(graph.node_count());
+    let req = nav_router::search::RouteRequest::new(
+        &graph,
+        nav_router::snap::VirtualEndpoint::start(&s1, true),
+        nav_router::snap::VirtualEndpoint::goal(&s2),
+        nav_router::cost::RouteProfile::Fastest,
+    );
+    let Some(route) = router.astar(&req) else {
+        println!("无路线");
+        return;
+    };
+    // 受控 movement 序列（前 6 个）
+    let mut idx = 0;
+    let mut found = 0;
+    while let Some((i, eid, juid, group)) =
+        nav_router::signal::SignalLinker::next_controlled_movement(&graph, &route, idx)
+    {
+        if found >= 6 {
+            break;
+        }
+        let pose = nav_router::signal::SignalLinker::static_head_pose(&graph, eid);
+        // runtime 关联（无游戏时为 None——只打印静态绑定）
+        let runtime = nav_telemetry::read_semaphores();
+        let up = match &runtime {
+            Some(lights) => {
+                let lights: Vec<nav_router::signal::RuntimeSignal> = lights
+                    .iter()
+                    .map(|l| nav_router::signal::RuntimeSignal {
+                        position: l.position,
+                        quat: l.quat,
+                        kind: l.kind,
+                        time_remaining: l.time_remaining,
+                        state: l.state,
+                        id: l.id,
+                    })
+                    .collect();
+                nav_router::signal::SignalLinker::link(eid, juid, group, &pose, &lights)
+            }
+            None => nav_router::signal::SignalLinker::link(eid, juid, group, &pose, &[]),
+        };
+        println!(
+            "受控 movement @route边{i}（edge={eid} junction={juid:#x} group={group}）→ 置信度 {:?}",
+            up.confidence
+        );
+        idx = i + 1;
+        found += 1;
+    }
+    if found == 0 {
+        println!("路线中无受控 movement（无信号灯）");
+    } else {
+        println!("（共 {found} 个受控 movement——runtime 关联需游戏会话，CLI 环境无）");
     }
 }
 
