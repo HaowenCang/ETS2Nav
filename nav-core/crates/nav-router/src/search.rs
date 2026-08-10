@@ -378,11 +378,13 @@ fn single_edge_route(req: &RouteRequest) -> Route {
     let go = req.goal.offset;
     let fwd = go >= s;
     let dist = (go - s).abs();
+    // 审查修复：ETA 必须与实际行驶段一致（fwd: s→go 的 (go-s) 段；backward: go→s 的 (s-go) 段）
     let seg = if fwd {
-        seg_cost(req, req.start.edge_id, s, true)
+        seg_cost(req, req.start.edge_id, s, true) - seg_cost(req, req.start.edge_id, go, true)
     } else {
-        seg_cost(req, req.start.edge_id, go, false)
-    };
+        seg_cost(req, req.start.edge_id, go, false) - seg_cost(req, req.start.edge_id, s, false)
+    }
+    .abs();
     let e = &g.edges[req.start.edge_id as usize];
     Route {
         profile: req.profile,

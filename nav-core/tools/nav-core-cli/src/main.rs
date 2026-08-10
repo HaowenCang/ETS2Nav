@@ -241,14 +241,24 @@ fn bench_cli(dataset_dir: &str) {
             std::process::exit(1);
         });
     let load_ms = t0.elapsed().as_secs_f64() * 1000.0;
+    // 峰值内存估算（审查修复：加载+build 瞬时含 RoutingGraph 原始数据——峰值高于常驻）
+    let peak_estimate_mb = (routing.nodes.len() * 24
+        + routing.edges.len() * 64
+        + routing
+            .edges
+            .iter()
+            .map(|e| e.geometry.len() * 24)
+            .sum::<usize>()) as f64
+        / 1e6;
     let t1 = std::time::Instant::now();
     let graph = nav_graph::CompactGraph::build(&routing);
     let build_ms = t1.elapsed().as_secs_f64() * 1000.0;
+    drop(routing); // 构建后释放原始数据（运行时只保留压缩图）
     let t2 = std::time::Instant::now();
     let spatial = nav_spatial::SpatialIndex::build(&graph, nav_spatial::DEFAULT_CELL_SIZE);
     let spatial_ms = t2.elapsed().as_secs_f64() * 1000.0;
-    // 粗略内存（节点/边/几何/邻接）
-    let mem_mb = (graph.positions.len() * 24
+    // 常驻内存（构建后——审查修复：运行时常驻口径，目标 <500MB 按此判定）
+    let resident_mb = (graph.positions.len() * 24
         + graph.edges.len() * 40
         + graph.edges_geometry.len() * 24
         + graph.node_offsets.len() * 4
@@ -257,9 +267,9 @@ fn bench_cli(dataset_dir: &str) {
         + graph.in_edge_ids.len() * 4) as f64
         / 1e6;
     println!(
-        "[加载] {load_ms:.0}ms（routing.graph）+ build {build_ms:.0}ms + spatial {spatial_ms:.0}ms"
+        "[加载] {load_ms:.0}ms（routing.graph 冷启动）+ build {build_ms:.0}ms + spatial {spatial_ms:.0}ms"
     );
-    println!("[内存] 粗略 {mem_mb:.0}MB（目标 <500MB）");
+    println!("[内存] 峰值估算（加载+build 瞬时）~{peak_estimate_mb:.0}MB（含原始数据）；常驻（构建后）估算 {resident_mb:.0}MB（目标 <500MB 按常驻口径）");
     // 2) 路线时延分布（Berlin 核心网 200 OD × fastest）
     let mut router = nav_router::search::Router::new(graph.node_count());
     let mut times = Vec::new();
@@ -1028,10 +1038,10 @@ fn snap_cli(xz: &str, dataset_dir: &str) {
     );
 }
 
-/// 四元数 → yaw（世界弧度；SCS quat (x,y,z,w)）。
+/// 四元数 → yaw（世界弧度；SCS quat (x,y,z,w) 绕 Y 轴——审查修复，与 signal::light_yaw 一致）。
 fn quat_yaw(q: [f32; 4]) -> f64 {
     let (x, y, z, w) = (q[0] as f64, q[1] as f64, q[2] as f64, q[3] as f64);
-    (2.0 * (w * z + x * y)).atan2(1.0 - 2.0 * (y * y + z * z))
+    (2.0 * (w * y - x * z)).atan2(1.0 - 2.0 * (y * y + z * z))
 }
 
 fn dataset_info(dir: &str) {

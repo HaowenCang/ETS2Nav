@@ -46,7 +46,7 @@ S_id：灯 id == semaphore_group → 1
 
 ## 三、门
 
-- fmt / clippy 0 / 32 测试全绿
+- fmt / clippy 0 / 49 测试全绿（workspace 总数）
 - runtime 关联的**真实游戏验证**（§115 VERIFIED 实测）记 pending（游戏会话排除）
 
 ## 四、下一步

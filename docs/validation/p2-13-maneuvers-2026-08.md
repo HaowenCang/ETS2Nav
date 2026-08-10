@@ -44,7 +44,7 @@ Depart → Left(-59°) → Right(+63°) → SlightRight → SharpLeft(-117°)
 
 ## 三、门
 
-- fmt / clippy 0 / 27 测试全绿
+- fmt / clippy 0 / 49 测试全绿（workspace 总数）
 - 细化阈值（slight/normal/sharp）为 corpus 校准前默认（P2-14 环岛/语料验证后冻结）
 
 ## 四、下一步

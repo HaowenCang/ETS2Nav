@@ -333,10 +333,11 @@ impl NavigationSession {
     }
 }
 
-/// 四元数 → yaw（世界弧度；SCS quat (x,y,z,w)）。
+/// 四元数 → yaw（世界弧度；SCS quat (x,y,z,w) 绕 Y 轴——与 signal::light_yaw 一致，
+/// 审查修复：原绕 Z 公式对纯 yaw quat 输出 0/180°）。
 fn quat_yaw(q: [f32; 4]) -> f64 {
     let (x, y, z, w) = (q[0] as f64, q[1] as f64, q[2] as f64, q[3] as f64);
-    (2.0 * (w * z + x * y)).atan2(1.0 - 2.0 * (y * y + z * z))
+    (2.0 * (w * y - x * z)).atan2(1.0 - 2.0 * (y * y + z * z))
 }
 
 #[cfg(test)]

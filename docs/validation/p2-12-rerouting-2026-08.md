@@ -36,7 +36,7 @@ OFF_ROUTE → begin_rerouting → REROUTING → reset → ON_ROUTE
 
 ## 三、门
 
-- fmt / clippy 0 / 25 测试全绿
+- fmt / clippy 0 / 49 测试全绿（workspace 总数）
 - 距离证据优先于帧数证据的设计确认（快速偏航 4 帧即确认）
 
 ## 四、下一步

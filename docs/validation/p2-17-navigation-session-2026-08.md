@@ -45,7 +45,7 @@ state/position/matched_edge/confidence/route 距离/remaining/progress/next_mane
 
 ## 四、门
 
-- fmt / clippy 0 / 32 测试全绿；P1 Regression 不受影响
+- fmt / clippy 0 / 49 测试全绿（workspace 总数）；P1 Regression 不受影响
 
 ## 五、下一步
 

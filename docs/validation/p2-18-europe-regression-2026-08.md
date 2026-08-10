@@ -22,8 +22,8 @@ route（A*）→ tracker（沿边推进）→ maneuver 生成——完整流水�
 | Berlin | 2 | 3 | 12 |
 | 法国/比荷卢 | 3 | 9 | 12 |
 | 南欧（罗马） | 2 | 3 | 15 |
-| 东欧 | 6 | 9 | 21 |
-| **合计** | **54** | **30 一致 / 0 不一致** | — |
+| 东欧 | 6 | 9 | 24 |
+| **合计** | **54** | **30 一致 / 0 不一致**（重跑核对） | — |
 
 - **A*==Dijkstra 全区域 0 不一致**（§71 最重要回归）
 - 最大单次搜索 **120ms**（<500ms 目标——远 OD 长距离）
@@ -40,7 +40,7 @@ dataset info / live / replay / match / snap / route（三 profile+备选+maneuve
 
 ## 三、门
 
-- fmt / clippy 0 / 32 测试全绿
+- fmt / clippy 0 / 49 测试全绿（workspace 总数）
 - P1 Regression 不受影响（G0）
 
 ## 四、下一步

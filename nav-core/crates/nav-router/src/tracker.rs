@@ -45,6 +45,14 @@ impl RouteTracker {
             sd[i] = sd[i + 1] + edge_len(graph, route.edges[i]);
             st[i] = st[i + 1] + time_of(graph, route.edges[i]);
         }
+        // 终点虚拟段计入 suffix（审查修复：剩余距离/时间须含虚拟段——
+        // 否则 edge_remaining 比 route.distance_m 少终点段）
+        if let Some((eid, offset, fwd)) = route.end_virtual {
+            let len = edge_len(graph, eid);
+            let seg = if fwd { offset } else { len - offset };
+            sd[n] += seg;
+            st[n] += seg / speed_of(graph, eid);
+        }
         RouteTracker {
             route,
             suffix_distance: sd,

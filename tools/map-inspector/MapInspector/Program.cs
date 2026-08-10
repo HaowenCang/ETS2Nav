@@ -517,7 +517,12 @@ if (cmdArgs.Contains("--dataset"))
     ScsMapModel.DatasetWriter.WriteRoutingGraph(rgraph, Path.Combine(outDir, "routing.graph"));
     ScsMapModel.DatasetWriter.WriteJunctionGraph(map, Path.Combine(outDir, "junction.graph"));
     // manifest / diagnostics
-    ScsMapModel.DatasetWriter.WriteManifest(outDir, rgraph, map, secNames, DateTime.UtcNow);
+    string? gameVersion = null;
+    if (installDir != null)
+    {
+        try { gameVersion = ScsResource.GameInstall.Detect(installDir)?.GameVersion; } catch { }
+    }
+    ScsMapModel.DatasetWriter.WriteManifest(outDir, rgraph, map, secNames, DateTime.UtcNow, gameVersion);
     ScsMapModel.DatasetWriter.WriteDiagnostics(outDir, map, rgraph, prefabs.FailedPpds, new[] { "P1-11 dataset build" });
     // map.db（SQLite：roads/junctions 表）
     using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={Path.Combine(outDir, "map.db")}"))

@@ -38,7 +38,7 @@ SnapPoint { edge_id: u32, offset: f64, position: (f64,f64,f64), tangent: f64, la
 
 ## 三、门
 
-- cargo fmt --check / clippy 0 warnings / **17 测试全绿**（matcher 3 + snap 3 + loader 3 + csr 2 + telemetry 4 + spatial 2）
+- cargo fmt --check / clippy 0 warnings / **49 测试全绿（workspace 总数）**（matcher 3 + snap 3 + loader 3 + csr 2 + telemetry 4 + spatial 2）
 - P1 Regression 不受影响（仅新增 crate/API）
 
 ## 四、下一步

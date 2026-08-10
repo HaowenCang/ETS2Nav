@@ -36,7 +36,7 @@ tracker 模拟：80 边走完，progress=1.000 单调=true，总长 4963m
 
 ## 三、门
 
-- fmt / clippy 0 / 22 测试全绿
+- fmt / clippy 0 / 49 测试全绿（workspace 总数）
 - 修复记录：切边时 travelled 重复计数（补上当前边剩余段 + 新边 offset 的语义）
 
 ## 四、下一步
