@@ -7,11 +7,11 @@
 
 ## §1 当前状态
 
-**最后更新**：2026-08-10（P1 推进：P1-00~P1-04 完成/收尾，P1-02 上层迁移进行中）
+**最后更新**：2026-08-10（P1 关门 tag v0.2.0-p1；P2 规划启动）
 
 - [x] **P0 阶段**（✅ 门评审通过 2026-08-10，tag v0.1.0-p0；A6/A8 工具并入 P1-01）
-- [ ] **P1 Map Compiler**（🔄 进行中：P1-00/P1-03/P1-04 完成，P1-02 上层迁移收尾；执行基线 = P1-map-compiler-plan.md）
-- [ ] P2 Navigation Core
+- [x] **P1 Map Compiler**（✅ 关门 2026-08-10，tag v0.2.0-p1；15 工作包 P1-00~P1-14 完成 + 4 子代理收官评审修复 + Regression Suite ALL PASS；执行基线 = P1-map-compiler-plan.md）
+- [ ] P2 Navigation Core（🔄 规划中）
 - [ ] P3 Driving Assistant
 - [ ] P4 正式 UI
 - [ ] P5 全欧洲测试
