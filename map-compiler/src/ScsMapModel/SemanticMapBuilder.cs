@@ -33,7 +33,7 @@ public sealed class SemanticMapBuilder
         // 速度模型（country × speed_class × 城市）——road 限速计算
         var speeds = new SpeedModel(_defs, secList);
         var nodePos = secList.SelectMany(s => s.Nodes).GroupBy(n => n.Uid)
-            .ToDictionary(g => g.Key, g => (g.First().X, g.First().Z));
+            .ToDictionary(g => g.Key, g => (g.First().X, g.First().Y, g.First().Z));
 
         foreach (var sec in secList)
         {
@@ -52,7 +52,7 @@ public sealed class SemanticMapBuilder
                 }
                 // 铁路/有轨电车不作为普通道路进入路由网络（P1 收官评审 M3：P2 不得规划穿越铁轨）
                 if (speedClass.StartsWith("rail", StringComparison.OrdinalIgnoreCase)) continue;
-                var mid = nodePos.TryGetValue(road.Node0, out var p0) ? p0 : (0, 0);
+                var mid = nodePos.TryGetValue(road.Node0, out var p0) ? p0 : (0, 0, 0);
                 var sr = new SemanticRoad
                 {
                     Uid = road.Uid,
@@ -97,17 +97,22 @@ public sealed class SemanticMapBuilder
                     for (int i = 0; i < movements.Count; i++)
                     {
                         var m = movements[i];
+                        var entryUid = MapControlNode(m.EntryNode, pf.OriginIndex, n, pf.NodeUids);
+                        var exitUid = MapControlNode(m.ExitNode, pf.OriginIndex, n, pf.NodeUids);
                         j.Movements.Add(new JunctionMovement
                         {
                             MovementId = i,
-                            EntryNodeUid = MapControlNode(m.EntryNode, pf.OriginIndex, n, pf.NodeUids),
-                            ExitNodeUid = MapControlNode(m.ExitNode, pf.OriginIndex, n, pf.NodeUids),
+                            EntryNodeUid = entryUid,
+                            ExitNodeUid = exitUid,
                             Length = m.Length,
                             TurnType = m.TurnType,
                             SemaphoreId = m.SemaphoreId,
                             PriorityModifier = m.PriorityModifier,
                             LowProbability = m.LowProbability,
                             CurvePath = m.CurvePath,
+                            // P2-01 v2（V2-2）：movement 世界坐标 polyline——
+                            // CurvePath 链（PPD 局部坐标）经 entry/exit 端点锚定变换 + 2m 弦采样
+                            WorldPolyline = BuildWorldPolyline(pd, m.CurvePath, entryUid, exitUid, nodePos),
                         });
                     }
                 }
@@ -186,7 +191,142 @@ public sealed class SemanticMapBuilder
                 map.Companies.Add(company);
             }
         }
+
+        // P2-01 v2（V2-5）：Ferry/Train 航线——ferry_connection 定义 + 码头节点配对
+        BuildFerries(map, secList);
         return map;
+    }
+
+    /// <summary>movement polyline：CurvePath 链（PPD 局部坐标）→ 世界坐标。
+    /// 每条 NavCurve 按 ≤2m 弦采样；XZ 平面缩放+旋转+平移锚定 entry/exit 世界节点，
+    /// Y 按链端高度差线性缩放。锚定近似（非完整 prefab 变换）：曲线短（3–8m），弦差可接受；
+    /// 完整 PPD 变换（ControlNode 锚定）留给 P2-16 signal head 几何时统一实现。</summary>
+    private static IReadOnlyList<(double X, double Y, double Z)> BuildWorldPolyline(
+        PrefabDescriptor pd, int[] curvePath,
+        ulong entryUid, ulong exitUid,
+        IDictionary<ulong, (double X, double Y, double Z)> nodePos)
+    {
+        if (curvePath.Length == 0) return Array.Empty<(double, double, double)>();
+        if (!nodePos.TryGetValue(entryUid, out var w0) || !nodePos.TryGetValue(exitUid, out var w1))
+            return Array.Empty<(double, double, double)>();
+        // 局部链（每曲线 ≤2m 弦采样）
+        var local = new List<(double X, double Y, double Z)>();
+        foreach (int ci in curvePath)
+        {
+            if (ci < 0 || ci >= pd.NavCurves.Count) return Array.Empty<(double, double, double)>();
+            var c = pd.NavCurves[ci];
+            int segs = Math.Max(1, (int)Math.Ceiling(c.Length / 2.0));
+            for (int k = 0; k < segs; k++)
+            {
+                double t = (double)k / segs;
+                local.Add((c.StartX + (c.EndX - c.StartX) * t,
+                           c.StartY + (c.EndY - c.StartY) * t,
+                           c.StartZ + (c.EndZ - c.StartZ) * t));
+            }
+        }
+        // 去重相邻点
+        var chain = new List<(double X, double Y, double Z)>();
+        foreach (var p in local)
+            if (chain.Count == 0 || (chain[^1].X - p.X) * (chain[^1].X - p.X)
+                    + (chain[^1].Y - p.Y) * (chain[^1].Y - p.Y)
+                    + (chain[^1].Z - p.Z) * (chain[^1].Z - p.Z) > 1e-9)
+                chain.Add(p);
+        if (chain.Count < 2) return Array.Empty<(double, double, double)>();
+        // XZ 锚定变换：缩放 + 旋转（使局部位移方向对齐世界位移）+ 平移
+        double lx = chain[^1].X - chain[0].X, lz = chain[^1].Z - chain[0].Z;
+        double wx = w1.X - w0.X, wz = w1.Z - w0.Z;
+        double ll = Math.Sqrt(lx * lx + lz * lz), wl = Math.Sqrt(wx * wx + wz * wz);
+        if (ll < 1e-6 || wl < 1e-6) return Array.Empty<(double, double, double)>();
+        double s = wl / ll;
+        double sinA = (lx * wz - lz * wx) / (ll * wl);
+        double cosA = (lx * wx + lz * wz) / (ll * wl);
+        double yScale = Math.Abs(chain[^1].Y - chain[0].Y) > 1e-6
+            ? (w1.Y - w0.Y) / (chain[^1].Y - chain[0].Y) : 1.0;
+        var outPts = new List<(double, double, double)>(chain.Count);
+        foreach (var (X, Y, Z) in chain)
+        {
+            double dx = X - chain[0].X, dz = Z - chain[0].Z;
+            outPts.Add((w0.X + s * (dx * cosA - dz * sinA),
+                        w0.Y + (Y - chain[0].Y) * yScale,
+                        w0.Z + s * (dx * sinA + dz * cosA)));
+        }
+        return outPts;
+    }
+
+    /// <summary>Ferry/Train 航线构建（V2-5）：码头 FerryItem（Port=ferry_data 名）+ connection 文件配对。
+    /// 方向：conn.A.B unit 存在即 A→B 航线；反向由另一文件决定。两端码头都必须在本图内。</summary>
+    private void BuildFerries(SemanticMap map, List<SectorFile> secList)
+    {
+        if (_provider is null) return;
+        // 码头：Port token → 节点集 + IsTrain（同 port 首个 item 的 flags 为准）。
+        // 实测 Port 为裸名（"travemunde"）——统一为 ferry_data 全名（"ferry.travemunde"）以便与 connection 匹配
+        var terminals = new Dictionary<string, (List<ulong> Nodes, bool IsTrain)>();
+        foreach (var sec in secList)
+        {
+            foreach (var f in sec.Items.OfType<FerryItem>())
+            {
+                string key = f.Port.StartsWith("ferry.") ? f.Port : "ferry." + f.Port;
+                if (!terminals.TryGetValue(key, out var t))
+                    terminals[key] = (new List<ulong>(), f.IsTrain);
+                terminals[key].Nodes.Add(f.NodeUid);
+            }
+        }
+        // 航线记录（按端口对合并方向）
+        var routes = new Dictionary<string, SemanticFerry>();
+        foreach (var path in _provider.Enumerate("/def/ferry/connection").Where(p => p.EndsWith(".sii")))
+        {
+            ScsSii.SiiDocument doc;
+            try { doc = ScsDefinitions.DefinitionLoader.Load(_provider, path); }
+            catch { continue; }
+            foreach (var u in doc.Units)
+            {
+                if (!u.Class.EndsWith("ferry_connection") || !u.Name.StartsWith("conn.")) continue;
+                string rest = u.Name["conn.".Length..];
+                // 端口对解析：找分割点使两侧都命中地图内码头（terminals——ground truth；
+                // ferry_data 清单仅含 base 13 港，DLC 港口不在其中，故不作验证依据）
+                string? pa = null, pb = null;
+                for (int i = 1; i < rest.Length; i++)
+                {
+                    if (rest[i] != '.') continue;
+                    string a = "ferry." + rest[..i], b = "ferry." + rest[(i + 1)..];
+                    if (terminals.ContainsKey(a) && terminals.ContainsKey(b)) { pa = a; pb = b; break; }
+                }
+                if (pa == null || !terminals.ContainsKey(pa) || !terminals.ContainsKey(pb)) continue;
+                double price = NumOf(u, "price"), time = NumOf(u, "time"), dist = NumOf(u, "distance");
+                string key = string.CompareOrdinal(pa, pb) < 0 ? pa + "\x1f" + pb : pb + "\x1f" + pa;
+                bool isTrain = terminals.TryGetValue(pa, out var ta) ? ta.IsTrain
+                             : terminals.TryGetValue(pb, out var tb) ? tb.IsTrain : false;
+                if (!routes.TryGetValue(key, out var rf))
+                {
+                    rf = new SemanticFerry
+                    {
+                        PortA = string.CompareOrdinal(pa, pb) < 0 ? pa : pb,
+                        PortB = string.CompareOrdinal(pa, pb) < 0 ? pb : pa,
+                        IsTrain = isTrain, TimeMinutes = time, DistanceKm = dist, Price = price,
+                    };
+                    routes[key] = rf;
+                }
+                if (string.CompareOrdinal(pa, pb) < 0)
+                {
+                    rf.AtoB = true;
+                    rf.PortANodes = terminals[pa].Nodes.ToArray();
+                    rf.PortBNodes = terminals[pb].Nodes.ToArray();
+                }
+                else
+                {
+                    rf.BtoA = true;
+                    rf.PortBNodes = terminals[pa].Nodes.ToArray();
+                    rf.PortANodes = terminals[pb].Nodes.ToArray();
+                }
+            }
+        }
+        map.Ferries.AddRange(routes.Values);
+    }
+
+    private static double NumOf(ScsSii.SiiUnit u, string key)
+    {
+        foreach (var v in u.Values(key)) return v.Num;
+        return 0;
     }
 
     /// <summary>PPD ControlNode 索引 → prefab NodeUids（ETS2LA 语义：index - Origin 轮转）。</summary>

@@ -20,6 +20,8 @@ public sealed class RoutingGraph
     public int EdgeCount => _edges.Count;
     public IReadOnlyList<ulong> NodeUids => _nodeUids;
     public IReadOnlyList<(double X, double Y, double Z)> Positions => _positions;
+    /// <summary>边列表（P2-01 v2：DatasetWriter/诊断用）。</summary>
+    public IReadOnlyList<RoutingEdge> Edges => _edges;
 
     public int GetNodeIndex(ulong uid)
     {
@@ -88,7 +90,7 @@ public sealed class RoutingGraph
     }
 }
 
-/// <summary>路由边（P1 计划 §29）。</summary>
+/// <summary>路由边（P1 计划 §29；P2-01 v2 扩展：限速/transit/geometry）。</summary>
 public sealed class RoutingEdge
 {
     public required RoutingEdgeKind Kind { get; init; }
@@ -100,6 +102,15 @@ public sealed class RoutingEdge
     /// <summary>JunctionMovement 边的信号灯绑定（PPD SemaphoreId，-1 无）。</summary>
     public int SemaphoreId { get; init; } = -1;
     public string? SpeedClass { get; init; }
+    /// <summary>限速 km/h 三态（-1 未知 / 0 无限速 / &gt;0 数值）——P2-01 v2 hot metadata（Dataset v2 V2-3）。</summary>
+    public int SpeedLimitKph { get; init; } = -1;
+    /// <summary>Ferry/Train 边：预计行程时间（秒，ferry_connection.time 分钟×60）。</summary>
+    public double? TransitTimeSeconds { get; init; }
+    /// <summary>Ferry/Train 边：票价（ferry_connection.price）。</summary>
+    public double? TransitPrice { get; init; }
+    /// <summary>边 polyline（P2-01 v2，V2-1/V2-2）：JunctionMovement = movement 世界坐标链；
+    /// Road = null（写端自动生成两端点直线）。</summary>
+    public IReadOnlyList<(double X, double Y, double Z)>? Geometry { get; init; }
     public bool NoAiVehicles { get; init; }
     public bool GpsAvoid { get; init; }
     public bool Secret { get; init; }
