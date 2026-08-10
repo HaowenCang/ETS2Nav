@@ -34,6 +34,32 @@
 const map = new maplibregl.Map({ container: 'map', style: {
   version: 8, sources: {}, layers: [],
   glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
+  sources: {},
+  layers: [
+    { id: 'bg', type: 'background', paint: { 'background-color': '#10141a' } },
+  ],
+});
+
+// P1-12：pmtiles 矢量瓦片层（存在 map.pmtiles 时自动加载——road/city/poi/junction 图层）
+async function loadPmtiles() {
+  try {
+    const r = await fetch('map.pmtiles', { method: 'HEAD' });
+    if (!r.ok) return;
+    map.addSource('tiles', { type: 'pmtiles', url: 'map.pmtiles' });
+    map.addLayer({ id: 'tile-road', type: 'line', source: 'tiles', 'source-layer': 'road',
+      paint: { 'line-color': '#3b82f6', 'line-width': 1.2, 'line-opacity': 0.75 } });
+    map.addLayer({ id: 'tile-junction', type: 'circle', source: 'tiles', 'source-layer': 'junction',
+      paint: { 'circle-color': '#f59e0b', 'circle-radius': 2 } });
+    map.addLayer({ id: 'tile-city', type: 'symbol', source: 'tiles', 'source-layer': 'city',
+      layout: { 'text-field': ['get', 'name'], 'text-size': 11, 'text-font': ['Open Sans Regular'] },
+      paint: { 'text-color': '#fff' } });
+    map.addLayer({ id: 'tile-poi', type: 'circle', source: 'tiles', 'source-layer': 'poi',
+      paint: { 'circle-color': '#10b981', 'circle-radius': 2.5 } });
+    document.getElementById('data-name').textContent = 'map.pmtiles（矢量瓦片）';
+    console.log('pmtiles 已加载');
+  } catch (e) { console.log('无 pmtiles：', e); }
+}
+loadPmtiles();
 }, center: [0, 0], zoom: 3 });
 
 let nodes = new Map();      // uid -> {x, z}

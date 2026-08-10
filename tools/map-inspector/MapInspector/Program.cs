@@ -586,6 +586,22 @@ if (cmdArgs.Contains("--dataset"))
     Console.WriteLine($"  manifest.json + diagnostics.json 已写；POI {pois.Count}");
 }
 
+if (cmdArgs.Contains("--tiles"))
+{
+    // P1-12：map.pmtiles 生成（road/city/poi/junction 图层）
+    var defs = new ScsDefinitions.DefinitionResolver(overlay);
+    var prefabs = new ScsPrefab.PrefabResolver(overlay);
+    var builder = new ScsMapModel.SemanticMapBuilder(defs, prefabs, overlay);
+    var map = builder.Build(sectors);
+    var pois = ScsMapModel.PoiExtractor.Extract(sectors, map, prefabs);
+    var outPath = Arg(args, "--tiles") ?? "map.pmtiles";
+    var sw = System.Diagnostics.Stopwatch.StartNew();
+    ScsVectorTiles.TileBuilder.Build(map, sectors, pois, outPath);
+    sw.Stop();
+    Console.WriteLine($"map.pmtiles 生成 {new FileInfo(outPath).Length / 1024.0:F0} KB（{sw.ElapsedMilliseconds}ms）");
+    Console.WriteLine($"  图层：road/city/poi/junction；坐标近似 lng=x/111320（与 graph-debugger 一致）");
+}
+
 static bool BfsReachable(ScsGraph.RoutingGraph g, int from, int to)
 {
     if (from == to) return true;
