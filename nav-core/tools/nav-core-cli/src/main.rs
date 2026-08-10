@@ -323,6 +323,46 @@ fn route_verify(dataset_dir: &str) {
             route.distance_m
         );
         assert!(final_p > 0.9, "走完路线后 progress 应接近 1: {final_p}");
+        // —— Reroute 模拟：沿路线走 40 边后强制偏航 12 帧 → 检测器 OFF_ROUTE → 重规划 ——
+        let mut det = nav_router::reroute::RerouteDetector::new(
+            nav_router::reroute::RerouteConfig::default(),
+        );
+        let mut states = Vec::new();
+        for i in 0..60 {
+            // 前 40 帧匹配（沿路线），后 20 帧窗口外（偏航，20m/帧）
+            let matched = i < 40;
+            states.push(det.on_frame(matched, 20.0));
+        }
+        println!(
+            "reroute 模拟：状态序列 {:?}（应含 ON_ROUTE→SUSPECTED→OFF_ROUTE）",
+            states
+        );
+        assert!(states.contains(&nav_router::reroute::OffRouteState::OffRoute));
+        // 重规划：当前 snap（偏航点）+ 同 destination → 新路线（§91）
+        det.begin_rerouting();
+        let off_snap =
+            nav_router::snap::snap_nearest(&graph, &spatial, -58200.0, 33600.0, 300.0).unwrap();
+        let t0 = std::time::Instant::now();
+        let new_route = nav_router::reroute::reroute(
+            &graph,
+            &mut router,
+            &off_snap,
+            &s2,
+            nav_router::cost::RouteProfile::Fastest,
+        );
+        let ms = t0.elapsed().as_secs_f64() * 1000.0;
+        match new_route {
+            Some(r) => println!(
+                "重规划成功：{:.0}m {:.0}s {} 边 {:.1}ms（§93 目标 ≈1s）",
+                r.distance_m,
+                r.eta_s,
+                r.edges.len(),
+                ms
+            ),
+            None => println!("重规划失败"),
+        }
+        det.reset();
+        println!("检测器已重置: {}", det.state().name());
     }
 }
 
