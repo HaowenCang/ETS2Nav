@@ -42,6 +42,8 @@ public sealed class SemanticJunction
     public required ulong Uid { get; init; }          // prefab item uid
     public required string PrefabToken { get; init; }
     public required string SemaphoreProfile { get; init; }
+    /// <summary>信号组类型序列（profile type[]：traffic_light_major/minor…，P1-10）。</summary>
+    public IReadOnlyList<string> SignalGroupTypes { get; set; } = Array.Empty<string>();
     public ulong[] NodeUids { get; init; } = Array.Empty<ulong>();
     public List<JunctionMovement> Movements { get; } = new();
     public bool LeftHandTraffic { get; init; }
@@ -57,6 +59,8 @@ public sealed class JunctionMovement
     /// <summary>-1 左转 / 0 直行 / 1 右转 / 2 U 型。</summary>
     public required int TurnType { get; init; }
     public int SemaphoreId { get; init; } = -1;
+    /// <summary>signal group 类型（junction.SignalGroupTypes[SemaphoreId % count]；无 profile 时 null）。</summary>
+    public string? SignalGroupType { get; set; }
     public int PriorityModifier { get; init; }
     public bool LowProbability { get; init; }
     /// <summary>PPD 曲线链（prefab 内部几何，供 Junction Graph）。</summary>

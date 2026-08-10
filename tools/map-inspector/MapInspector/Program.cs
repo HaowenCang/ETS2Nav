@@ -80,7 +80,7 @@ if (cmdArgs.Contains("--gate"))
     // P1-06 Berlin Semantic Gate：fatal/OD/已知非法 movement/公司 access/spot check
     var defs = new ScsDefinitions.DefinitionResolver(overlay);
     var prefabs = new ScsPrefab.PrefabResolver(overlay);
-    var builder = new ScsMapModel.SemanticMapBuilder(defs, prefabs);
+    var builder = new ScsMapModel.SemanticMapBuilder(defs, prefabs, overlay);
     var map = builder.Build(sectors);
     var rgraph = ScsMapModel.RoutingGraphBuilder.Build(map, sectors);
     var issues = new List<string>();
@@ -158,7 +158,7 @@ if (cmdArgs.Contains("--semantic"))
     // P1-05：SemanticMap + RoutingGraph（正式链路）
     var defs = new ScsDefinitions.DefinitionResolver(overlay);
     var prefabs = new ScsPrefab.PrefabResolver(overlay);
-    var builder = new ScsMapModel.SemanticMapBuilder(defs, prefabs);
+    var builder = new ScsMapModel.SemanticMapBuilder(defs, prefabs, overlay);
     var map = builder.Build(sectors);
     var rgraph = ScsMapModel.RoutingGraphBuilder.Build(map, sectors);
     var cc = rgraph.ConnectedComponents();
@@ -169,6 +169,15 @@ if (cmdArgs.Contains("--semantic"))
     Console.WriteLine($"  单行道 {oneWay}（降级双向 {degraded}），junction 无 movement {map.Junctions.Count(j => j.Movements.Count == 0)}");
     var speedDist = map.Roads.GroupBy(r => r.SpeedLimit).OrderBy(g => g.Key).Select(g => $"{g.Key}km/hx{g.Count()}").ToList();
     Console.WriteLine($"  限速分布: {string.Join(" ", speedDist)}");
+    // P1-10：signal group 绑定统计（signal group = PPD SemaphoreId；类型当 UseProfile 时未知）
+    var jWithSem = map.Junctions.Count(j => j.Movements.Any(m => m.SemaphoreId >= 0));
+    var mvWithSem = map.Junctions.SelectMany(j => j.Movements).Count(m => m.SemaphoreId >= 0);
+    var mvWithGroupType = map.Junctions.SelectMany(j => j.Movements).Count(m => m.SignalGroupType != null);
+    var groupTypes = map.Junctions.SelectMany(j => j.Movements).Where(m => m.SignalGroupType != null)
+        .GroupBy(m => m.SignalGroupType).ToDictionary(g => g.Key, g => g.Count());
+    Console.WriteLine($"  signal: 灯路口 {jWithSem}，带灯 movement {mvWithSem}（signal group 全确定），显式类型 {mvWithGroupType}");
+    if (groupTypes.Count > 0)
+        Console.WriteLine($"  group 类型: {string.Join(" ", groupTypes.OrderBy(k => k.Key).Select(k => $"{k.Key}×{k.Value}"))}");
     Console.WriteLine($"  公司 routing access 缺失 {noAccess}");
     Console.WriteLine($"RoutingGraph: nodes={rgraph.NodeCount} edges={rgraph.EdgeCount}");
     var kinds = rgraph.EdgeCount == 0 ? "" : string.Join(" ", Enum.GetValues<ScsGraph.RoutingEdgeKind>()
@@ -437,7 +446,7 @@ if (cmdArgs.Contains("--searchdb"))
     // P1-08：POI 提取 + search.db（SQLite FTS5，ADR-004）
     var defs = new ScsDefinitions.DefinitionResolver(overlay);
     var prefabs = new ScsPrefab.PrefabResolver(overlay);
-    var builder = new ScsMapModel.SemanticMapBuilder(defs, prefabs);
+    var builder = new ScsMapModel.SemanticMapBuilder(defs, prefabs, overlay);
     var map = builder.Build(sectors);
     var pois = ScsMapModel.PoiExtractor.Extract(sectors, map, prefabs);
     var outPath = Arg(args, "--searchdb") ?? "search.db";

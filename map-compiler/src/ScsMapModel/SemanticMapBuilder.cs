@@ -1,3 +1,4 @@
+using ScsResource;
 using ScsDefinitions;
 using ScsPrefab;
 using ScsSector;
@@ -12,11 +13,31 @@ public sealed class SemanticMapBuilder
 {
     private readonly DefinitionResolver _defs;
     private readonly PrefabResolver _prefabs;
+    private readonly IScsResourceProvider? _provider;
 
-    public SemanticMapBuilder(DefinitionResolver defs, PrefabResolver prefabs)
+    public SemanticMapBuilder(DefinitionResolver defs, PrefabResolver prefabs, IScsResourceProvider? provider = null)
     {
         _defs = defs;
         _prefabs = prefabs;
+        _provider = provider;
+    }
+
+    /// <summary>加载 semaphore_profile 文档（signal group 类型绑定用）。</summary>
+    private ScsSii.SiiDocument? LoadSemaphoreProfiles()
+    {
+        if (_provider is null) return null;
+        try
+        {
+            var doc = new ScsSii.SiiDocument();
+            foreach (var f in _provider.Enumerate("/def/world")
+                .Where(p => p.Contains("semaphore_profile") && p.EndsWith(".sii")))
+            {
+                var d = ScsDefinitions.DefinitionLoader.Load(_provider, f);
+                doc.Units.AddRange(d.Units);
+            }
+            return doc;
+        }
+        catch { return null; }
     }
 
     /// <summary>构建语义图。Prefab 加载失败/方向未解析均不阻断（降级 + 计数）。</summary>
@@ -72,6 +93,9 @@ public sealed class SemanticMapBuilder
         }
 
         // prefab → junction（movement 节点映射：(curveNode + Origin) % N → NodeUids）
+        var profileDocs = new Dictionary<string, ScsSii.Semaphore.SemaphoreProfile>();
+        var siiDoc = new ScsSii.SiiDocument();
+        var semProfiles = new Dictionary<string, ScsSii.Semaphore.SemaphoreProfile>();
         foreach (var sec in secList)
         {
             foreach (var pf in sec.Prefabs)
@@ -107,6 +131,47 @@ public sealed class SemanticMapBuilder
                     }
                 }
                 map.Junctions.Add(j);
+            }
+        }
+
+        // P1-10：signal group 绑定——1.60 灯配置全在 PPD 内部（prefab item 的 SemaphoreProfile 字段实测仅 1/693 设置）：
+        // signal group = PPD SemaphoreId（同 id 灯同组）；组类型 = PPD 灯 Type（SemaphoreType 枚举：
+        // UseProfile=0/TrafficLight=2/Minor=3/Major=4 等；UseProfile 时类型未知 → null，P2 从几何推断）
+        foreach (var j in map.Junctions)
+        {
+            var pd = _prefabs.Load(j.PrefabToken);
+            if (pd == null || pd.Semaphores.Count == 0) continue;
+            var groupTypes = pd.Semaphores.GroupBy(s => s.SemaphoreId)
+                .OrderBy(g => g.Key)
+                .Select(g => g.First().Type switch
+                {
+                    0 => "use_profile",
+                    1 => "model_only",
+                    2 => "traffic_light",
+                    3 => "traffic_light_minor",
+                    4 => "traffic_light_major",
+                    5 => "barrier_manual",
+                    6 => "barrier_distance",
+                    7 => "traffic_light_blockable",
+                    8 => "barrier_gas",
+                    9 => "traffic_light_virtual",
+                    10 => "barrier_automatic",
+                    var t => $"type_{t}",
+                })
+                .ToList();
+            j.SignalGroupTypes = groupTypes;
+            foreach (var m in j.Movements)
+            {
+                if (m.SemaphoreId < 0) continue;
+                var groups = pd.Semaphores.Where(s => s.SemaphoreId == m.SemaphoreId).ToList();
+                if (groups.Count == 0) continue;
+                m.SignalGroupType = groups[0].Type switch
+                {
+                    3 => "traffic_light_minor",
+                    4 => "traffic_light_major",
+                    2 => "traffic_light",
+                    _ => null,   // UseProfile/其他：类型未知（P2 从灯几何推断）
+                };
             }
         }
 

@@ -21,6 +21,8 @@ public sealed class SemaphoreProfile
     /// <summary>各信号灯相位（按下标对应 prefab semaphore ID）。可为空（profile 未定义 interval）。</summary>
     public IReadOnlyList<SignalPhase> Phases { get; init; } = Array.Empty<SignalPhase>();
     public IReadOnlyList<double> Cycle { get; init; } = Array.Empty<double>();
+    /// <summary>信号组类型序列（type[]：traffic_light_major/minor 等——P1-10 signal group 类型）。</summary>
+    public IReadOnlyList<string> SignalGroupTypes { get; init; } = Array.Empty<string>();
     public double? SleepStart { get; init; }   // 自午夜分钟
     public double? SleepEnd { get; init; }
     /// <summary>夜间闪烁窗口是否启用（且位于窗口内时无周期可言）。</summary>
@@ -79,14 +81,17 @@ public static class SemaphoreProfileResolver
 
         var intervals = unit.Values("interval[]").ToList();
         var cycles = unit.Values("cycle[]").Select(v => v.Num).ToList();
+        var types = unit.Values("type[]").Select(v => v.Str ?? "").ToList();
 
         // 数组合并：子元素覆盖父同下标，超出部分追加
         var phases = new List<SignalPhase>();
         var cycleOut = new List<double>();
+        var typesOut = new List<string>();
         if (parent != null)
         {
             phases.AddRange(parent.Phases);
             cycleOut.AddRange(parent.Cycle);
+            typesOut.AddRange(parent.SignalGroupTypes);
         }
         for (int i = 0; i < intervals.Count; i++)
         {
@@ -97,6 +102,10 @@ public static class SemaphoreProfileResolver
         for (int i = 0; i < cycles.Count; i++)
         {
             if (i < cycleOut.Count) cycleOut[i] = cycles[i]; else cycleOut.Add(cycles[i]);
+        }
+        for (int i = 0; i < types.Count; i++)
+        {
+            if (i < typesOut.Count) typesOut[i] = types[i]; else typesOut.Add(types[i]);
         }
 
         var sleepStart = unit.Values("sleep_time_start").Select(v => (double?)v.Num).FirstOrDefault()
@@ -110,6 +119,7 @@ public static class SemaphoreProfileResolver
             Name = name,
             Phases = phases,
             Cycle = cycleOut,
+            SignalGroupTypes = typesOut,
             SleepStart = sleepStart,
             SleepEnd = sleepEnd,
         };
