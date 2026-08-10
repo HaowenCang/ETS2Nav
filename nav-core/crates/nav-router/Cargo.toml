@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 nav-dataset = { path = "../nav-dataset" }
+
 nav-graph = { path = "../nav-graph" }
 nav-spatial = { path = "../nav-spatial" }
 nav-matcher = { path = "../nav-matcher" }

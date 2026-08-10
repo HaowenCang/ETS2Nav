@@ -18,6 +18,8 @@ fn main() {
         ("replay", _) if args.len() >= 3 => replay_trace(&args[2]),
         ("match", _) if args.len() >= 4 => match_trace(&args[2], &args[3]),
         ("snap", _) if args.len() >= 4 => snap_cli(&args[2], &args[3]),
+        ("route", _) if args.len() >= 4 => route_cli(&args[2], &args[3]),
+        ("route-verify", _) if args.len() >= 3 => route_verify(&args[2]),
         _ => {
             eprintln!("用法:");
             eprintln!("  nav-core-cli dataset info <dataset-dir>");
@@ -178,6 +180,155 @@ fn match_trace(trace_path: &str, dataset_dir: &str) {
     let mut top: Vec<(u32, u32)> = edge_hist.into_iter().collect();
     top.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
     println!("锁定边 TOP5: {:?}", top.iter().take(5).collect::<Vec<_>>());
+}
+
+/// route-verify：Europe 随机 OD 的 A*==Dijkstra 回归（§71）+ 长距离路线。
+fn route_verify(dataset_dir: &str) {
+    let (routing, _j) = nav_dataset::load_dataset(std::path::Path::new(dataset_dir))
+        .unwrap_or_else(|e| {
+            eprintln!("加载 dataset 失败: {e}");
+            std::process::exit(1);
+        });
+    let graph = nav_graph::CompactGraph::build(&routing);
+    let spatial = nav_spatial::SpatialIndex::build(&graph, nav_spatial::DEFAULT_CELL_SIZE);
+    let mut router = nav_router::search::Router::new(graph.node_count());
+    // 长距离：Berlin 市区 → 北向（跨城）
+    for (a, b, name) in [
+        ((-58456.0, 32832.0), (-58456.0, 35000.0), "Berlin→北向"),
+        ((-58456.0, 32832.0), (-60500.0, 32800.0), "Berlin→西向"),
+    ] {
+        let s1 = nav_router::snap::snap_nearest(&graph, &spatial, a.0, a.1, 300.0).unwrap();
+        let s2 = nav_router::snap::snap_nearest(&graph, &spatial, b.0, b.1, 300.0).unwrap();
+        let t0 = std::time::Instant::now();
+        let req = nav_router::search::RouteRequest::new(
+            &graph,
+            nav_router::snap::VirtualEndpoint::start(&s1, true),
+            nav_router::snap::VirtualEndpoint::goal(&s2),
+            nav_router::cost::RouteProfile::Fastest,
+        );
+        match router.astar(&req) {
+            Some(r) => println!(
+                "[{name}] {:.0}m {:.0}s {} 边 {:.1}ms",
+                r.distance_m,
+                r.eta_s,
+                r.edges.len(),
+                t0.elapsed().as_secs_f64() * 1000.0
+            ),
+            None => println!("[{name}] 无路线"),
+        }
+    }
+    // A*==Dijkstra 随机 OD（50 组 × 三 profile；LCG 伪随机固定种子）
+    let mut ok = 0u32;
+    let mut fail = 0u32;
+    for i in 0..50 {
+        // 伪随机：固定种子线性同余，落在 Berlin 附近核心网
+        let seed = 20260810u64.wrapping_add(i as u64 * 2654435761);
+        let mut s = seed;
+        let mut rnd = move || {
+            s = s
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (s >> 33) as f64 / (1u64 << 31) as f64
+        };
+        let xa = -62000.0 + rnd() * 9000.0;
+        let za = 30000.0 + rnd() * 8000.0;
+        let xb = -62000.0 + rnd() * 9000.0;
+        let zb = 30000.0 + rnd() * 8000.0;
+        let Some(s1) = nav_router::snap::snap_nearest(&graph, &spatial, xa, za, 300.0) else {
+            continue;
+        };
+        let Some(s2) = nav_router::snap::snap_nearest(&graph, &spatial, xb, zb, 300.0) else {
+            continue;
+        };
+        for profile in [
+            nav_router::cost::RouteProfile::Shortest,
+            nav_router::cost::RouteProfile::Fastest,
+            nav_router::cost::RouteProfile::Balanced,
+        ] {
+            let req = nav_router::search::RouteRequest::new(
+                &graph,
+                nav_router::snap::VirtualEndpoint::start(&s1, true),
+                nav_router::snap::VirtualEndpoint::goal(&s2),
+                profile,
+            );
+            let d = router.dijkstra(&req);
+            let a = router.astar(&req);
+            match (d, a) {
+                (Some(dr), Some(ar)) => {
+                    let cd = nav_router::search::route_cost(&graph, &dr, profile);
+                    let ca = nav_router::search::route_cost(&graph, &ar, profile);
+                    if (cd - ca).abs() < 1e-3 {
+                        ok += 1;
+                    } else {
+                        fail += 1;
+                        if fail <= 3 {
+                            println!("  不一致 {profile:?}: D={cd:.3} A*={ca:.3}");
+                        }
+                    }
+                }
+                (None, None) => ok += 1,
+                _ => {
+                    fail += 1;
+                    println!("  可达性不一致");
+                }
+            }
+        }
+    }
+    println!("A*==Dijkstra 回归: {ok} 一致 / {fail} 不一致");
+}
+
+/// route：A* 路线规划（§124：distance/ETA/signals/edges/maneuvers；三 profile 对比）。
+fn route_cli(xz: &str, dataset_dir: &str) {
+    let parts: Vec<&str> = xz.split(':').collect();
+    if parts.len() != 2 {
+        eprintln!("格式: <x1,z1:x2,z2> 如 -58456,32832:-52925,36510");
+        std::process::exit(1);
+    }
+    let parse = |s: &str| -> (f64, f64) {
+        let v: Vec<&str> = s.split(',').collect();
+        (v[0].trim().parse().unwrap(), v[1].trim().parse().unwrap())
+    };
+    let (x1, z1) = parse(parts[0]);
+    let (x2, z2) = parse(parts[1]);
+    let (routing, _j) = nav_dataset::load_dataset(std::path::Path::new(dataset_dir))
+        .unwrap_or_else(|e| {
+            eprintln!("加载 dataset 失败: {e}");
+            std::process::exit(1);
+        });
+    let graph = nav_graph::CompactGraph::build(&routing);
+    let spatial = nav_spatial::SpatialIndex::build(&graph, nav_spatial::DEFAULT_CELL_SIZE);
+    let s1 = nav_router::snap::snap_nearest(&graph, &spatial, x1, z1, 300.0).unwrap_or_else(|| {
+        eprintln!("起点 300m 内无可路由边");
+        std::process::exit(1);
+    });
+    let s2 = nav_router::snap::snap_nearest(&graph, &spatial, x2, z2, 300.0).unwrap_or_else(|| {
+        eprintln!("终点 300m 内无可路由边");
+        std::process::exit(1);
+    });
+    let mut router = nav_router::search::Router::new(graph.node_count());
+    println!(
+        "起 ({x1:.0},{z1:.0}) 吸附 {:.0}m → 终 ({x2:.0},{z2:.0}) 吸附 {:.0}m",
+        s1.lateral, s2.lateral
+    );
+    for profile in [
+        nav_router::cost::RouteProfile::Fastest,
+        nav_router::cost::RouteProfile::Shortest,
+        nav_router::cost::RouteProfile::Balanced,
+    ] {
+        let t0 = std::time::Instant::now();
+        let start = nav_router::snap::VirtualEndpoint::start(&s1, true);
+        let goal = nav_router::snap::VirtualEndpoint::goal(&s2);
+        let req = nav_router::search::RouteRequest::new(&graph, start, goal, profile);
+        match router.astar(&req) {
+            Some(r) => {
+                let ms = t0.elapsed().as_secs_f64() * 1000.0;
+                println!("[{}] {:>6.0}m {:>7.0}s（{:.0} min）{} 边（road {} / jct {} / sig {} / ferry {} / train {}）{:.1} ms",
+                    profile.name(), r.distance_m, r.eta_s, r.eta_s / 60.0, r.edges.len(),
+                    r.road_edge_count, r.junction_count, r.signal_count, r.ferry_count, r.train_count, ms);
+            }
+            None => println!("[{}] 无路线", profile.name()),
+        }
+    }
 }
 
 /// snap：任意坐标 → 最近可路由 edge（P2-07 §56）。
