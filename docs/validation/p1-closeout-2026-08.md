@@ -39,6 +39,8 @@ speed-validator、telemetry-dump、signal-lab、perf-bench、vision-anchor
 ### 数据规模（全欧洲，游戏 1.60.1.7）
 1358 sector / 253 万 items / 344 万 nodes / 143,677 roads（v2 rail 排除后）/ 42,843 junctions /
 171,453 movements / 426,907 graph edges（v2）/ 4,997 POI / 2,432 prefab 种类
+（**勘误 2026-08-10**：此数字为修复前口径——P1 构建漏负 x sector 422 个；
+Europe v4 全量：281,012 movements / 696,717 edges / 7,918 POI——详见 p1-13 勘误表）
 
 ## 三、关键实测发现（P1 期间的工程知识沉淀）
 

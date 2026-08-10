@@ -11,7 +11,7 @@
 
 ## Germany build 规模
 
-| 指标 | Berlin 8 | Germany 39 | Europe 679 |
+| 指标 | Berlin 8 | Germany 39 | Europe 679（勘误前） |
 |---|---|---|---|
 | sector | 8 | 39 | 679 |
 | roads | 2,429 | 11,551 | 143,677（v2 rail 排除后；v1 149,814） |
