@@ -99,20 +99,30 @@ public sealed class SemanticMapBuilder
                         var m = movements[i];
                         var entryUid = MapControlNode(m.EntryNode, pf.OriginIndex, n, pf.NodeUids);
                         var exitUid = MapControlNode(m.ExitNode, pf.OriginIndex, n, pf.NodeUids);
+                        // 左行国家（UK/爱尔兰）prefab 镜像（P2-04 前置验证发现）：
+                        // 拓扑端点不变（世界节点已按镜像放置），但 TurnType 取反（左转↔右转）且
+                        // polyline 绕 entry/exit 中点 X 轴翻转（环岛绕行方向反转——模板为右行方向）
+                        int turnType = m.TurnType;
+                        IReadOnlyList<(double X, double Y, double Z)> worldPoly = BuildWorldPolyline(pd, m.CurvePath, entryUid, exitUid, nodePos);
+                        if (pf.LeftHandTraffic)
+                        {
+                            if (turnType is -1 or 1) turnType = -turnType;
+                            worldPoly = MirrorX(worldPoly);
+                        }
                         j.Movements.Add(new JunctionMovement
                         {
                             MovementId = i,
                             EntryNodeUid = entryUid,
                             ExitNodeUid = exitUid,
                             Length = m.Length,
-                            TurnType = m.TurnType,
+                            TurnType = turnType,
                             SemaphoreId = m.SemaphoreId,
                             PriorityModifier = m.PriorityModifier,
                             LowProbability = m.LowProbability,
                             CurvePath = m.CurvePath,
                             // P2-01 v2（V2-2）：movement 世界坐标 polyline——
                             // CurvePath 链（PPD 局部坐标）经 entry/exit 端点锚定变换 + 2m 弦采样
-                            WorldPolyline = BuildWorldPolyline(pd, m.CurvePath, entryUid, exitUid, nodePos),
+                            WorldPolyline = worldPoly,
                         });
                     }
                 }
@@ -195,6 +205,14 @@ public sealed class SemanticMapBuilder
         // P2-01 v2（V2-5）：Ferry/Train 航线——ferry_connection 定义 + 码头节点配对
         BuildFerries(map, secList);
         return map;
+    }
+
+    /// <summary>左行镜像：polyline 绕首尾中点 X 轴翻转（环岛绕行方向反转）。</summary>
+    private static IReadOnlyList<(double X, double Y, double Z)> MirrorX(IReadOnlyList<(double X, double Y, double Z)> pts)
+    {
+        if (pts.Count < 2) return pts;
+        double cx = (pts[0].X + pts[^1].X) / 2;
+        return pts.Select(p => (2 * cx - p.X, p.Y, p.Z)).ToArray();
     }
 
     /// <summary>movement polyline：CurvePath 链（PPD 局部坐标）→ 世界坐标。

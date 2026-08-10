@@ -30,7 +30,7 @@ if (cmdArgs.Contains("--all-sectors") || cmdArgs.Contains("--region"))
 {
     var region = Arg(args, "--region") ?? "europe";
     secNames = overlay.Enumerate(installDir != null ? "/map/europe" : "/base_map/map/europe")
-        .Where(p => p.EndsWith(".base") && p.Contains("/sec+"))
+        .Where(p => p.EndsWith(".base") && (p.Contains("/sec+") || p.Contains("/sec-")))   // sec+ 与 sec-（负 x 区域：UK/爱尔兰等，P2-04 发现）
         .Select(p => Path.GetFileNameWithoutExtension(p))
         .Where(n => RegionMatches(n, region))
         .OrderBy(n => n)
@@ -441,10 +441,11 @@ if (geojsonArg != null)
 /// <summary>区域 sector 匹配（德国 = x∈[-1,3]、z∈[-6,3] 的 4096 网格，按城市坐标 bbox 实测）。</summary>
 static bool RegionMatches(string name, string region)
 {
-    var m = System.Text.RegularExpressions.Regex.Match(name, @"^sec\+(\d+)([+-])(\d+)$");
+    // sec+0002-0002 / sec-0001+0000（负 x 区域：UK/爱尔兰等——P2-04 修复）
+    var m = System.Text.RegularExpressions.Regex.Match(name, @"^sec([+-])(\d+)([+-])(\d+)$");
     if (!m.Success) return false;
-    int x = int.Parse(m.Groups[1].Value);
-    int y = int.Parse(m.Groups[3].Value) * (m.Groups[2].Value == "-" ? -1 : 1);
+    int x = int.Parse(m.Groups[2].Value) * (m.Groups[1].Value == "-" ? -1 : 1);
+    int y = int.Parse(m.Groups[4].Value) * (m.Groups[3].Value == "-" ? -1 : 1);
     return region switch
     {
         "germany" => x >= -1 && x <= 3 && y >= -6 && y <= 3,
