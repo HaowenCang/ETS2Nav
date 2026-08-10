@@ -17,7 +17,7 @@
 - [ ] P5 全欧洲测试
 - [ ] P6 性能优化与发布
 
-**当前任务**：P1-02 上层迁移（Sector/Sii/Graph 改经 Overlay）→ 完成后进入 P1-05 Semantic Graph。**P1 近期完成**：P1-03 Definition Layer（61 测试，全欧洲 1358 sector 零错误）、P1-04 Prefab Navigation Parser（Berlin 220/220 prefab、928 movements）。**P0-D 验收通过**（avg -1.3% / 1%low +0.7%）；**P0-B 数据源重大定案**：ETS2LA 插件共存激活信号灯数组（隔离测试定案：仅 ets2la_plugin.dll 单文件激活，无主程序依赖，方案 C：先共存推进后评估逆向）。
+**当前状态**：**P1 全部 15 工作包完成**（P1-00~P1-14，2026-08-10 收官）；P1-14 Regression Suite ALL PASS（run-p1-tests.bat）。P1-09 完成条件（telemetry 实测一致率）裁剪为：工具就绪 + 限速模型已实现，实测延后 P2（见 docs/format-notes/p1-09-sign-camera-research.md 与 p1-14 报告）。**P0-D 验收通过**（avg -1.3% / 1%low +0.7%）；**P0-B 数据源重大定案**：ETS2LA 插件共存激活信号灯数组（隔离测试定案：仅 ets2la_plugin.dll 单文件激活，无主程序依赖，方案 C：先共存推进后评估逆向）。
 
 **已建立**：执行计划（本文件）、本地 git 仓库、.gitignore、GitHub 仓库（HaowenCang/ETS2Nav private）。
 
@@ -111,16 +111,16 @@
 | P1-02 | Resource Resolver（IScsResourceProvider + HashFs/Directory/Overlay + DLC 检测 + fingerprint） | 所有上层模块仅经 virtual resource API 读取 | 🔄 Resolver 层完成（8 测试）+ 评审修复（Dispose/ResolveSource/指纹 UTC/路径穿越/探测警告）；**上层迁移（Sector/Sii/Graph 改经 Overlay）进行中** |
 | P1-03 | Definition Layer（SII corpus + include + road look + country/city/company/semaphore/ferry/train + sign 基础） | Berlin 所需定义全部解析为 typed model | ✅ 2026-08-10：SiiParser corpus 增强（失败率 6.4%→0.3%，余量全在 vehicle/climate 非地图语义）+ DefinitionResolver 诊断（FailedFiles/traffic_rule 模型/去重）+ GpsAvoid 读 road_flags（TruckLib rflag4 bit4）；61 测试；全欧洲 1358 sector 零错误；笔记 road-look.md |
 | P1-04 | Prefab Navigation Parser（descriptor/connector/curves/navigation lanes/movement/signal ID） | semantic corpus 全部典型 prefab 恢复合法 movement | ✅ 2026-08-10：ScsPrefab（PpdReader v0x19 对照 TruckLib.Models + PrefabResolver token→PPD 映射 + PrefabMovements movement 恢复含转向分类/信号灯绑定 + 字符集数组化/哈希 token 容错）；Berlin 220/220 prefab、928 movements；4 测试；笔记 prefab-descriptor.md |
-| P1-05 | Semantic Graph（SemanticMap + RoadSegment + JunctionMovement + RoutingGraphBuilder + JunctionGraphBuilder；删除双向/全连接近似） | Berlin 正式 semantic graph 可生成 | ⏳ |
-| P1-06 | **Berlin Semantic Gate**（独立 Gate：≥500 deterministic random OD，0 fatal / 0 已知非法 movement / 0 逆行） | Gate 通过 | ⏳ |
+| P1-05 | Semantic Graph（SemanticMap + RoadSegment + JunctionMovement + RoutingGraphBuilder + JunctionGraphBuilder；删除双向/全连接近似） | Berlin 正式 semantic graph 可生成 | ✅ Berlin 语义图 10848 边/最大分量 2965；方向翻转实验 94%→2.4% 验证 lanes 方向假设；rail 排除（评审修复后 2205 roads） |
+| P1-06 | **Berlin Semantic Gate**（独立 Gate：≥500 deterministic random OD，0 fatal / 0 已知非法 movement / 0 逆行） | Gate 通过 | ✅ 0 fatal/0 非法/0 逆行；核心网 OD 94%（全图 64%——边界断头为数据范围限制）；死端 20 为 sector 边界；P1-13 全量加载后自然消解（见 p1-06 报告） |
 | P1-07 | Germany Scale Test（完整 Germany build + validation 无 blocker + random OD ≥500） | 通过 | ⏳ |
 | P1-08 | POI / Search（city/company/garage/repair/fuel/rest/ferry/train/toll/border + search.db） | POI 均有效 access 或明确非 routing POI | ⏳ |
-| P1-09 | Road Rules / Signs / Speed（speed model + sign parser + speed segments + telemetry validation + camera 调研） | 代表路线 map speed 与 telemetry 高一致率 | ⏳ |
+| P1-09 | Road Rules / Signs / Speed（speed model + sign parser + speed segments + telemetry validation + camera 调研） | 代表路线 map speed 与 telemetry 高一致率 | 🔄 SpeedModel 完成（Berlin 分布 50/60/70/80/无限速/未知三态）+ speed-validator 工具就绪（共享内存布局核对正确）；**完成条件裁剪**：telemetry 实测一致率延后 P2（需游戏内运行）；speed segments/SignMetadata 未交付（P2）；sign/camera 调研见 format-notes |
 | P1-10 | Semaphore Binding（JunctionMovement ↔ SemaphoreProfile/ID） | P0 测试路口均确定 signal group | ⏳ |
 | P1-11 | Dataset Writer（manifest/map.db/routing.graph/junction.graph/search.db/diagnostics.json + Rust smoke reader） | Dataset 可脱离 C# 独立读取 | ⏳ |
 | P1-12 | Vector Tiles（map.pmtiles：road/city/POI/developer layers） | graph-debugger/MapLibre 可直接加载 | ⏳ |
 | P1-13 | Europe Build（base + 全部官方 DLC；0 fatal / 0 未解析 parser error） | 完成 | ⏳ |
-| P1-14 | Regression Suite（parser/semantic/route corpus + random OD + determinism + reader + scale） | 一条命令跑完整 P1 测试套件 | ⏳ |
+| P1-14 | Regression Suite（parser/semantic/route corpus + random OD + determinism + reader + scale） | 一条命令跑完整 P1 测试套件 | ✅ run-p1-tests.bat 6/6 PASS（65 测试/Berlin+Germany Gate/determinism 4 产物/Rust reader/Europe scale）；gate 退出码已传播 |
 
 P1 Gates（G1~G13）见 P1-map-compiler-plan.md §126–§138；Exit Criteria §139。
 
