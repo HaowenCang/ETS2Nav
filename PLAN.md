@@ -7,17 +7,17 @@
 
 ## §1 当前状态
 
-**最后更新**：2026-08-10（P1 关门 tag v0.2.0-p1；P2 规划启动）
+**最后更新**：2026-08-10（P2 收官审查中——18/19 工作包完成，P2-19 性能基准达标）
 
 - [x] **P0 阶段**（✅ 门评审通过 2026-08-10，tag v0.1.0-p0；A6/A8 工具并入 P1-01）
 - [x] **P1 Map Compiler**（✅ 关门 2026-08-10，tag v0.2.0-p1；15 工作包 P1-00~P1-14 完成 + 4 子代理收官评审修复 + Regression Suite ALL PASS；执行基线 = P1-map-compiler-plan.md）
-- [ ] P2 Navigation Core（🔄 进行中 2026-08-10：执行基线 = P2-navigation-core-plan.md；19 工作包 P2-00~P2-19；Rust 实现）
+- [ ] P2 Navigation Core（🔄 收官审查 2026-08-10：执行基线 = P2-navigation-core-plan.md；19 工作包 P2-00~P2-19，**18/19 完成**——P2-19 性能基准达标：加载 436ms/内存 217MB/路线 p99 0.38ms/匹配 p99 0.010ms；4 子代理审查进行中；关门 tag v0.3.0-p2）
 - [ ] P3 Driving Assistant
 - [ ] P4 正式 UI
 - [ ] P5 全欧洲测试
 - [ ] P6 性能优化与发布
 
-**当前状态**：**P1 关门（tag v0.2.0-p1，2026-08-10）**——15 工作包全部完成 + 4 子代理收官评审修复 + Regression Suite ALL PASS（真实退出码判定）。P1-09 完成条件裁剪：telemetry 实测延后 P2（工具就绪）。**下一步：P2 执行中**（P2-00 Dataset Consumer Audit 启动；执行基线 P2-navigation-core-plan.md）。**P0-D 验收通过**（avg -1.3% / 1%low +0.7%）；**P0-B 数据源重大定案**：ETS2LA 插件共存激活信号灯数组（隔离测试定案：仅 ets2la_plugin.dll 单文件激活，无主程序依赖，方案 C：先共存推进后评估逆向）。
+**当前状态**：**P2 收官审查中（2026-08-10）**——18/19 工作包完成（P2-00~P2-18 全合并 main；P2-19 性能基准达标：Europe v4 全量加载 436ms/内存 217MB/路线 p99 0.38ms/匹配 p99 0.010ms，全部远超 §139-140 目标）；4 子代理收官审查进行中（实现正确性/计划符合性/文档一致性/性能边界），BLOCKER/MAJOR 修复后关门 tag v0.3.0-p2。游戏内实测类验证（UK 环岛方向/Speed Gate/信号 runtime/驾驶 corpus）明确排除并记录为 P2 已知限制。**P1 已关门**（tag v0.2.0-p1）；**P0-D 验收通过**（avg -1.3% / 1%low +0.7%）；**P0-B 数据源重大定案**：ETS2LA 插件共存激活信号灯数组（隔离测试定案：仅 ets2la_plugin.dll 单文件激活，无主程序依赖，方案 C：先共存推进后评估逆向）。
 
 **已建立**：执行计划（本文件）、本地 git 仓库、.gitignore、GitHub 仓库（HaowenCang/ETS2Nav private）。
 

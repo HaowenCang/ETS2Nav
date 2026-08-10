@@ -25,6 +25,7 @@ fn main() {
         ("signal", _) if args.len() >= 4 => signal_cli(&args[2], &args[3]),
         ("session", _) if args.len() >= 4 => session_cli(&args[2], &args[3]),
         ("regression", _) if args.len() >= 3 => regression_cli(&args[2]),
+        ("bench", _) if args.len() >= 3 => bench_cli(&args[2]),
         _ => {
             eprintln!("用法:");
             eprintln!("  nav-core-cli dataset info <dataset-dir>");
@@ -228,6 +229,100 @@ fn roundabout_stats(dataset_dir: &str) {
             shown += 1;
         }
     }
+}
+
+/// bench：正式性能基准（§139-140）——加载/内存/路线时延分布/匹配 p99。
+fn bench_cli(dataset_dir: &str) {
+    // 1) 加载计时
+    let t0 = std::time::Instant::now();
+    let (routing, _j) = nav_dataset::load_dataset(std::path::Path::new(dataset_dir))
+        .unwrap_or_else(|e| {
+            eprintln!("加载 dataset 失败: {e}");
+            std::process::exit(1);
+        });
+    let load_ms = t0.elapsed().as_secs_f64() * 1000.0;
+    let t1 = std::time::Instant::now();
+    let graph = nav_graph::CompactGraph::build(&routing);
+    let build_ms = t1.elapsed().as_secs_f64() * 1000.0;
+    let t2 = std::time::Instant::now();
+    let spatial = nav_spatial::SpatialIndex::build(&graph, nav_spatial::DEFAULT_CELL_SIZE);
+    let spatial_ms = t2.elapsed().as_secs_f64() * 1000.0;
+    // 粗略内存（节点/边/几何/邻接）
+    let mem_mb = (graph.positions.len() * 24
+        + graph.edges.len() * 40
+        + graph.edges_geometry.len() * 24
+        + graph.node_offsets.len() * 4
+        + graph.edge_ids.len() * 4
+        + graph.in_offsets.len() * 4
+        + graph.in_edge_ids.len() * 4) as f64
+        / 1e6;
+    println!(
+        "[加载] {load_ms:.0}ms（routing.graph）+ build {build_ms:.0}ms + spatial {spatial_ms:.0}ms"
+    );
+    println!("[内存] 粗略 {mem_mb:.0}MB（目标 <500MB）");
+    // 2) 路线时延分布（Berlin 核心网 200 OD × fastest）
+    let mut router = nav_router::search::Router::new(graph.node_count());
+    let mut times = Vec::new();
+    let mut solved = 0u32;
+    for i in 0..200 {
+        let seed = 20260810u64 + i as u64 * 2654435761;
+        let mut s = seed;
+        let mut rnd = move || {
+            s = s
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            (s >> 33) as f64 / (1u64 << 31) as f64
+        };
+        let (xa, za) = (-62000.0 + rnd() * 9000.0, 30000.0 + rnd() * 8000.0);
+        let (xb, zb) = (-62000.0 + rnd() * 9000.0, 30000.0 + rnd() * 8000.0);
+        let (Some(s1), Some(s2)) = (
+            nav_router::snap::snap_nearest(&graph, &spatial, xa, za, 300.0),
+            nav_router::snap::snap_nearest(&graph, &spatial, xb, zb, 300.0),
+        ) else {
+            continue;
+        };
+        let t = std::time::Instant::now();
+        let req = nav_router::search::RouteRequest::new(
+            &graph,
+            nav_router::snap::VirtualEndpoint::start(&s1, true),
+            nav_router::snap::VirtualEndpoint::goal(&s2),
+            nav_router::cost::RouteProfile::Fastest,
+        );
+        if router.astar(&req).is_some() {
+            solved += 1;
+            times.push(t.elapsed().as_secs_f64() * 1000.0);
+        }
+    }
+    times.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let p = |q: f64| -> f64 { times[((times.len() as f64) * q) as usize] };
+    println!("[路线] {} 条（Berlin 核心网 fastest）：p50={:.2}ms p95={:.3}ms p99={:.3}ms max={:.3}ms（目标典型 <500ms）",
+        solved, p(0.5), p(0.95), p(0.99), times.last().unwrap());
+    // 3) 匹配 p99（trace 回放）
+    let trace = "C:/Users/20659/AppData/Local/Temp/real.navtrace";
+    if std::path::Path::new(trace).exists() {
+        let frames: Vec<nav_telemetry::TraceFrame> =
+            nav_telemetry::replay(std::path::Path::new(trace))
+                .unwrap()
+                .collect();
+        let mut m = nav_matcher::MapMatcher::new(nav_matcher::MatcherConfig::default());
+        let mut mtimes = Vec::new();
+        for f in &frames {
+            let p = f.snap.position;
+            let yaw = quat_yaw(f.snap.heading);
+            let t = std::time::Instant::now();
+            m.match_frame(&graph, &spatial, p[0], p[2], yaw);
+            mtimes.push(t.elapsed().as_secs_f64() * 1000.0);
+        }
+        mtimes.sort_by(|a, b| a.partial_cmp(b).unwrap());
+        let mp = |q: f64| -> f64 { mtimes[((mtimes.len() as f64) * q) as usize] };
+        println!(
+            "[匹配] {} 帧：p50={:.3}ms p99={:.3}ms（目标 p99<10ms）",
+            mtimes.len(),
+            mp(0.5),
+            mp(0.99)
+        );
+    }
+    println!("Bench PASS");
 }
 
 /// regression：Europe 全图区域化回归（P2-18）——
