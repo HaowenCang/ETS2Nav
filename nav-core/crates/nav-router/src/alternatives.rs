@@ -72,14 +72,17 @@ pub fn plan_alternatives(
             }
         }
     }
-    // 3) 质量检查（§82）：成本劣化拒绝；排序
+    // 3) 质量检查（§82）：成本劣化拒绝；排序。
+    // 审查修复：不同 profile 的成本单位不同（fastest=秒/shortest=米/balanced=混合），
+    // 不能跨 profile 直接比较——统一用距离（米）作为比较基准（无单位混比问题）。
+    let dist_of = |r: &Route| r.distance_m;
     if let Some((best, _)) = routes.first() {
-        let best_cost = route_cost(graph, best, routes[0].1);
-        routes.retain(|(r, p)| route_cost(graph, r, *p) <= best_cost * params.max_cost_ratio);
+        let best_dist = dist_of(best);
+        routes.retain(|(r, _)| dist_of(r) <= best_dist * params.max_cost_ratio);
     }
     routes.sort_by(|a, b| {
-        route_cost(graph, &a.0, a.1)
-            .partial_cmp(&route_cost(graph, &b.0, b.1))
+        dist_of(&a.0)
+            .partial_cmp(&dist_of(&b.0))
             .unwrap_or(std::cmp::Ordering::Equal)
     });
     routes.truncate(3);

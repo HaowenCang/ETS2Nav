@@ -174,12 +174,13 @@ public static class DatasetWriter
 
     // —— manifest.json ——
     public static void WriteManifest(string dir, RoutingGraph g, SemanticMap map,
-        IReadOnlyList<string> sectors, DateTime generatedAt)
+        IReadOnlyList<string> sectors, DateTime generatedAt, string? gameVersion = null)
     {
         var manifest = new
         {
             dataset_version = (int)FormatVersion,        // v2：字段名区分 format_version（P2 计划 §14）
             generated_at = generatedAt.ToString("yyyy-MM-ddTHH:mm:ssZ"),
+            game_version = gameVersion,                  // P2 §29：manifest 校验（游戏版本）
             scope = "europe",
             sectors = sectors,
             stats = new

@@ -48,7 +48,7 @@ snap 到最近可路由边——**修复后 london 等全部解析成功**。
 
 ## 四、门
 
-- fmt / clippy 0 / 28 测试全绿
+- fmt / clippy 0 / 49 测试全绿（workspace 总数）
 - 新增依赖：rusqlite（bundled，nav-dataset 内）
 
 ## 五、下一步

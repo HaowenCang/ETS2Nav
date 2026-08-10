@@ -167,6 +167,40 @@ fn check_manifest(path: &Path) -> Result<()> {
             expected: EXPECTED_DATASET_VERSION,
         });
     }
+    // P2 §29：scope + game_version + required files 校验
+    let scope = v
+        .get("scope")
+        .and_then(|x| x.as_str())
+        .ok_or_else(|| DatasetError::Manifest("缺少 scope".into()))?;
+    if scope != "europe" {
+        return Err(DatasetError::Manifest(format!("scope 不匹配: {scope}")));
+    }
+    if let Some(gv) = v.get("game_version").and_then(|x| x.as_str()) {
+        if gv.is_empty() {
+            return Err(DatasetError::Manifest(
+                "game_version 为空（正式导航模式需匹配游戏版本）".into(),
+            ));
+        }
+    } else {
+        return Err(DatasetError::Manifest(
+            "缺少 game_version（正式导航模式需匹配游戏版本；调试模式可忽略）".into(),
+        ));
+    }
+    // required files：manifest 声明的文件必须存在
+    if let Some(files) = v.get("files").and_then(|x| x.as_array()) {
+        let dir = path
+            .parent()
+            .ok_or_else(|| DatasetError::Manifest("manifest 路径无父目录".into()))?;
+        for f in files {
+            let name = f
+                .get("name")
+                .and_then(|x| x.as_str())
+                .ok_or_else(|| DatasetError::Manifest("files 项缺 name".into()))?;
+            if !dir.join(name).exists() {
+                return Err(DatasetError::MissingFile(name.to_string()));
+            }
+        }
+    }
     Ok(())
 }
 

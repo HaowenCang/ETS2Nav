@@ -21,7 +21,7 @@
 | 路线 | 结果 |
 |---|---|
 | Berlin 城区 11.3km | 1 条（fastest/shortest overlap >0.85 正确去重；penalty 重搜无独立绕行——城市单路径合理） |
-| Berlin→北向 | 1 条（单路径） |
+| Berlin→北向 | **2 条**（#0 4963m + #1 5676m 绕行——质量过滤单位混比修复后绕行通过检查；P2-19 审查修复） |
 | **London 城区** | **2 条独立路线：3.7km（fastest）+ 6.0km（penalty 重搜绕行，overlap <0.85）** |
 
 ### RouteRequest 扩展
@@ -29,7 +29,7 @@
 
 ## 三、门
 
-- fmt / clippy 0 / 20 测试全绿
+- fmt / clippy 0 / 49 测试全绿（workspace 总数）
 - P1 Regression 不受影响
 
 ## 四、下一步
