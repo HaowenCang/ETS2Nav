@@ -68,19 +68,18 @@ fn live(trace_path: Option<&str>) {
                 src.reconnect();
             }
         }
-        std::thread::sleep(std::time::Duration::from_millis(16));   // ~60 Hz 轮询上限
+        std::thread::sleep(std::time::Duration::from_millis(16)); // ~60 Hz 轮询上限
     }
 }
 
 /// 回放 trace：逐帧打印摘要（后续工作包接入 matcher/reroute 后扩展）。
 fn replay_trace(path: &str) {
-    let frames: Vec<nav_telemetry::TraceFrame> =
-        nav_telemetry::replay(std::path::Path::new(path))
-            .unwrap_or_else(|e| {
-                eprintln!("打开 trace 失败: {e}");
-                std::process::exit(1);
-            })
-            .collect();
+    let frames: Vec<nav_telemetry::TraceFrame> = nav_telemetry::replay(std::path::Path::new(path))
+        .unwrap_or_else(|e| {
+            eprintln!("打开 trace 失败: {e}");
+            std::process::exit(1);
+        })
+        .collect();
     if frames.is_empty() {
         eprintln!("trace 为空或无法解析");
         std::process::exit(1);
@@ -145,8 +144,23 @@ fn dataset_info(dir: &str) {
             // 粗略内存估计（边 + 几何）
             let mem = st.edges * 40 + st.geometry_points * 24;
             println!("  粗略内存（边+几何）: {:.1} MB", mem as f64 / 1e6);
-            // 校验：边连续性抽样
+            // 校验：边连续性抽样 + spatial 索引基准
             let c = nav_graph::CompactGraph::build(&routing);
+            let t1 = std::time::Instant::now();
+            let sp = nav_spatial::SpatialIndex::build(&c, nav_spatial::DEFAULT_CELL_SIZE);
+            let (n_bbox, n_cell) = sp.stats();
+            let build_ms = t1.elapsed().as_secs_f64() * 1000.0;
+            // 查询基准：Berlin 中心附近 500 点
+            let t2 = std::time::Instant::now();
+            let mut hits = 0usize;
+            for i in 0..500 {
+                let x = -58456.0 + (i as f64 % 50.0) * 40.0;
+                let z = 32832.0 + (i as f64 / 50.0) * 40.0;
+                hits += sp.query_radius(x, z, 100.0).len();
+            }
+            let query_ms = t2.elapsed().as_secs_f64() * 1000.0;
+            println!("  spatial: {} 边索引 / {} cells，构建 {:.1} ms，500 查询 {:.1} ms（{} 候选）",
+                n_bbox, n_cell, build_ms, query_ms, hits);
             let mut edge_ok = 0;
             for e in &c.edges {
                 if e.from < c.node_count() as u32 && e.to < c.node_count() as u32 {

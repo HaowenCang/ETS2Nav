@@ -9,7 +9,7 @@
 //   offset 113: job_active u8 + 8×64B 字符串 + income u32 + delivery_time u32（634B 总）
 use std::fs::File;
 use std::io::{BufRead, BufReader, Write};
-use std::os::raw::{c_void};
+use std::os::raw::c_void;
 use std::path::Path;
 use std::ptr;
 use std::time::Duration;
@@ -22,9 +22,20 @@ pub const TOTAL_SIZE: usize = 634;
 #[link(name = "kernel32")]
 extern "system" {
     fn CreateFileMappingW(
-        file: *mut c_void, attrs: *mut c_void, protect: u32, max_hi: u32, max_lo: u32, name: *const u16,
+        file: *mut c_void,
+        attrs: *mut c_void,
+        protect: u32,
+        max_hi: u32,
+        max_lo: u32,
+        name: *const u16,
     ) -> *mut c_void;
-    fn MapViewOfFile(map: *mut c_void, access: u32, off_hi: u32, off_lo: u32, bytes: usize) -> *mut c_void;
+    fn MapViewOfFile(
+        map: *mut c_void,
+        access: u32,
+        off_hi: u32,
+        off_lo: u32,
+        bytes: usize,
+    ) -> *mut c_void;
     fn UnmapViewOfFile(ptr: *mut c_void) -> i32;
     fn CloseHandle(h: *mut c_void) -> i32;
 }
@@ -43,7 +54,14 @@ impl SharedMemory {
     pub fn open(name: &str) -> Option<Self> {
         let wide: Vec<u16> = name.encode_utf16().chain(std::iter::once(0)).collect();
         unsafe {
-            let map = CreateFileMappingW(ptr::null_mut(), ptr::null_mut(), PAGE_READONLY, 0, 0, wide.as_ptr());
+            let map = CreateFileMappingW(
+                ptr::null_mut(),
+                ptr::null_mut(),
+                PAGE_READONLY,
+                0,
+                0,
+                wide.as_ptr(),
+            );
             if map.is_null() {
                 return None;
             }
@@ -52,7 +70,10 @@ impl SharedMemory {
                 CloseHandle(map);
                 return None;
             }
-            Some(SharedMemory { map, ptr: p as *mut u8 })
+            Some(SharedMemory {
+                map,
+                ptr: p as *mut u8,
+            })
         }
     }
 
@@ -128,7 +149,16 @@ unsafe fn u32_at(b: &[u8], off: usize) -> u32 {
     u32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]])
 }
 unsafe fn u64_at(b: &[u8], off: usize) -> u64 {
-    u64::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3], b[off + 4], b[off + 5], b[off + 6], b[off + 7]])
+    u64::from_le_bytes([
+        b[off],
+        b[off + 1],
+        b[off + 2],
+        b[off + 3],
+        b[off + 4],
+        b[off + 5],
+        b[off + 6],
+        b[off + 7],
+    ])
 }
 unsafe fn i32_at(b: &[u8], off: usize) -> i32 {
     i32::from_le_bytes([b[off], b[off + 1], b[off + 2], b[off + 3]])
@@ -147,8 +177,14 @@ unsafe fn placement_at(b: &[u8], off: usize) -> ([f64; 3], [f32; 4]) {
     let mut pos = [0f64; 3];
     for i in 0..3 {
         pos[i] = f64::from_le_bytes([
-            b[off + i * 8], b[off + i * 8 + 1], b[off + i * 8 + 2], b[off + i * 8 + 3],
-            b[off + i * 8 + 4], b[off + i * 8 + 5], b[off + i * 8 + 6], b[off + i * 8 + 7],
+            b[off + i * 8],
+            b[off + i * 8 + 1],
+            b[off + i * 8 + 2],
+            b[off + i * 8 + 3],
+            b[off + i * 8 + 4],
+            b[off + i * 8 + 5],
+            b[off + i * 8 + 6],
+            b[off + i * 8 + 7],
         ]);
     }
     let mut quat = [0f32; 4];
@@ -201,7 +237,7 @@ pub struct JobInfo {
 
 /// 遥测源状态（P2 计划 §33-35）。
 #[derive(Debug)]
-#[allow(clippy::large_enum_variant)]   // Fresh 含完整快照（JobInfo 大）——整体传递，Box 无收益
+#[allow(clippy::large_enum_variant)] // Fresh 含完整快照（JobInfo 大）——整体传递，Box 无收益
 pub enum TelemetryState {
     /// 有新数据。
     Fresh(TelemetrySnapshot),
@@ -285,7 +321,10 @@ pub struct EventDetector {
 
 impl EventDetector {
     pub fn new(max_displacement: f64) -> Self {
-        EventDetector { last: None, max_displacement }
+        EventDetector {
+            last: None,
+            max_displacement,
+        }
     }
 
     pub fn feed(&mut self, snap: &TelemetrySnapshot) -> Vec<TelemetryEvent> {
@@ -386,5 +425,7 @@ impl TraceRecorder {
 pub fn replay(path: &Path) -> std::io::Result<impl Iterator<Item = TraceFrame>> {
     let f = File::open(path)?;
     let r = BufReader::new(f);
-    Ok(r.lines().map_while(Result::ok).map_while(|l| serde_json::from_str(&l).ok()))
+    Ok(r.lines()
+        .map_while(Result::ok)
+        .map_while(|l| serde_json::from_str(&l).ok()))
 }

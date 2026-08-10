@@ -4,11 +4,23 @@ use std::path::Path;
 
 fn snap(seq: u32, sim: u64, pos: [f64; 3], speed: f32, paused: bool) -> TelemetrySnapshot {
     TelemetrySnapshot {
-        sequence: seq, layout_version: 1, running: true, paused,
-        simulation_time: sim, paused_simulation_time: sim, render_time: sim,
-        game_time_minutes: 0, local_scale: 1.0, rest_stop_minutes: -1,
-        position: pos, heading: [0.0, 0.0, 0.0, 1.0],
-        speed, speed_limit: 0.0, fuel_amount: 100.0, fuel_range: 1000.0, fuel_warning: false,
+        sequence: seq,
+        layout_version: 1,
+        running: true,
+        paused,
+        simulation_time: sim,
+        paused_simulation_time: sim,
+        render_time: sim,
+        game_time_minutes: 0,
+        local_scale: 1.0,
+        rest_stop_minutes: -1,
+        position: pos,
+        heading: [0.0, 0.0, 0.0, 1.0],
+        speed,
+        speed_limit: 0.0,
+        fuel_amount: 100.0,
+        fuel_range: 1000.0,
+        fuel_warning: false,
         job: None,
     }
 }
@@ -24,7 +36,10 @@ fn event_detector_teleport_and_pause() {
     // teleport：一帧 500m
     let c = snap(3, 102_000_000, [520.0, 0.0, 0.0], 0.0, false);
     let evs = d.feed(&c);
-    assert!(evs.contains(&TelemetryEvent::Teleport), "期望 Teleport: {evs:?}");
+    assert!(
+        evs.contains(&TelemetryEvent::Teleport),
+        "期望 Teleport: {evs:?}"
+    );
     // pause 变化
     let e = snap(4, 103_000_000, [520.0, 0.0, 0.0], 0.0, true);
     let evs = d.feed(&e);
@@ -48,8 +63,10 @@ fn trace_roundtrip() {
     let p = std::env::temp_dir().join(format!("navtrace_test_{}.navtrace", std::process::id()));
     {
         let mut r = TraceRecorder::create(&p).unwrap();
-        r.record(&snap(1, 1_000_000, [1.0, 2.0, 3.0], 10.0, false)).unwrap();
-        r.record(&snap(2, 2_000_000, [4.0, 5.0, 6.0], 20.0, false)).unwrap();
+        r.record(&snap(1, 1_000_000, [1.0, 2.0, 3.0], 10.0, false))
+            .unwrap();
+        r.record(&snap(2, 2_000_000, [4.0, 5.0, 6.0], 20.0, false))
+            .unwrap();
         r.flush().unwrap();
     }
     let frames: Vec<TraceFrame> = replay(&p).unwrap().collect();
