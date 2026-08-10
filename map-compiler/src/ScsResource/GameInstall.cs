@@ -20,6 +20,7 @@ public sealed class GameInstall
     /// <summary>检测 ETS2 安装目录：识别 base/def/map 与官方 DLC archives。</summary>
     public static GameInstall Detect(string gameDir)
     {
+        gameDir = gameDir.Trim().TrimEnd('\\');   // 防御：环境变量尾随空格/分隔符
         var archives = new List<GameArchive>();
         var enabledDlc = new List<string>();
 
