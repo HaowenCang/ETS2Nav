@@ -16,11 +16,13 @@ fn main() {
         ("live", Some(path)) => live(Some(path)),
         ("live", _) => live(None),
         ("replay", _) if args.len() >= 3 => replay_trace(&args[2]),
+        ("match", _) if args.len() >= 4 => match_trace(&args[2], &args[3]),
         _ => {
             eprintln!("用法:");
             eprintln!("  nav-core-cli dataset info <dataset-dir>");
             eprintln!("  nav-core-cli live [trace.navtrace]        —— 实时遥测（可选同时录制）");
             eprintln!("  nav-core-cli replay <trace.navtrace>      —— 回放 trace");
+            eprintln!("  nav-core-cli match <trace> <dataset-dir>   —— trace 回放 Map Matching");
             std::process::exit(2);
         }
     }
@@ -109,6 +111,77 @@ fn replay_trace(path: &str) {
     println!("PASS");
 }
 
+/// trace 回放 Map Matching：逐帧匹配并统计置信度/横向距离（P2-06 验证）。
+fn match_trace(trace_path: &str, dataset_dir: &str) {
+    let (routing, _j) = nav_dataset::load_dataset(std::path::Path::new(dataset_dir))
+        .unwrap_or_else(|e| {
+            eprintln!("加载 dataset 失败: {e}");
+            std::process::exit(1);
+        });
+    let graph = nav_graph::CompactGraph::build(&routing);
+    let spatial = nav_spatial::SpatialIndex::build(&graph, nav_spatial::DEFAULT_CELL_SIZE);
+    let frames: Vec<nav_telemetry::TraceFrame> =
+        nav_telemetry::replay(std::path::Path::new(trace_path))
+            .unwrap_or_else(|e| {
+                eprintln!("打开 trace 失败: {e}");
+                std::process::exit(1);
+            })
+            .collect();
+    if frames.is_empty() {
+        eprintln!("trace 为空");
+        std::process::exit(1);
+    }
+    let mut m = nav_matcher::MapMatcher::new(nav_matcher::MatcherConfig::default());
+    let (mut hi, mut med, mut low, mut un) = (0u32, 0u32, 0u32, 0u32);
+    let mut lateral_sum = 0.0f64;
+    let mut matched = 0u32;
+    let mut edge_hist = std::collections::HashMap::<u32, u32>::new();
+    for f in &frames {
+        let p = f.snap.position;
+        let yaw = quat_yaw(f.snap.heading);
+        let mm = m.match_frame(&graph, &spatial, p[0], p[2], yaw);
+        match mm.confidence {
+            nav_matcher::MatchConfidence::High => {
+                hi += 1;
+                lateral_sum += mm.lateral;
+                matched += 1;
+            }
+            nav_matcher::MatchConfidence::Medium => {
+                med += 1;
+                lateral_sum += mm.lateral;
+                matched += 1;
+            }
+            nav_matcher::MatchConfidence::Low => low += 1,
+            nav_matcher::MatchConfidence::Unmatched => un += 1,
+        }
+        if mm.edge_id != u32::MAX {
+            *edge_hist.entry(mm.edge_id).or_default() += 1;
+        }
+    }
+    let n = frames.len();
+    println!(
+        "trace: {n} 帧，起点 ({:.0},{:.0})，终点 ({:.0},{:.0})",
+        frames.first().unwrap().snap.position[0],
+        frames.first().unwrap().snap.position[2],
+        frames.last().unwrap().snap.position[0],
+        frames.last().unwrap().snap.position[2]
+    );
+    println!("匹配: HIGH {hi} / MEDIUM {med} / LOW {low} / UNMATCHED {un}");
+    if matched > 0 {
+        println!("匹配帧横向距离均值: {:.1} m", lateral_sum / matched as f64);
+    }
+    // 主边占比（锁定稳定性）
+    let mut top: Vec<(u32, u32)> = edge_hist.into_iter().collect();
+    top.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
+    println!("锁定边 TOP5: {:?}", top.iter().take(5).collect::<Vec<_>>());
+}
+
+/// 四元数 → yaw（世界弧度；SCS quat (x,y,z,w)）。
+fn quat_yaw(q: [f32; 4]) -> f64 {
+    let (x, y, z, w) = (q[0] as f64, q[1] as f64, q[2] as f64, q[3] as f64);
+    (2.0 * (w * z + x * y)).atan2(1.0 - 2.0 * (y * y + z * z))
+}
+
 fn dataset_info(dir: &str) {
     let t0 = Instant::now();
     match nav_dataset::load_dataset(Path::new(dir)) {
@@ -159,8 +232,10 @@ fn dataset_info(dir: &str) {
                 hits += sp.query_radius(x, z, 100.0).len();
             }
             let query_ms = t2.elapsed().as_secs_f64() * 1000.0;
-            println!("  spatial: {} 边索引 / {} cells，构建 {:.1} ms，500 查询 {:.1} ms（{} 候选）",
-                n_bbox, n_cell, build_ms, query_ms, hits);
+            println!(
+                "  spatial: {} 边索引 / {} cells，构建 {:.1} ms，500 查询 {:.1} ms（{} 候选）",
+                n_bbox, n_cell, build_ms, query_ms, hits
+            );
             let mut edge_ok = 0;
             for e in &c.edges {
                 if e.from < c.node_count() as u32 && e.to < c.node_count() as u32 {

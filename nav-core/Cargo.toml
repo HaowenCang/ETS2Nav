@@ -5,5 +5,6 @@ members = [
     "crates/nav-graph",
     "crates/nav-telemetry",
     "crates/nav-spatial",
+    "crates/nav-matcher",
     "tools/nav-core-cli",
 ]
