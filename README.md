@@ -5,7 +5,7 @@
 - **需求与技术基线**：[Euro Truck Simulator 2 外部智能导航系统-v0.2.md](./Euro%20Truck%20Simulator%202%20外部智能导航系统-v0.2.md)
 - **可行性评估**：[ETS2 外部智能导航系统可行性评估.md](./ETS2%20外部智能导航系统可行性评估.md)
 - **执行计划与进度**：[PLAN.md](./PLAN.md)
-- **当前阶段**：P1（Map Compiler 完整化——执行基线：P1-map-compiler-plan.md；P0 已关门 v0.1.0-p0）
+- **当前阶段**：P1 已关门（**tag v0.2.0-p1**）——P2 规划中；执行基线：P1-map-compiler-plan.md；P0 关门 v0.1.0-p0
 
 ## 架构概览（v0.2 §3）
 

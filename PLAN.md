@@ -17,7 +17,7 @@
 - [ ] P5 全欧洲测试
 - [ ] P6 性能优化与发布
 
-**当前状态**：**P1 全部 15 工作包完成**（P1-00~P1-14，2026-08-10 收官）；P1-14 Regression Suite ALL PASS（run-p1-tests.bat）。P1-09 完成条件（telemetry 实测一致率）裁剪为：工具就绪 + 限速模型已实现，实测延后 P2（见 docs/format-notes/p1-09-sign-camera-research.md 与 p1-14 报告）。**P0-D 验收通过**（avg -1.3% / 1%low +0.7%）；**P0-B 数据源重大定案**：ETS2LA 插件共存激活信号灯数组（隔离测试定案：仅 ets2la_plugin.dll 单文件激活，无主程序依赖，方案 C：先共存推进后评估逆向）。
+**当前状态**：**P1 关门（tag v0.2.0-p1，2026-08-10）**——15 工作包全部完成 + 4 子代理收官评审修复 + Regression Suite ALL PASS（真实退出码判定）。P1-09 完成条件裁剪：telemetry 实测延后 P2（工具就绪）。**下一步：P2 规划（Routing 引擎/驾驶引导/信号灯联动）**。**P0-D 验收通过**（avg -1.3% / 1%low +0.7%）；**P0-B 数据源重大定案**：ETS2LA 插件共存激活信号灯数组（隔离测试定案：仅 ets2la_plugin.dll 单文件激活，无主程序依赖，方案 C：先共存推进后评估逆向）。
 
 **已建立**：执行计划（本文件）、本地 git 仓库、.gitignore、GitHub 仓库（HaowenCang/ETS2Nav private）。
 
