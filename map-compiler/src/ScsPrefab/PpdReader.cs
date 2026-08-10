@@ -34,7 +34,7 @@ public static class PpdReader
         for (int i = 0; i < navCurveCount; i++) pd.NavCurves.Add(ReadNavCurve(r));
         for (int i = 0; i < signCount; i++) SkipSign(r);
         for (int i = 0; i < semaphoreCount; i++) pd.Semaphores.Add(ReadSemaphore(r));
-        for (int i = 0; i < spawnPointCount; i++) SkipSpawnPoint(r);
+        for (int i = 0; i < spawnPointCount; i++) pd.SpawnPoints.Add(ReadSpawnPoint(r));
         for (int i = 0; i < terrainPointCount; i++) { r.ReadSingle(); r.ReadSingle(); r.ReadSingle(); }
         for (int i = 0; i < terrainPointCount; i++) { r.ReadSingle(); r.ReadSingle(); r.ReadSingle(); }
         for (int i = 0; i < terrainPointVariantCount; i++) { r.ReadUInt32(); r.ReadUInt32(); }
@@ -120,12 +120,13 @@ public static class PpdReader
         };
     }
 
-    private static void SkipSpawnPoint(BinaryReader r)
+    private static SpawnPointData ReadSpawnPoint(BinaryReader r)
     {
-        r.ReadSingle(); r.ReadSingle(); r.ReadSingle();
-        r.ReadSingle(); r.ReadSingle(); r.ReadSingle(); r.ReadSingle();
-        r.ReadUInt32();   // type
+        float x = r.ReadSingle(), y = r.ReadSingle(), z = r.ReadSingle();
+        r.ReadSingle(); r.ReadSingle(); r.ReadSingle(); r.ReadSingle();   // quat
+        uint type = r.ReadUInt32();
         r.ReadUInt32();   // flags
+        return new SpawnPointData { X = x, Y = y, Z = z, Type = type };
     }
 
     private static void SkipMapPoint(BinaryReader r)

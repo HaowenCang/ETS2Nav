@@ -8,6 +8,7 @@ public sealed class PrefabDescriptor
     public List<ControlNodeData> ControlNodes { get; } = new();
     public List<NavCurveData> NavCurves { get; } = new();
     public List<SemaphoreData> Semaphores { get; } = new();
+    public List<SpawnPointData> SpawnPoints { get; } = new();
     public List<NavNodeData> NavNodes { get; } = new();
     public List<IntersectionData> Intersections { get; } = new();
     // Signs/SpawnPoints/MapPoints/TriggerPoints 与导航语义无关，解析时跳过字节即可
@@ -99,6 +100,15 @@ public sealed class SemaphoreData
     public required float Iz { get; init; }
     public required float Iw { get; init; }
     public required float CycleDelay { get; init; }
+}
+
+/// <summary>prefab 生成点（SpawnPoint）：Type 用于 rest/停靠 POI（TruckStop/Hotel 等）。</summary>
+public sealed class SpawnPointData
+{
+    public required float X { get; init; }
+    public required float Y { get; init; }
+    public required float Z { get; init; }
+    public required uint Type { get; init; }   // SpawnPointType（Ppd Enums：TruckStop=5 Hotel=8 Parking=10 等）
 }
 
 /// <summary>Intersection：曲线上的路口标注（优先级/规则区域）。</summary>

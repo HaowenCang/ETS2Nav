@@ -430,6 +430,50 @@ static bool RegionMatches(string name, string region)
     };
 }
 
+if (cmdArgs.Contains("--searchdb"))
+{
+    // P1-08：POI 提取 + search.db（SQLite FTS5，ADR-004）
+    var defs = new ScsDefinitions.DefinitionResolver(overlay);
+    var prefabs = new ScsPrefab.PrefabResolver(overlay);
+    var builder = new ScsMapModel.SemanticMapBuilder(defs, prefabs);
+    var map = builder.Build(sectors);
+    var pois = ScsMapModel.PoiExtractor.Extract(sectors, map, prefabs);
+    var outPath = Arg(args, "--searchdb") ?? "search.db";
+    var byType = pois.GroupBy(p => p.Type).ToDictionary(g => g.Key, g => g.Count());
+    Console.WriteLine($"POI {pois.Count}：{string.Join(" ", byType.OrderBy(k => k.Key).Select(k => $"{k.Key}={k.Value}"))}");
+    var noAccess = pois.Count(p => p.AccessNodeUid is null);
+    Console.WriteLine($"非 routing POI：{noAccess}");
+    // 写 SQLite
+    using var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={outPath}");
+    conn.Open();
+    using (var cmd = conn.CreateCommand())
+    {
+        cmd.CommandText = "CREATE TABLE poi (id INTEGER PRIMARY KEY, type TEXT, name TEXT, x REAL, z REAL, access_node TEXT, meta TEXT);"
+            + "CREATE VIRTUAL TABLE poi_fts USING fts5(name, type, content='poi', content_rowid='id');"
+            + "CREATE TRIGGER poi_ai AFTER INSERT ON poi BEGIN INSERT INTO poi_fts(rowid, name, type) VALUES (new.id, new.name, new.type); END;";
+        cmd.ExecuteNonQuery();
+    }
+    using (var tx = conn.BeginTransaction())
+    {
+        using var cmd = conn.CreateCommand();
+        cmd.Transaction = tx;
+        cmd.CommandText = "INSERT INTO poi (type, name, x, z, access_node, meta) VALUES ($t, $n, $x, $z, $a, $m);";
+        foreach (var p in pois)
+        {
+            cmd.Parameters.Clear();
+            cmd.Parameters.AddWithValue("$t", p.Type.ToString());
+            cmd.Parameters.AddWithValue("$n", p.Name);
+            cmd.Parameters.AddWithValue("$x", p.X);
+            cmd.Parameters.AddWithValue("$z", p.Z);
+            cmd.Parameters.AddWithValue("$a", p.AccessNodeUid?.ToString("x16") ?? (object)DBNull.Value);
+            cmd.Parameters.AddWithValue("$m", (object?)p.Meta ?? DBNull.Value);
+            cmd.ExecuteNonQuery();
+        }
+        tx.Commit();
+    }
+    Console.WriteLine($"search.db 写入 {pois.Count} 条 → {Path.GetFullPath(outPath)}");
+}
+
 static bool BfsReachable(ScsGraph.RoutingGraph g, int from, int to)
 {
     if (from == to) return true;
