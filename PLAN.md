@@ -21,6 +21,8 @@
 
 **已建立**：执行计划（本文件）、本地 git 仓库、.gitignore、GitHub 仓库（HaowenCang/ETS2Nav private）。
 
+**后续计划拆分**：P3–P6 与 P2 实测补测项（T1–T6）已按「独立开发（A1–A5）/ 实机测试配合（B1–B6）」拆分，见 [PLAN-P3plus.md](./PLAN-P3plus.md)——A 侧可立即推进，B 侧待用户配合实机测试。
+
 ---
 
 ## §2 待确认事项（用户决策记录）
