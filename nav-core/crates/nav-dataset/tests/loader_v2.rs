@@ -18,9 +18,6 @@ fn tmp_file(test: &str, name: &str, bytes: &[u8]) -> PathBuf {
 fn u32(v: u32) -> [u8; 4] {
     v.to_le_bytes()
 }
-fn u32_le(b: &[u8]) -> u32 {
-    u32::from_le_bytes([b[0], b[1], b[2], b[3]])
-}
 fn u64(v: u64) -> [u8; 8] {
     v.to_le_bytes()
 }

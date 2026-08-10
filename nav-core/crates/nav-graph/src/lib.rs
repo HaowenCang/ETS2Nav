@@ -1,6 +1,7 @@
 // nav-graph：Runtime 紧凑图（CSR / adjacency array）+ 节点压缩。
 // P2-navigation-core-plan.md §19-20：只保留被边引用的节点；CSR 连续访问、确定性。
-use nav_dataset::{EdgeKind, RoutingGraph};
+use nav_dataset::RoutingGraph;
+pub use nav_dataset::{Edge, EdgeKind};
 
 /// 压缩后的 CSR 出边图。
 /// node_offsets[node]..node_offsets[node+1] 为 node 的出边在 edge_ids 中的范围；
@@ -21,6 +22,8 @@ pub struct CompactGraph {
     /// 反向邻接（入边）：in_offsets / in_edge_ids（指向 edges 索引）。
     pub in_offsets: Vec<u32>,
     pub in_edge_ids: Vec<u32>,
+    /// 边几何点池（edges 的 geom_start/geom_len 引用；P2-05 spatial 用）。
+    pub edges_geometry: Vec<(f64, f64, f64)>,
 }
 
 #[derive(Debug, Clone)]
@@ -135,6 +138,7 @@ impl CompactGraph {
             edges,
             in_offsets,
             in_edge_ids,
+            edges_geometry: geometry,
         }
     }
 
@@ -156,16 +160,12 @@ impl CompactGraph {
 
     /// 边几何（world polyline；空 = 无几何）。
     #[inline]
-    pub fn edge_geometry<'a>(
-        &self,
-        e: &'a CompactEdge,
-        geometry: &'a [(f64, f64, f64)],
-    ) -> &'a [(f64, f64, f64)] {
+    pub fn edge_geometry(&self, e: &CompactEdge) -> &[(f64, f64, f64)] {
         if e.geom_len == 0 {
             return &[];
         }
         let a = e.geom_start as usize;
-        &geometry[a..a + e.geom_len as usize]
+        &self.edges_geometry[a..a + e.geom_len as usize]
     }
 
     /// 节点 uid → 压缩索引。
