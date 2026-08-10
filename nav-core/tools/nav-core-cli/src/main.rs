@@ -310,6 +310,25 @@ fn route_cli(xz: &str, dataset_dir: &str) {
         "起 ({x1:.0},{z1:.0}) 吸附 {:.0}m → 终 ({x2:.0},{z2:.0}) 吸附 {:.0}m",
         s1.lateral, s2.lateral
     );
+    // 备选路线（§79-82）
+    let alts = nav_router::alternatives::plan_alternatives(
+        &graph,
+        &mut router,
+        nav_router::snap::VirtualEndpoint::start(&s1, true),
+        nav_router::snap::VirtualEndpoint::goal(&s2),
+        &nav_router::alternatives::AltParams::default(),
+    );
+    println!("备选路线 {} 条（overlap 去重后）", alts.routes.len());
+    for (i, r) in alts.routes.iter().enumerate() {
+        println!(
+            "  #{i} [{}] {:.0}m {:.0}s（{:.0} min）{} 边",
+            alts.profiles[i].name(),
+            r.distance_m,
+            r.eta_s,
+            r.eta_s / 60.0,
+            r.edges.len()
+        );
+    }
     for profile in [
         nav_router::cost::RouteProfile::Fastest,
         nav_router::cost::RouteProfile::Shortest,
