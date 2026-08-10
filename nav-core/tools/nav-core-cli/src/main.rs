@@ -20,6 +20,7 @@ fn main() {
         ("snap", _) if args.len() >= 4 => snap_cli(&args[2], &args[3]),
         ("route", _) if args.len() >= 4 => route_cli(&args[2], &args[3]),
         ("route-verify", _) if args.len() >= 3 => route_verify(&args[2]),
+        ("roundabout-stats", _) if args.len() >= 3 => roundabout_stats(&args[2]),
         _ => {
             eprintln!("用法:");
             eprintln!("  nav-core-cli dataset info <dataset-dir>");
@@ -180,6 +181,49 @@ fn match_trace(trace_path: &str, dataset_dir: &str) {
     let mut top: Vec<(u32, u32)> = edge_hist.into_iter().collect();
     top.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
     println!("锁定边 TOP5: {:?}", top.iter().take(5).collect::<Vec<_>>());
+}
+
+/// roundabout-stats：Europe junction 环岛拓扑检测统计（§101）+ 抽查。
+fn roundabout_stats(dataset_dir: &str) {
+    let (_routing, junctions) = nav_dataset::load_dataset(std::path::Path::new(dataset_dir))
+        .unwrap_or_else(|e| {
+            eprintln!("加载 dataset 失败: {e}");
+            std::process::exit(1);
+        });
+    let mut rb = 0u32;
+    let mut rb_uk = 0u32;
+    for j in &junctions.junctions {
+        if nav_router::roundabout::RoundaboutDetector::is_roundabout(j) {
+            rb += 1;
+            // UK 判定：用 movement 几何（P2-04：UK x<0 但 London x≈-39k——按 junction 平均 x）
+            let mut sx = 0.0;
+            let mut n = 0.0;
+            for m in &j.movements {
+                for (x, _, _) in m.geometry.iter().take(4) {
+                    sx += x;
+                    n += 1.0;
+                }
+            }
+            if n > 0.0 && sx / n < -45000.0 {
+                rb_uk += 1;
+            }
+        }
+    }
+    println!("环岛 junction（拓扑检测 §101）：{rb}（UK/爱尔兰区域约 {rb_uk}）");
+    // 抽查：打印前 3 个环岛的 movement 数
+    let mut shown = 0;
+    for j in &junctions.junctions {
+        if nav_router::roundabout::RoundaboutDetector::is_roundabout(j) && shown < 3 {
+            println!(
+                "  抽查 junction {} token={} movements={} 节点={}",
+                j.uid,
+                j.prefab_token,
+                j.movements.len(),
+                j.node_uids.len()
+            );
+            shown += 1;
+        }
+    }
 }
 
 /// route-verify：Europe 随机 OD 的 A*==Dijkstra 回归（§71）+ 长距离路线。
