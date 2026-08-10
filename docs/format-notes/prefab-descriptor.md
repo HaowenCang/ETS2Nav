@@ -13,7 +13,7 @@ sector PrefabItem.Model（无前缀，如 mod_ger_67）
 ```
 
 - 1.60 主 prefab 描述在 `/prefab2/`（8467 个 .pmd 模型；prefab_desc 指向同名 .ppd）
-- prefab.sii 中旧条目指向 `/prefab/`（597 个旧式）
+- prefab.sii 中旧条目指向 `/prefab/`（现行 1.60 归档实测 419 条旧式，/prefab2/ 1635 条——勘误 2026-08-10，原记 597 为 1.55 时代值）
 - **与 road type 相同**：sector 引用无 `prefab.` 前缀，需先补前缀查 prefab_model unit
 
 ## PPD 二进制结构（v0x19，1.60 实测）
@@ -48,7 +48,7 @@ token Name → u32 flags → 4×u8 (EndNode,EndLane,StartNode,StartLane)
 ```
 
 **flags 位语义**（TruckLib.Models NavCurve）：
-- bit2-3 Blinker（0=none 1=left 2=right 3=both）
+- bit2-4 Blinker（TruckLib oracle：`GetBitString(2, 3)` 取 3 位；枚举 0=NoBlinker 1=NoBlinkerForced 2=Right 4=Left——勘误 2026-08-10，原记 bit2-3 且 3=both 有误）
 - bit5-6 AllowedVehicles（0=car 1=truck 2=bus 3=all）
 - bit13 LowProbability、bit14 LimitDisplacement、bit15 AdditivePriority
 - bit16-19 PriorityModifier（nibble）
@@ -61,10 +61,14 @@ token Name → u32 flags → 4×u8 (EndNode,EndLane,StartNode,StartLane)
   ——prefab node 索引对应 sector PrefabItem.Nodes 数组
 - SemaphoreId → Semaphores[]（-1 = 无灯）
 
-## Movement 恢复（P1 计划 §21/22）
+## Movement 恢复（P1 计划 §21/22；语义修订 2026-08-10 收官评审 B1）
 
-prefab 连通性完全来自 navigation 语义：从每个 entry curve 沿 NextLines 链
-DFS 到 exit curve，每条完整路径 = 一个 movement：
+**当前语义（NavNode 连接图）**：实测 InputLines/OutputLines 在真实 corpus 不完整，
+不作端点依据；恢复经 NavNode 邻接图：entry curve（IsEntry）→ 沿 NavNode 连接
+（曲线端点绑定 node，Physical=ControlNode）DFS 到 exit；**同连接的多条曲线是
+首尾相接的路径段**（curveN.end ≈ curveN+1.start），全部串联展开进 curve_path
+（早期只取第一条导致 83% 长度低估——B1 修复）；同 target 多连接（真多车道）
+保留为独立 movement。每条完整路径 = 一个 movement：
 
 ```text
 movement = { entry_curve, exit_curve, entry_node, exit_node,

@@ -9,7 +9,7 @@ P0 直接读 `.scs` archive（HashFsReader）。P1 需要处理 base/def/map arc
 
 ## 决策
 
-新增 `ScsResource` 层，定义 `IScsResourceProvider { Exists/Open/Enumerate }`，实现 `HashFsProvider`、`DirectoryProvider`、`OverlayProvider`。所有上层模块（Sector/Sii/Definitions/Prefab）只通过虚拟路径读取资源（如 `/map/europe/...`），不感知物理 archive。Overlay 顺序与 ETS2 实际加载逻辑一致（base → DLC 优先级序），冲突记录 source/overridden/effective。
+新增 `ScsResource` 层，定义 `IScsResourceProvider { Exists/Open/Enumerate }`，实现 `HashFsProvider`、`DirectoryProvider`、`OverlayProvider`。所有上层模块（Sector/Sii/Definitions/Prefab）只通过虚拟路径读取资源（如 `/map/europe/...`），不感知物理 archive。Overlay 顺序与 ETS2 实际加载逻辑一致（base → DLC 优先级序）。修订 2026-08-10：冲突溯源实现为 `ResolveSource` 单点查询（高优先级胜出者），overridden/effective 冲突日志未实现（无消费者，P2 需要时再补）。
 
 ## 后果
 

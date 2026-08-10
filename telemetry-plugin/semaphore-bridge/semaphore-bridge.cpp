@@ -1,5 +1,5 @@
 /**
- * @brief ETS2Nav Semaphore Bridge v3（自研游戏内信号灯读取插件）
+ * @brief ETS2Nav Semaphore Bridge v8（自研游戏内信号灯读取插件；版本号与 P0 报告对齐——勘误 2026-08-10，原头注释 v3）
  *
  * v2 修复：启动卡死（延迟扫描 + 低优先级 + 重扫节流）
  * v3 修复：误定位——加强槽验证（time≤60、pos 非零、cx/cy≠-1、连续≥2槽）+ 候选列表
@@ -347,7 +347,7 @@ SCSAPI_RESULT scs_telemetry_init(const scs_u32_t version, const scs_telemetry_in
     }
     SetThreadPriority(reader_thread, THREAD_PRIORITY_BELOW_NORMAL);
 
-    log_line(SCS_LOG_TYPE_message, "ETS2Nav semaphore bridge v3 initialized (lazy scan)");
+    log_line(SCS_LOG_TYPE_message, "ETS2Nav semaphore bridge v8 initialized (lazy scan)");
     return SCS_RESULT_ok;
 }
 

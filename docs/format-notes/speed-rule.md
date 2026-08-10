@@ -16,15 +16,15 @@ country 限速表（/def/country/<name>/speed_limits.sii）：
   → limit[]（乡村）/ urban_limit[]（城市）
 ```
 
-## 三态语义（P1 收官评审 M2 修复）
+## 三态语义（P1 收官评审 M4 修复）
 
 | SpeedLimit 值 | 语义 |
 |---|---|
 | -1 | **未知**（国家/限速表/speed_class 缺失——不得当作无限速） |
-| 0 | **无限速**（德国 motorway truck limit=0——autobahn） |
+| 0 | **无限速**（仅当国家表 truck 行确实为 0——实测德国 truck motorway=80，car motorway=0；0 属极少数国家/类别） |
 | >0 | 数值 km/h |
 
-## 国家判定（P1 收官评审 M3 修复）
+## 国家判定（P1 收官评审 M5 修复）
 
 - 城市 bbox 判定：CityItem 的 Width/Height 矩形（半宽高下限 800m）
 - 禁止半径圆（边境城市会误判——柏林东北角曾被 szczecin 半径 7200m 覆盖，

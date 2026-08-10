@@ -29,7 +29,7 @@ ets2-nav/
 ├─ telemetry-plugin/   # C++ DLL：SDK 1.14 + 共享内存
 ├─ map-compiler/       # 地图解析与编译（独立实现，不复制 GPL 代码）
 ├─ tools/              # P0/P1 工具：map-inspector / graph-debugger / telemetry-dump / signal-lab / perf-bench
-├─ tests/              # 自动化测试
+├─ map-compiler/tests/  # 自动化测试（8 测试项目，65 测试）
 ├─ docs/               # 格式笔记、决策记录
 └─ PLAN.md             # 执行计划与进度
 ```

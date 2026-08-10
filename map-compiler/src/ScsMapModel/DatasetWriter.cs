@@ -7,7 +7,7 @@ namespace ScsMapModel;
 
 /// <summary>
 /// Dataset Writer（P1 计划 §104 / ADR-004）：routing.graph/junction.graph 紧凑二进制 + manifest.json。
-/// 格式：magic/version/endianness/offset table，读取方校验；可脱离 C# runtime 独立读取。
+/// 格式：magic/version/endianness + 顺序固定布局（无 offset table，读取方以计数+尾部偏移校验）；可脱离 C# runtime 独立读取。
 /// </summary>
 public static class DatasetWriter
 {
@@ -16,7 +16,7 @@ public static class DatasetWriter
     public const string JunctionMagic = "ETS2JG1";
 
     // —— routing.graph 二进制布局 ——
-    // magic(8) + version u32 + endianness u32(0x12345678) + node_count u32 + edge_count u32
+    // magic(7) + version u32 + endianness u32(0x12345678) + node_count u32 + edge_count u32
     // nodes[]: uid u64 + x i32(fixed 1/256) + y i32 + z i32                     (20 B)
     // edges[]: from u32 + to u32 + kind u8 + length f32 + source_uid u64
     //          + semaphore_id i32 + flags u8                                     (26 B)
@@ -58,7 +58,7 @@ public static class DatasetWriter
     }
 
     // —— junction.graph 二进制布局 ——
-    // magic(8) + version u32 + endianness u32 + junction_count u32
+    // magic(7) + version u32 + endianness u32 + junction_count u32
     // junctions[]: uid u64 + prefab_token(64B 定长) + node_count u8 + movement_count u32
     //   node_uids[]: u64 × node_count
     //   movements[]: entry u64 + exit u64 + length f32 + turn i8 + semaphore_id i32 + signal_group_type_len u8 + type(ASCII)

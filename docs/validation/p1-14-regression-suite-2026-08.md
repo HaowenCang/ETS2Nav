@@ -10,16 +10,16 @@
 
 | # | 项目 | 内容 | 结果 |
 |---|---|---|---|
-| 1 | 单元测试 | parser corpus（SII/Sector/HashFs）+ 格式解析 | PASS（69 测试） |
+| 1 | 单元测试 | parser corpus（SII/Sector/HashFs）+ 格式解析 | PASS（65 测试——勘误 2026-08-10，原记 69） |
 | 2 | Berlin Gate | semantic corpus + 500 deterministic OD | PASS |
 | 3 | Germany Gate | scale + 多样性（39 sector） | PASS |
-| 4 | Determinism | 两次 build routing.graph SHA-256 一致 | PASS |
+| 4 | Determinism | 两次 build 的 routing.graph/junction.graph/map.db/search.db 四个产物 SHA-256 全一致 | PASS |
 | 5 | Rust dataset reader | 独立读取校验（边引用/自环/计数） | PASS |
 | 6 | Europe scale | 全欧洲 build failed_prefabs = 0 | PASS |
 
 ## Determinism 验证
 
-同一输入两次构建 routing.graph——SHA-256 完全一致（manifest 的 generated_at
+同一输入两次构建 routing.graph/junction.graph/map.db/search.db——四产物 SHA-256 完全一致（收官评审 M7 后为 4 产物比对；manifest 的 generated_at
 时间戳除外——二进制图无时间依赖）。
 
 ## 鲁棒性修复

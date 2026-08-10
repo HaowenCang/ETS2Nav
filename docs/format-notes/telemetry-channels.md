@@ -14,7 +14,7 @@
 
 | 通道名 | 类型 | 语义 |
 |---|---|---|
-| `truck.placement` | dplacement | 双精度世界坐标 + 四元数（位置/朝向） |
+| `truck.world.placement` | dplacement | 双精度世界坐标 + 四元数（位置/朝向）；通道全名含 `world.`（勘误 2026-08-10） |
 | `truck.speed` | float | m/s，负值=倒车 |
 | `truck.navigation.speed.limit` | float | m/s，Route Advisor 限速值；无限速段可能为 0（未文档化，需实测） |
 | `truck.fuel.amount` | float | 升 |

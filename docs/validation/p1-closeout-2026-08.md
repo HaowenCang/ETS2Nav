@@ -37,8 +37,8 @@ map-inspector（15 命令）、graph-debugger、dataset-reader-smoke（Rust）�
 speed-validator、telemetry-dump、signal-lab、perf-bench、vision-anchor
 
 ### 数据规模（全欧洲，游戏 1.60.1.7）
-1358 sector / 253 万 items / 344 万 nodes / 149,814 roads / 42,843 junctions /
-171,453 movements / 435,392 graph edges / 4,997 POI / 2,432 prefab 种类
+1358 sector / 253 万 items / 344 万 nodes / 143,677 roads（v2 rail 排除后）/ 42,843 junctions /
+171,453 movements / 426,907 graph edges（v2）/ 4,997 POI / 2,432 prefab 种类
 
 ## 三、关键实测发现（P1 期间的工程知识沉淀）
 
@@ -75,7 +75,7 @@ p1-13（Europe Build）/ p1-14（Regression Suite）/ p1-closing-review-fixes（
 
 - Tag：**v0.2.0-p1**（P1 关门）
 - 上一版本：v0.1.0-p0（P0 关门）
-- P1 提交数：P1-03 起 12 个原子提交 + 2 个评审修复提交（分支策略偏差：
+- P1 提交数：P1-03 起共 19 个提交（13 个工作包/修复提交 + 2 个补丁清理 + 2 个评审修复 + 2 个关门收尾——勘误 2026-08-10，原记 12+2；分支策略偏差：
   计划 15 PR vs 实际直提 main——记录于 p1-closing-review-fixes）
 
 ## 七、P2 建议起点

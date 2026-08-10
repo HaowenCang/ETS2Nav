@@ -50,7 +50,7 @@ public sealed class SemanticMapBuilder
                     if (laneToken != null)
                         speedClass = _defs.GetTrafficLane(laneToken)?.SpeedClass ?? "";
                 }
-                // 铁路/有轨电车不作为普通道路进入路由网络（P1 收官评审 M1：P2 不得规划穿越铁轨）
+                // 铁路/有轨电车不作为普通道路进入路由网络（P1 收官评审 M3：P2 不得规划穿越铁轨）
                 if (speedClass.StartsWith("rail", StringComparison.OrdinalIgnoreCase)) continue;
                 var mid = nodePos.TryGetValue(road.Node0, out var p0) ? p0 : (0, 0);
                 var sr = new SemanticRoad

@@ -23,7 +23,7 @@
 
 ## 工具
 
-- `tools/ets2la-probe/Ets2laProbe`：读取 ETS2LASemaphore（需主程序运行）
+- `tools/ets2la-probe/Ets2laProbe`：读取 ETS2LASemaphore（需主程序运行）——勘误 2026-08-10：该工具现为进程内存 dump（dump-lamp），共享内存读取器已移至 SemaphoreScan
 - `tools/ets2la-probe/MemScanProbe`：进程内存字符串扫描（只读探针，已验证可用）
 
 ## 更新（2026-08-10）

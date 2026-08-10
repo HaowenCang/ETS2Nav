@@ -16,20 +16,20 @@
 |---|---|
 | sector（base+aux） | 1,358 |
 | items / nodes | 2,530,050 / 3,442,375 |
-| roads | 149,814 |
+| roads | 143,677（v2 rail 排除后；v1 149,814） |
 | junctions（prefab 实例） | 42,843 |
 | prefab 种类 | 2,432（全加载成功） |
 | movements | 171,453 |
 | companies / POI | 1,185 / 4,997 |
-| graph nodes / edges | 3,427,132 / 435,392 |
+| graph nodes / edges | 3,427,132 / 426,907（v2 rail 排除后；v1 435,392） |
 
 ## Dataset 产物（europe-dataset/）
 
 | 文件 | 大小 |
 |---|---|
-| routing.graph | 80.5 MB（435,392 边） |
+| routing.graph | 80.3 MB / 80,328,057 B（426,907 边，v2 实测） |
 | junction.graph | 9.1 MB（42,843 junction） |
-| map.db | 33.7 MB |
+| map.db | 32.9 MB / 32,890,880 B（v2 实测） |
 | search.db | 442 KB（4,997 POI） |
 | manifest.json / diagnostics.json | ✓ |
 

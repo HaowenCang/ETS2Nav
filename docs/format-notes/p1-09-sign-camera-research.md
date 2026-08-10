@@ -23,7 +23,7 @@ FollowRoadDirection（沿路方向标志）
 | sector SignItem → 限速 | ✗ | 数据不含文本 |
 | PPD Sign 段（Name token） | 部分 | PPD 的 Sign.Name 是编辑器名，非展示文本 |
 | sign model 配置（PMD text） | 需逆向 | PMD 的 text 段含限速文本（P2 范围） |
-| **country speed_limits（已实现）** | **✓** | **P1-09 限速模型基于此**——德国 truck local 60/urban 50、expressway 80/urban 50、motorway 无限速 |
+| **country speed_limits（已实现）** | **✓** | **P1-09 限速模型基于此**——德国 truck local 60/urban 50、expressway 80/urban 50、motorway 80（无限速 0 的是 car 行——实证勘误 2026-08-10） |
 | 动态限速牌（德国高速可变牌） | P2 | 需 sign 文本识别或视觉 |
 
 **P1-09 决定**：限速模型采用 country speed_limits（SpeedModel 已集成）；sign 解析保持

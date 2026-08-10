@@ -7,7 +7,7 @@
 
 | 项 | v1 | v2（游戏 1.50+） |
 |---|---|---|
-| 头部 | 24 字节 | 49 字节读取（实际字段至 0x2C） |
+| 头部 | 24 字节 | 44 字节读取（实际字段至 0x2C——勘误 2026-08-10，原记 49） |
 | 条目表 | 扁平，32 字节/条 | **zlib 压缩**，16 字节/条 |
 | 元数据表 | 无（内嵌于条目） | **zlib 压缩**，4 字节块头 + 主体 |
 | 目录列表 | 文本（`*` 前缀=子目录） | 二进制（见下） |
@@ -45,7 +45,7 @@
 ## 路径哈希
 
 `CityHash64(utf8(salt_decimal + path_without_leading_slash))`
-注意：SCS 使用的 CityHash64 是 cityhash-c 移植版变体（HashLen16 带 `^b`、HashLen17To32 带 `+length` 与 K3、HashLen33To64 的 `(length + fetch) * K0` 等），与 Google 原版存在细微差异——必须以实际游戏档案验证（本项目以 def.scs 条目命中 + extractor 对照双重验证）。
+注意：SCS 使用的 CityHash64 经实证为 **Google 原版算法**（CityHash.cs 逐操作一致；对 def.scs 条目表 6 条路径 5 条命中，社区流传的 `^b` 变体全部落空——勘误 2026-08-10）。HashLen17To32 的 `+length` 与 K3、HashLen33To64 的 `(length + fetch) * K0` 本就是 Google 原版组成部分，非 SCS 差异。以 def.scs 条目命中 + extractor 对照双重验证为准。
 
 ## 数据压缩
 

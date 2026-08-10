@@ -53,7 +53,7 @@ public sealed class NavCurveData
     public required uint NavNodeIndex { get; set; }    // 0xFFFFFFFF = 无
 
     // —— 标志位语义（NavCurve.Flags，TruckLib.Models NavCurve）——
-    public int Blinker => (int)((Flags >> 2) & 0b111);              // 0=none,1=left,2=right,4=both(?)——见 Enums
+    public int Blinker => (int)((Flags >> 2) & 0b111);              // TruckLib GetBitString(2,3)：0=NoBlinker,1=NoBlinkerForced,2=Right,4=Left
     public int AllowedVehicles => (int)((Flags >> 5) & 0b11);       // 0=car,1=truck,2=bus,3=all(?)——见 Enums
     public bool LowProbability => (Flags & (1u << 13)) != 0;
     public bool LimitDisplacement => (Flags & (1u << 14)) != 0;

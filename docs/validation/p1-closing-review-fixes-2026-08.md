@@ -31,7 +31,7 @@
 |---|---|---|
 | M1 | --region 未知区域静默 0 sector 崩溃 | 空 sector 明确报错 + 非零退出 |
 | M2 | --dir 默认路径失效（0 sector） | 默认根改 vendor\extracted + /base_map/ 前缀 |
-| M3 | rail 224 条入路由网络 | SpeedClass 以 rail 开头排除 |
+| M3 | rail 入路由网络（Berlin 224 条；Europe 6,137 条） | SpeedClass 以 rail 开头排除 |
 | M4 | 限速 0 语义混淆（未知 vs 无限速） | 三态：-1 未知 / 0 无限速 / 数值 |
 | M5 | 城市半径圆跨边境误判（6.3% Berlin road 判波兰） | 城市 bbox 判定（Width/Height 矩形） |
 | M6 | sln 缺 4 项目（测试只跑 56） | dotnet sln add——65 测试全入套件 |
@@ -48,7 +48,7 @@
 
 ## 四、文档修复（completion 审计）
 
-- PLAN.md 状态表 P1-05~14 全部更新（原 ⏳ 大面积未同步）
+- PLAN.md 状态表更新——勘误 2026-08-10：07e8dd5 实际仅更新 P1-05/06/09/14 四行，P1-07/08/10/11/12/13 六行在后续文档一致性审查（commit 待定）中补全为 ✅；P1-02 行同步为 ✅
 - P1-09 完成条件**书面裁剪**：telemetry 实测一致率延后 P2（工具就绪——
   共享内存布局经核对正确）；speed segments/SignMetadata 未交付（P2）
 - 格式笔记补 3 项：dataset-format.md / speed-rule.md / poi.md

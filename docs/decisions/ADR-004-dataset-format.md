@@ -9,7 +9,7 @@
 
 ## 决策
 
-routing.graph/junction.graph 用自定义紧凑二进制（magic/version/endianness/offset table，读取方校验）；map.db/search.db 用 SQLite（FTS5）；禁止 .NET BinaryFormatter/JSON 对象树作为正式格式；schema 在语义图稳定后冻结（v1），之前用 experimental schema
+routing.graph/junction.graph 用自定义紧凑二进制（magic/version/endianness + 顺序固定布局——修订 2026-08-10：实际实现无 offset table，读取方以计数与尾部偏移校验）；map.db/search.db 用 SQLite（FTS5）；禁止 .NET BinaryFormatter/JSON 对象树作为正式格式；schema 在语义图稳定后冻结（v1），之前用 experimental schema
 
 ## 后果
 

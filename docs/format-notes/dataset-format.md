@@ -1,7 +1,7 @@
 # Dataset 格式笔记（P1-11，ADR-004）
 
 来源：P1-11 Dataset Writer（2026-08）。格式：routing.graph/junction.graph 紧凑二进制
-（magic/version/endianness/offset table）；map.db/search.db SQLite；manifest/diagnostics JSON。
+（magic/version/endianness + 顺序固定布局——无 offset table，读取端以计数+尾部偏移校验，勘误 2026-08-10）；map.db/search.db SQLite；manifest/diagnostics JSON。
 
 ## 文件清单
 

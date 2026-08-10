@@ -11,7 +11,7 @@ namespace ScsMapModel;
 public sealed class SpeedModel
 {
     // 城市 country 区域（CityItem 的 Width/Height 为城市矩形范围——判定用 bbox 而非半径圆，
-    // 避免跨边境误判（P1 收官评审 M3：柏林东北角 6.3% road 曾被 szczecin 半径误判为 poland））
+    // 避免跨边境误判（P1 收官评审 M5：柏林东北角 6.3% road 曾被 szczecin 半径误判为 poland））
     private readonly List<(double X, double Z, double HalfW, double HalfH, string Country)> _cityCountries = new();
     private readonly string _defaultCountry;
     private readonly DefinitionResolver _defs;
