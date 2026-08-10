@@ -139,6 +139,7 @@ dependencies = [
  "nav-graph",
  "nav-matcher",
  "nav-spatial",
+ "nav-telemetry",
 ]
 
 [[package]]

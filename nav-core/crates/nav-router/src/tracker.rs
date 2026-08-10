@@ -63,18 +63,73 @@ impl RouteTracker {
         matched_edge: u32,
         matched_offset: f64,
     ) -> ProgressUpdate {
+        // 纯虚拟段路线（起点/终点都在同一或相邻边中部——无中间图边）：
+        // 剩余 = 全程距离；匹配到终点虚拟段所在边 → 到达（剩余 0）。
+        if self.route.edges.is_empty() {
+            let end_edge = self.route.end_virtual.map(|(e, _, _)| e);
+            let remaining = if end_edge == Some(matched_edge) {
+                0.0
+            } else {
+                self.route.distance_m
+            };
+            return ProgressUpdate {
+                edge_index: 0,
+                edge_offset: 0.0,
+                distance_travelled: 0.0,
+                remaining_distance: remaining,
+                remaining_time: remaining / 14.0,
+                matched: true,
+                progressed: 0.0,
+            };
+        }
         // §84：局部窗口搜索
         let lo = self.edge_index.saturating_sub(self.window);
         let hi = (self.edge_index + self.window).min(self.route.edges.len().saturating_sub(1));
         let mut found: Option<usize> = None;
+        // 反向行驶标记：matched 边是窗口内边的**双向对边**（同一几何）——识别但不推进（§87）
+        let mut reversed = false;
+        let matched_ok = (matched_edge as usize) < graph.edges.len();
+        let matched_e = if matched_ok {
+            Some(&graph.edges[matched_edge as usize])
+        } else {
+            None
+        };
         for i in lo..=hi {
             if self.route.edges[i] == matched_edge {
                 found = Some(i);
                 break;
             }
         }
+        if found.is_none() {
+            if let Some(me) = matched_e {
+                for i in lo..=hi {
+                    let re = &graph.edges[self.route.edges[i] as usize];
+                    // 同一几何（geom_start/len 相同）= 同一道路的双向边；反向行驶
+                    if re.geom_start == me.geom_start
+                        && re.geom_len == me.geom_len
+                        && re.kind == me.kind
+                    {
+                        found = Some(i);
+                        reversed = true;
+                        break;
+                    }
+                }
+            }
+        }
         let mut progressed = 0.0;
         if let Some(idx) = found {
+            if reversed {
+                // 对向边：匹配但进度不推进（防平行/双向路抖动——§87）
+                return ProgressUpdate {
+                    edge_index: self.edge_index,
+                    edge_offset: self.edge_offset,
+                    distance_travelled: self.distance_travelled,
+                    remaining_distance: self.edge_remaining(graph),
+                    remaining_time: self.time_remaining(graph),
+                    matched: true,
+                    progressed: 0.0,
+                };
+            }
             let prev = self.edge_index;
             if idx > prev {
                 // 前进：当前边剩余段 + 新边 offset 计入 travelled（单调 §87；避免重复计数）
@@ -112,7 +167,7 @@ impl RouteTracker {
     /// 剩余距离（O(1)，§85）：当前边剩余 + suffix。
     pub fn edge_remaining(&self, graph: &CompactGraph) -> f64 {
         if self.route.edges.is_empty() {
-            return 0.0;
+            return self.route.distance_m;
         }
         let eid = self.route.edges[self.edge_index.min(self.route.edges.len() - 1)];
         let len = edge_len(graph, eid);
