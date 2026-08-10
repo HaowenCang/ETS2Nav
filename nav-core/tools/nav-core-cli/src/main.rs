@@ -21,6 +21,7 @@ fn main() {
         ("route", _) if args.len() >= 4 => route_cli(&args[2], &args[3]),
         ("route-verify", _) if args.len() >= 3 => route_verify(&args[2]),
         ("roundabout-stats", _) if args.len() >= 3 => roundabout_stats(&args[2]),
+        ("dest", _) if args.len() >= 4 => dest_cli(&args[2], &args[3]),
         _ => {
             eprintln!("用法:");
             eprintln!("  nav-core-cli dataset info <dataset-dir>");
@@ -223,6 +224,55 @@ fn roundabout_stats(dataset_dir: &str) {
             );
             shown += 1;
         }
+    }
+}
+
+/// dest：目的地解析（§107-110：POI/Job/坐标 → access snap）。
+fn dest_cli(query: &str, dataset_dir: &str) {
+    let (routing, _j) = nav_dataset::load_dataset(std::path::Path::new(dataset_dir))
+        .unwrap_or_else(|e| {
+            eprintln!("加载 dataset 失败: {e}");
+            std::process::exit(1);
+        });
+    let graph = nav_graph::CompactGraph::build(&routing);
+    let spatial = nav_spatial::SpatialIndex::build(&graph, nav_spatial::DEFAULT_CELL_SIZE);
+    let pois = nav_dataset::load_pois(&std::path::Path::new(dataset_dir).join("search.db"))
+        .unwrap_or_else(|e| {
+            eprintln!("加载 POI 失败: {e}");
+            std::process::exit(1);
+        });
+    let resolver = nav_router::destination::DestinationResolver::new(pois, &routing.nodes);
+    let parts: Vec<&str> = query.split(',').collect();
+    let result = if parts.len() == 2 && parts[0].trim().parse::<f64>().is_ok() {
+        // 坐标
+        let x: f64 = parts[0].trim().parse().unwrap();
+        let z: f64 = parts[1].trim().parse().unwrap();
+        resolver.resolve_coordinate(
+            &graph,
+            &spatial,
+            x,
+            z,
+            nav_router::destination::DestKind::Coordinate,
+        )
+    } else if query.contains('@') {
+        // job: company@city
+        let v: Vec<&str> = query.split('@').collect();
+        resolver.resolve_job(&graph, &spatial, v[0].trim(), Some(v[1].trim()))
+    } else {
+        resolver.resolve_poi(&graph, &spatial, query)
+    };
+    match result {
+        Ok(d) => println!(
+            "[{}] {} @ ({:.0},{:.0}) → access_snap edge={} off={:.0}m lateral={:.0}m",
+            d.kind.name(),
+            d.name,
+            d.position.0,
+            d.position.2,
+            d.access_snap.edge_id,
+            d.access_snap.offset,
+            d.access_snap.lateral
+        ),
+        Err(e) => println!("解析失败: {e}"),
     }
 }
 

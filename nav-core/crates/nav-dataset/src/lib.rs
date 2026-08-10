@@ -13,8 +13,13 @@ const EXPECTED_ENDIANNESS: u32 = 0x12345678;
 #[derive(Debug)]
 pub enum DatasetError {
     Io(std::io::Error),
+    /// 非 IO 解析/校验错误（含 sqlite 访问）。
+    Other(String),
     Corrupt(String),
-    VersionMismatch { found: u32, expected: u32 },
+    VersionMismatch {
+        found: u32,
+        expected: u32,
+    },
     MissingFile(String),
     Manifest(String),
 }
@@ -23,6 +28,7 @@ impl std::fmt::Display for DatasetError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             DatasetError::Io(e) => write!(f, "IO: {e}"),
+            DatasetError::Other(s) => write!(f, "Other: {s}"),
             DatasetError::Corrupt(m) => write!(f, "corrupt dataset: {m}"),
             DatasetError::VersionMismatch { found, expected } => {
                 write!(
@@ -416,4 +422,41 @@ fn u16_le(b: &[u8]) -> u16 {
 }
 fn f32_le(b: &[u8]) -> f32 {
     f32::from_le_bytes([b[0], b[1], b[2], b[3]])
+}
+
+/// POI 记录（search.db poi 表）。
+#[derive(Debug, Clone)]
+pub struct PoiRecord {
+    pub id: i64,
+    pub kind: String,
+    pub name: String,
+    pub x: f64,
+    pub z: f64,
+    pub access_node_hex: String,
+}
+
+/// 从 search.db 加载全部 POI（P2-15 Destination Resolver 用）。
+pub fn load_pois(search_db: &std::path::Path) -> std::result::Result<Vec<PoiRecord>, DatasetError> {
+    let conn = rusqlite::Connection::open(search_db)
+        .map_err(|e| DatasetError::Other(format!("打开 search.db: {e}")))?;
+    let mut stmt = conn
+        .prepare("SELECT id, type, name, x, z, access_node FROM poi")
+        .map_err(|e| DatasetError::Other(format!("查询 poi 表: {e}")))?;
+    let rows = stmt
+        .query_map([], |row| {
+            Ok(PoiRecord {
+                id: row.get(0)?,
+                kind: row.get(1)?,
+                name: row.get(2)?,
+                x: row.get(3)?,
+                z: row.get(4)?,
+                access_node_hex: row.get(5)?,
+            })
+        })
+        .map_err(|e| DatasetError::Other(format!("读取 poi 行: {e}")))?;
+    let mut out = Vec::new();
+    for r in rows {
+        out.push(r.map_err(|e| DatasetError::Other(format!("POI 解析: {e}")))?);
+    }
+    Ok(out)
 }
