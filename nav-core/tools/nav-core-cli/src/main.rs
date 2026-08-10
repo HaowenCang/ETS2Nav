@@ -13,11 +13,101 @@ fn main() {
     match (args[1].as_str(), args.get(2).map(|s| s.as_str())) {
         ("dataset", Some("info")) if args.len() >= 4 => dataset_info(&args[3]),
         ("info", _) if args.len() >= 3 => dataset_info(&args[2]),
+        ("live", Some(path)) => live(Some(path)),
+        ("live", _) => live(None),
+        ("replay", _) if args.len() >= 3 => replay_trace(&args[2]),
         _ => {
-            eprintln!("用法: nav-core-cli dataset info <dataset-dir>");
+            eprintln!("用法:");
+            eprintln!("  nav-core-cli dataset info <dataset-dir>");
+            eprintln!("  nav-core-cli live [trace.navtrace]        —— 实时遥测（可选同时录制）");
+            eprintln!("  nav-core-cli replay <trace.navtrace>      —— 回放 trace");
             std::process::exit(2);
         }
     }
+}
+
+/// 实时遥测：连接共享内存，持续输出帧摘要；可选录制 trace。
+fn live(trace_path: Option<&str>) {
+    let mut src = nav_telemetry::TelemetrySource::new(std::time::Duration::from_secs(2));
+    let mut rec = trace_path
+        .map(|p| nav_telemetry::TraceRecorder::create(std::path::Path::new(p)))
+        .transpose()
+        .unwrap_or_else(|e| {
+            eprintln!("无法创建 trace: {e}");
+            std::process::exit(1);
+        });
+    let mut det = nav_telemetry::EventDetector::new(50.0);
+    let mut last_shown = std::time::Instant::now();
+    println!("等待遥测桥（Local\\ETS2NavTelemetry）……");
+    loop {
+        match src.poll() {
+            nav_telemetry::TelemetryState::Fresh(snap) => {
+                if let Some(r) = rec.as_mut() {
+                    let _ = r.record(&snap);
+                }
+                for ev in det.feed(&snap) {
+                    println!("EVENT: {ev:?}");
+                }
+                if last_shown.elapsed().as_millis() >= 500 {
+                    println!(
+                        "TELEMETRY seq={} sim={:.1}s pos=({:.1},{:.1},{:.1}) speed={:.1} m/s limit={:.1} paused={} job={}",
+                        snap.sequence,
+                        snap.simulation_time as f64 / 1e6,
+                        snap.position[0], snap.position[1], snap.position[2],
+                        snap.speed, snap.speed_limit, snap.paused,
+                        snap.job.as_ref().map(|j| j.dest_city.as_str()).unwrap_or("-"),
+                    );
+                    last_shown = std::time::Instant::now();
+                }
+            }
+            nav_telemetry::TelemetryState::Stale => {
+                // 静默（避免刷屏）；状态不推进由上层处理
+            }
+            nav_telemetry::TelemetryState::Disconnected => {
+                std::thread::sleep(std::time::Duration::from_millis(500));
+                src.reconnect();
+            }
+        }
+        std::thread::sleep(std::time::Duration::from_millis(16));   // ~60 Hz 轮询上限
+    }
+}
+
+/// 回放 trace：逐帧打印摘要（后续工作包接入 matcher/reroute 后扩展）。
+fn replay_trace(path: &str) {
+    let frames: Vec<nav_telemetry::TraceFrame> =
+        nav_telemetry::replay(std::path::Path::new(path))
+            .unwrap_or_else(|e| {
+                eprintln!("打开 trace 失败: {e}");
+                std::process::exit(1);
+            })
+            .collect();
+    if frames.is_empty() {
+        eprintln!("trace 为空或无法解析");
+        std::process::exit(1);
+    }
+    let dur = frames.last().unwrap().t - frames.first().unwrap().t;
+    println!(
+        "trace: {} 帧，时长 {:.1}s，起点 ({:.1},{:.1},{:.1})，终点 ({:.1},{:.1},{:.1})",
+        frames.len(),
+        dur,
+        frames.first().unwrap().snap.position[0],
+        frames.first().unwrap().snap.position[1],
+        frames.first().unwrap().snap.position[2],
+        frames.last().unwrap().snap.position[0],
+        frames.last().unwrap().snap.position[1],
+        frames.last().unwrap().snap.position[2],
+    );
+    // 事件检测回放
+    let mut det = nav_telemetry::EventDetector::new(50.0);
+    let mut ev_count = 0;
+    for f in &frames {
+        for ev in det.feed(&f.snap) {
+            println!("  t={:.1}s EVENT: {ev:?}", f.t);
+            ev_count += 1;
+        }
+    }
+    println!("事件总数: {ev_count}");
+    println!("PASS");
 }
 
 fn dataset_info(dir: &str) {
