@@ -1,0 +1,7 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/nav-dataset",
+    "crates/nav-graph",
+    "tools/nav-core-cli",
+]
