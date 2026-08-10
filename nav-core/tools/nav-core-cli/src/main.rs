@@ -379,13 +379,20 @@ fn route_cli(xz: &str, dataset_dir: &str) {
     };
     let (x1, z1) = parse(parts[0]);
     let (x2, z2) = parse(parts[1]);
-    let (routing, _j) = nav_dataset::load_dataset(std::path::Path::new(dataset_dir))
+    let (routing, junctions) = nav_dataset::load_dataset(std::path::Path::new(dataset_dir))
         .unwrap_or_else(|e| {
             eprintln!("加载 dataset 失败: {e}");
             std::process::exit(1);
         });
     let graph = nav_graph::CompactGraph::build(&routing);
     let spatial = nav_spatial::SpatialIndex::build(&graph, nav_spatial::DEFAULT_CELL_SIZE);
+    // junction turn 查询表（§96：movement TurnType 优先）
+    let mut turns: std::collections::HashMap<(u64, u32), i8> = std::collections::HashMap::new();
+    for j in &junctions.junctions {
+        for m in &j.movements {
+            turns.insert((j.uid, m.id), m.turn_type);
+        }
+    }
     let s1 = nav_router::snap::snap_nearest(&graph, &spatial, x1, z1, 300.0).unwrap_or_else(|| {
         eprintln!("起点 300m 内无可路由边");
         std::process::exit(1);
@@ -417,6 +424,23 @@ fn route_cli(xz: &str, dataset_dir: &str) {
             r.eta_s / 60.0,
             r.edges.len()
         );
+    }
+    // —— Maneuver 序列（§94-99：TurnType 优先 + 几何细化 + 抑制）——
+    if let Some(best) = alts.routes.first() {
+        let ms = nav_router::maneuver::generate_maneuvers(&graph, best, &turns);
+        println!("maneuver 序列（{} 条）：", ms.len());
+        for m in ms.iter().take(30) {
+            println!(
+                "  {:>12} @edge{} Δ={:+.0}° 距上 {:.0}m",
+                m.mtype.name(),
+                m.route_edge_index,
+                m.bearing_change.to_degrees(),
+                m.distance_from_prev
+            );
+        }
+        if ms.len() > 30 {
+            println!("  ... 共 {} 条", ms.len());
+        }
     }
     for profile in [
         nav_router::cost::RouteProfile::Fastest,
