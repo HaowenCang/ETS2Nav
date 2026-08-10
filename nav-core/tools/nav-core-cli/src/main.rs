@@ -236,7 +236,10 @@ fn bench_cli(dataset_dir: &str) {
     // 1) 加载计时
     let t0 = std::time::Instant::now();
     let (routing, _j) = nav_dataset::load_dataset(std::path::Path::new(dataset_dir))
-        .unwrap_or_else(|e| { eprintln!("加载 dataset 失败: {e}"); std::process::exit(1); });
+        .unwrap_or_else(|e| {
+            eprintln!("加载 dataset 失败: {e}");
+            std::process::exit(1);
+        });
     let load_ms = t0.elapsed().as_secs_f64() * 1000.0;
     let t1 = std::time::Instant::now();
     let graph = nav_graph::CompactGraph::build(&routing);
@@ -251,8 +254,11 @@ fn bench_cli(dataset_dir: &str) {
         + graph.node_offsets.len() * 4
         + graph.edge_ids.len() * 4
         + graph.in_offsets.len() * 4
-        + graph.in_edge_ids.len() * 4) as f64 / 1e6;
-    println!("[加载] {load_ms:.0}ms（routing.graph）+ build {build_ms:.0}ms + spatial {spatial_ms:.0}ms");
+        + graph.in_edge_ids.len() * 4) as f64
+        / 1e6;
+    println!(
+        "[加载] {load_ms:.0}ms（routing.graph）+ build {build_ms:.0}ms + spatial {spatial_ms:.0}ms"
+    );
     println!("[内存] 粗略 {mem_mb:.0}MB（目标 <500MB）");
     // 2) 路线时延分布（Berlin 核心网 200 OD × fastest）
     let mut router = nav_router::search::Router::new(graph.node_count());
@@ -262,7 +268,9 @@ fn bench_cli(dataset_dir: &str) {
         let seed = 20260810u64 + i as u64 * 2654435761;
         let mut s = seed;
         let mut rnd = move || {
-            s = s.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            s = s
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             (s >> 33) as f64 / (1u64 << 31) as f64
         };
         let (xa, za) = (-62000.0 + rnd() * 9000.0, 30000.0 + rnd() * 8000.0);
@@ -270,12 +278,16 @@ fn bench_cli(dataset_dir: &str) {
         let (Some(s1), Some(s2)) = (
             nav_router::snap::snap_nearest(&graph, &spatial, xa, za, 300.0),
             nav_router::snap::snap_nearest(&graph, &spatial, xb, zb, 300.0),
-        ) else { continue };
+        ) else {
+            continue;
+        };
         let t = std::time::Instant::now();
-        let req = nav_router::search::RouteRequest::new(&graph,
+        let req = nav_router::search::RouteRequest::new(
+            &graph,
             nav_router::snap::VirtualEndpoint::start(&s1, true),
             nav_router::snap::VirtualEndpoint::goal(&s2),
-            nav_router::cost::RouteProfile::Fastest);
+            nav_router::cost::RouteProfile::Fastest,
+        );
         if router.astar(&req).is_some() {
             solved += 1;
             times.push(t.elapsed().as_secs_f64() * 1000.0);
@@ -288,8 +300,10 @@ fn bench_cli(dataset_dir: &str) {
     // 3) 匹配 p99（trace 回放）
     let trace = "C:/Users/20659/AppData/Local/Temp/real.navtrace";
     if std::path::Path::new(trace).exists() {
-        let frames: Vec<nav_telemetry::TraceFrame> = nav_telemetry::replay(std::path::Path::new(trace))
-            .unwrap().collect();
+        let frames: Vec<nav_telemetry::TraceFrame> =
+            nav_telemetry::replay(std::path::Path::new(trace))
+                .unwrap()
+                .collect();
         let mut m = nav_matcher::MapMatcher::new(nav_matcher::MatcherConfig::default());
         let mut mtimes = Vec::new();
         for f in &frames {
@@ -301,8 +315,12 @@ fn bench_cli(dataset_dir: &str) {
         }
         mtimes.sort_by(|a, b| a.partial_cmp(b).unwrap());
         let mp = |q: f64| -> f64 { mtimes[((mtimes.len() as f64) * q) as usize] };
-        println!("[匹配] {} 帧：p50={:.3}ms p99={:.3}ms（目标 p99<10ms）",
-            mtimes.len(), mp(0.5), mp(0.99));
+        println!(
+            "[匹配] {} 帧：p50={:.3}ms p99={:.3}ms（目标 p99<10ms）",
+            mtimes.len(),
+            mp(0.5),
+            mp(0.99)
+        );
     }
     println!("Bench PASS");
 }
