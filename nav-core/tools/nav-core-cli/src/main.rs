@@ -17,12 +17,16 @@ fn main() {
         ("live", _) => live(None),
         ("replay", _) if args.len() >= 3 => replay_trace(&args[2]),
         ("match", _) if args.len() >= 4 => match_trace(&args[2], &args[3]),
+        ("snap", _) if args.len() >= 4 => snap_cli(&args[2], &args[3]),
         _ => {
             eprintln!("用法:");
             eprintln!("  nav-core-cli dataset info <dataset-dir>");
             eprintln!("  nav-core-cli live [trace.navtrace]        —— 实时遥测（可选同时录制）");
             eprintln!("  nav-core-cli replay <trace.navtrace>      —— 回放 trace");
             eprintln!("  nav-core-cli match <trace> <dataset-dir>   —— trace 回放 Map Matching");
+            eprintln!(
+                "  nav-core-cli snap <x,z> <dataset-dir>       —— 目的地吸附（最近可路由 edge）"
+            );
             std::process::exit(2);
         }
     }
@@ -174,6 +178,47 @@ fn match_trace(trace_path: &str, dataset_dir: &str) {
     let mut top: Vec<(u32, u32)> = edge_hist.into_iter().collect();
     top.sort_by_key(|(_, c)| std::cmp::Reverse(*c));
     println!("锁定边 TOP5: {:?}", top.iter().take(5).collect::<Vec<_>>());
+}
+
+/// snap：任意坐标 → 最近可路由 edge（P2-07 §56）。
+fn snap_cli(xz: &str, dataset_dir: &str) {
+    let parts: Vec<&str> = xz.split(',').collect();
+    if parts.len() != 2 {
+        eprintln!("格式: <x,z> 如 -58456,32832");
+        std::process::exit(1);
+    }
+    let x: f64 = parts[0].trim().parse().unwrap_or_else(|_| {
+        eprintln!("x 解析失败");
+        std::process::exit(1);
+    });
+    let z: f64 = parts[1].trim().parse().unwrap_or_else(|_| {
+        eprintln!("z 解析失败");
+        std::process::exit(1);
+    });
+    let (routing, _j) = nav_dataset::load_dataset(std::path::Path::new(dataset_dir))
+        .unwrap_or_else(|e| {
+            eprintln!("加载 dataset 失败: {e}");
+            std::process::exit(1);
+        });
+    let graph = nav_graph::CompactGraph::build(&routing);
+    let spatial = nav_spatial::SpatialIndex::build(&graph, nav_spatial::DEFAULT_CELL_SIZE);
+    let hits = spatial.query_radius(x, z, 300.0);
+    println!("候选边数: {}", hits.len());
+    let s = nav_router::snap::snap_nearest(&graph, &spatial, x, z, 300.0).unwrap_or_else(|| {
+        eprintln!("300m 内无可路由边");
+        std::process::exit(1);
+    });
+    let e = &graph.edges[s.edge_id as usize];
+    println!(
+        "snap: edge={} kind={:?} offset={:.1}m lateral={:.1}m pos=({:.1},{:.1})",
+        s.edge_id, e.kind, s.offset, s.lateral, s.position.0, s.position.2
+    );
+    println!(
+        "edge 总长: {:.1}m（forward 剩余 {:.1}m / backward {:.1}m）",
+        s.edge_length(&graph),
+        s.edge_length(&graph) - s.offset,
+        s.offset
+    );
 }
 
 /// 四元数 → yaw（世界弧度；SCS quat (x,y,z,w)）。
