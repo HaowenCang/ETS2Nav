@@ -192,7 +192,7 @@ impl MapMatcher {
             return None;
         }
         // 最近点投影（分段线性）
-        let (proj, lateral, offset, tangent) = project(pts, x, z);
+        let (proj, lateral, offset, tangent) = nav_graph::project_point(pts, x, z);
         if lateral > self.cfg.distance_scale * 3.0 {
             return None; // 过远直接排除
         }
@@ -228,39 +228,6 @@ impl MapMatcher {
             continuity: st,
         })
     }
-}
-
-/// 点到折线的投影：最近点、横向距离、弧长 offset、投影段 tangent。
-fn project(pts: &[(f64, f64, f64)], x: f64, z: f64) -> ((f64, f64, f64), f64, f64, f64) {
-    let mut best_d2 = f64::MAX;
-    let mut best = (0.0, 0.0, 0.0);
-    let mut best_off = 0.0;
-    let mut best_tan = 0.0;
-    let mut acc = 0.0;
-    for i in 0..pts.len() - 1 {
-        let (ax, _, az) = pts[i];
-        let (bx, _, bz) = pts[i + 1];
-        let dx = bx - ax;
-        let dz = bz - az;
-        let seg2 = dx * dx + dz * dz;
-        let t = if seg2 > 1e-9 {
-            ((x - ax) * dx + (z - az) * dz) / seg2
-        } else {
-            0.0
-        };
-        let t = t.clamp(0.0, 1.0);
-        let px = ax + t * dx;
-        let pz = az + t * dz;
-        let d2 = (x - px) * (x - px) + (z - pz) * (z - pz);
-        if d2 < best_d2 {
-            best_d2 = d2;
-            best = (px, pts[i].1, pz);
-            best_off = acc + t * seg2.sqrt();
-            best_tan = dz.atan2(dx);
-        }
-        acc += seg2.sqrt();
-    }
-    (best, best_d2.sqrt(), best_off, best_tan)
 }
 
 /// 角度差（弧度，归一化到 [-π, π]）。

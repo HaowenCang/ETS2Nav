@@ -21,6 +21,7 @@ dependencies = [
  "nav-dataset",
  "nav-graph",
  "nav-matcher",
+ "nav-router",
  "nav-spatial",
  "nav-telemetry",
 ]
@@ -45,6 +46,16 @@ version = "0.1.0"
 dependencies = [
  "nav-dataset",
  "nav-graph",
+ "nav-spatial",
+]
+
+[[package]]
+name = "nav-router"
+version = "0.1.0"
+dependencies = [
+ "nav-dataset",
+ "nav-graph",
+ "nav-matcher",
  "nav-spatial",
 ]
 

@@ -218,3 +218,52 @@ pub fn stats(rg: &RoutingGraph) -> GraphStats {
     s.active_nodes = c.node_count();
     s
 }
+
+/// 端到端距离（polyline 弧长；空几何回退欧氏）——P2-07 snap/route 用。
+pub fn polyline_length(pts: &[(f64, f64, f64)]) -> f64 {
+    let mut d = 0.0;
+    for w in pts.windows(2) {
+        let dx = w[1].0 - w[0].0;
+        let dz = w[1].2 - w[0].2;
+        d += (dx * dx + dz * dz).sqrt();
+    }
+    d
+}
+
+/// 点到折线的投影：最近点、横向距离、弧长 offset、投影段 tangent（P2-07 snap/matcher 共享）。
+pub fn project_point(pts: &[(f64, f64, f64)], x: f64, z: f64) -> ((f64, f64, f64), f64, f64, f64) {
+    let mut best_d2 = f64::MAX;
+    let mut best = (0.0, 0.0, 0.0);
+    let mut best_off = 0.0;
+    let mut best_tan = 0.0;
+    let mut acc = 0.0;
+    for i in 0..pts.len().saturating_sub(1) {
+        let (ax, _, az) = pts[i];
+        let (bx, _, bz) = pts[i + 1];
+        let dx = bx - ax;
+        let dz = bz - az;
+        let seg2 = dx * dx + dz * dz;
+        let t = if seg2 > 1e-9 {
+            ((x - ax) * dx + (z - az) * dz) / seg2
+        } else {
+            0.0
+        };
+        let t = t.clamp(0.0, 1.0);
+        let px = ax + t * dx;
+        let pz = az + t * dz;
+        let d2 = (x - px) * (x - px) + (z - pz) * (z - pz);
+        if d2 < best_d2 {
+            best_d2 = d2;
+            best = (px, pts[i].1, pz);
+            best_off = acc + t * seg2.sqrt();
+            best_tan = dz.atan2(dx);
+        }
+        acc += seg2.sqrt();
+    }
+    if best_d2 == f64::MAX {
+        let (x0, y0, z0) = pts[0];
+        ((x0, y0, z0), 0.0, 0.0, 0.0)
+    } else {
+        (best, best_d2.sqrt(), best_off, best_tan)
+    }
+}
