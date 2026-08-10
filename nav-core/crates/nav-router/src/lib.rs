@@ -8,3 +8,4 @@ pub mod alternatives;
 pub mod cost;
 pub mod search;
 pub mod snap;
+pub mod tracker;
