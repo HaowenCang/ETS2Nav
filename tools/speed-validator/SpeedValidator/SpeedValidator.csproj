@@ -1,0 +1,15 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net9.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+  </PropertyGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\..\..\map-compiler\src\ScsResource\ScsResource.csproj" />
+    <ProjectReference Include="..\..\..\map-compiler\src\ScsSector\ScsSector.csproj" />
+    <ProjectReference Include="..\..\..\map-compiler\src\ScsDefinitions\ScsDefinitions.csproj" />
+    <ProjectReference Include="..\..\..\map-compiler\src\ScsPrefab\ScsPrefab.csproj" />
+    <ProjectReference Include="..\..\..\map-compiler\src\ScsMapModel\ScsMapModel.csproj" />
+  </ItemGroup>
+</Project>

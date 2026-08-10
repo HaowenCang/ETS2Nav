@@ -167,6 +167,8 @@ if (cmdArgs.Contains("--semantic"))
     var noAccess = map.Companies.Count(c => c.AccessNodeUid is null);
     Console.WriteLine($"SemanticMap: roads={map.Roads.Count} junctions={map.Junctions.Count} companies={map.Companies.Count} cities={map.Cities.Count}");
     Console.WriteLine($"  单行道 {oneWay}（降级双向 {degraded}），junction 无 movement {map.Junctions.Count(j => j.Movements.Count == 0)}");
+    var speedDist = map.Roads.GroupBy(r => r.SpeedLimit).OrderBy(g => g.Key).Select(g => $"{g.Key}km/hx{g.Count()}").ToList();
+    Console.WriteLine($"  限速分布: {string.Join(" ", speedDist)}");
     Console.WriteLine($"  公司 routing access 缺失 {noAccess}");
     Console.WriteLine($"RoutingGraph: nodes={rgraph.NodeCount} edges={rgraph.EdgeCount}");
     var kinds = rgraph.EdgeCount == 0 ? "" : string.Join(" ", Enum.GetValues<ScsGraph.RoutingEdgeKind>()

@@ -24,6 +24,8 @@ public sealed class SemanticRoad
     public required RoadDirection Direction { get; init; }
     /// <summary>限速等级（road item 的 TrafficRule 字段 = speed_class 值）。</summary>
     public required string SpeedClass { get; init; }
+    /// <summary>限速 km/h（SpeedModel 计算；0 = 无限速）。</summary>
+    public int SpeedLimit { get; set; }
     public double Length { get; init; }
     public bool LeftHandTraffic { get; init; }
     public bool NoAiVehicles { get; init; }

@@ -27,19 +27,35 @@ public sealed class SemanticMapBuilder
         var allNodes = secList.SelectMany(s => s.Nodes).Select(n => n.Uid).ToHashSet();
         map.NodeCount = allNodes.Count;
 
+        // 速度模型（country × speed_class × 城市）——road 限速计算
+        var speeds = new SpeedModel(_defs, secList);
+        var nodePos = secList.SelectMany(s => s.Nodes).GroupBy(n => n.Uid)
+            .ToDictionary(g => g.Key, g => (g.First().X, g.First().Z));
+
         foreach (var sec in secList)
         {
             foreach (var road in sec.Roads)
             {
                 if (!allNodes.Contains(road.Node0) || !allNodes.Contains(road.Node1)) continue;
-                map.Roads.Add(new SemanticRoad
+                // speed_class：优先 road.TrafficRule（实测仅 ~4% 设置）；否则从 road look 的 lanes 推断
+                // （traffic_lane 定义的 speed_class——SCS 限速实际机制）
+                var speedClass = road.RightTrafficRule.Length > 0 ? road.RightTrafficRule : road.LeftTrafficRule;
+                if (speedClass.Length == 0)
+                {
+                    var look = _defs.GetRoadLook(road.RoadLook);
+                    var laneToken = look?.LanesRight.FirstOrDefault() ?? look?.LanesLeft.FirstOrDefault();
+                    if (laneToken != null)
+                        speedClass = _defs.GetTrafficLane(laneToken)?.SpeedClass ?? "";
+                }
+                var mid = nodePos.TryGetValue(road.Node0, out var p0) ? p0 : (0, 0);
+                var sr = new SemanticRoad
                 {
                     Uid = road.Uid,
                     Node0 = road.Node0,
                     Node1 = road.Node1,
                     RoadLook = road.RoadLook,
                     Direction = DetermineDirection(road, out bool degraded),
-                    SpeedClass = road.RightTrafficRule.Length > 0 ? road.RightTrafficRule : road.LeftTrafficRule,
+                    SpeedClass = speedClass,
                     Length = road.Length,
                     LeftHandTraffic = road.LeftHandTraffic,
                     NoAiVehicles = road.NoAiVehicles,
@@ -47,7 +63,9 @@ public sealed class SemanticMapBuilder
                     Secret = road.Secret,
                     IsCityRoad = road.IsCityRoad,
                     DirectionDegraded = degraded,
-                });
+                };
+                sr.SpeedLimit = speedClass.Length > 0 ? speeds.GetSpeedLimit(mid.X, mid.Z, speedClass, road.IsCityRoad) : 0;
+                map.Roads.Add(sr);
             }
             foreach (var city in sec.Items.OfType<CityItem>())
                 map.Cities.Add(new SemanticCity { Uid = city.Uid, CityToken = city.City });
