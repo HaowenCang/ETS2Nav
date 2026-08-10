@@ -10,6 +10,8 @@ public sealed class SemanticMap
     public List<SemanticJunction> Junctions { get; } = new();
     public List<SemanticCompany> Companies { get; } = new();
     public List<SemanticCity> Cities { get; } = new();
+    /// <summary>Ferry/Train 航线（P2-01 v2：ferry_connection 定义）。</summary>
+    public List<SemanticFerry> Ferries { get; } = new();
 
     public int NodeCount { get; set; }
 }
@@ -65,6 +67,29 @@ public sealed class JunctionMovement
     public bool LowProbability { get; init; }
     /// <summary>PPD 曲线链（prefab 内部几何，供 Junction Graph）。</summary>
     public int[] CurvePath { get; init; } = Array.Empty<int>();
+    /// <summary>movement 世界坐标 polyline（P2-01 v2：CurvePath 链经 prefab 变换采样；空 = 不可用）。</summary>
+    public IReadOnlyList<(double X, double Y, double Z)> WorldPolyline { get; init; } = Array.Empty<(double, double, double)>();
+}
+
+/// <summary>Ferry/Train 航线（P2-01 v2，V2-5）：ferry_connection 定义 + 两端码头节点。</summary>
+public sealed class SemanticFerry
+{
+    public required string PortA { get; init; }
+    public required string PortB { get; init; }
+    public required bool IsTrain { get; init; }
+    /// <summary>预计行程时间（分钟，ferry_connection.time）。</summary>
+    public required double TimeMinutes { get; init; }
+    /// <summary>航线距离（km，ferry_connection.distance）。</summary>
+    public required double DistanceKm { get; init; }
+    public required double Price { get; init; }
+    /// <summary>A→B 方向是否允许（connection 文件存在性；BuildFerries 合并方向时更新）。</summary>
+    public bool AtoB { get; set; }
+    /// <summary>B→A 方向是否允许。</summary>
+    public bool BtoA { get; set; }
+    /// <summary>A 端码头节点（FerryItem.NodeUid，同港可能多码头）。</summary>
+    public ulong[] PortANodes { get; set; } = Array.Empty<ulong>();
+    /// <summary>B 端码头节点。</summary>
+    public ulong[] PortBNodes { get; set; } = Array.Empty<ulong>();
 }
 
 /// <summary>公司（P1 计划 §25）：visual position + routing access（linked prefab 的入口节点）。</summary>

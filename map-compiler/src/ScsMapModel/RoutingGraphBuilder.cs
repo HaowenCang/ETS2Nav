@@ -30,6 +30,8 @@ public static class RoutingGraphBuilder
                 Length = r.Length,
                 RoadLook = r.RoadLook,
                 SpeedClass = r.SpeedClass,
+                // P2-01 v2（V2-3）：限速 hot metadata（-1 未知 / 0 无限速 / >0）
+                SpeedLimitKph = r.SpeedLimit,
                 NoAiVehicles = r.NoAiVehicles,
                 GpsAvoid = r.GpsAvoid,
                 Secret = r.Secret,
@@ -52,6 +54,36 @@ public static class RoutingGraphBuilder
                     Length = m.Length,
                     MovementId = m.MovementId,
                     SemaphoreId = m.SemaphoreId,
+                    // P2-01 v2（V2-2）：movement 世界坐标 polyline
+                    Geometry = m.WorldPolyline,
+                });
+            }
+        }
+
+        // Ferry/Train 边（P2-01 v2，V2-5）：码头全连接（港口 prefab 内部 movement 已连通同港节点）
+        foreach (var f in map.Ferries)
+        {
+            var kind = f.IsTrain ? RoutingEdgeKind.Train : RoutingEdgeKind.Ferry;
+            var edges = new List<(ulong A, ulong B)>();
+            if (f.AtoB)
+                foreach (var a in f.PortANodes)
+                    foreach (var b in f.PortBNodes)
+                        if (a != b) edges.Add((a, b));
+            if (f.BtoA)
+                foreach (var a in f.PortANodes)
+                    foreach (var b in f.PortBNodes)
+                        if (a != b) edges.Add((b, a));
+            foreach (var (a, b) in edges)
+            {
+                if (!g.TryGetNodeIndex(a, out int na) || !g.TryGetNodeIndex(b, out int nb)) continue;
+                if (na == nb) continue;
+                g.AddDirected(na, nb, new RoutingEdge
+                {
+                    Kind = kind,
+                    SourceUid = 0,                     // ferry 无 item uid（connection 定义）——回溯按两端节点
+                    Length = f.DistanceKm * 1000,
+                    TransitTimeSeconds = f.TimeMinutes * 60,
+                    TransitPrice = f.Price,
                 });
             }
         }
