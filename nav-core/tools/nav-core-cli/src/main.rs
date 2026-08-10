@@ -275,6 +275,55 @@ fn route_verify(dataset_dir: &str) {
         }
     }
     println!("A*==Dijkstra 回归: {ok} 一致 / {fail} 不一致");
+    // —— RouteTracker 模拟：沿 Berlin 路线行驶，progress 单调 ——
+    let s1 = nav_router::snap::snap_nearest(&graph, &spatial, -58456.0, 32832.0, 300.0).unwrap();
+    let s2 = nav_router::snap::snap_nearest(&graph, &spatial, -58456.0, 35000.0, 300.0).unwrap();
+    let req = nav_router::search::RouteRequest::new(
+        &graph,
+        nav_router::snap::VirtualEndpoint::start(&s1, true),
+        nav_router::snap::VirtualEndpoint::goal(&s2),
+        nav_router::cost::RouteProfile::Fastest,
+    );
+    if let Some(route) = router.astar(&req) {
+        let mut tracker = nav_router::tracker::RouteTracker::new(&graph, route.clone(), 4);
+        // 沿每条边的几何点逐步推进
+        let mut last_p = -1.0;
+        let mut mono = true;
+        for (i, &eid) in route.edges.iter().enumerate() {
+            let e = &graph.edges[eid as usize];
+            let pts = graph.edge_geometry(e);
+            for (k, (x, _, z)) in pts.iter().enumerate() {
+                // 用几何点位置反查 matcher 无必要——直接按边序/弧长推进
+                let off = nav_graph::project_point(pts, *x, *z).1;
+                let _ = off;
+                let seg_len = nav_graph::polyline_length(&pts[..=k.min(pts.len() - 1)]);
+                let u = tracker.update(&graph, eid, seg_len);
+                if u.distance_travelled < last_p - 1e-6 {
+                    mono = false;
+                }
+                last_p = u.distance_travelled;
+            }
+            if i % 10 == 0 {
+                let u = tracker.update(&graph, eid, 0.0);
+                println!(
+                    "  tracker@{i}: matched={} travelled={:.0}m remaining={:.0}m progress={:.2}",
+                    u.matched,
+                    u.distance_travelled,
+                    u.remaining_distance,
+                    tracker.progress()
+                );
+            }
+        }
+        let final_p = tracker.progress();
+        println!(
+            "tracker 模拟：{} 边走完，progress={:.3} 单调={}，总长 {:.0}m",
+            route.edges.len(),
+            final_p,
+            mono,
+            route.distance_m
+        );
+        assert!(final_p > 0.9, "走完路线后 progress 应接近 1: {final_p}");
+    }
 }
 
 /// route：A* 路线规划（§124：distance/ETA/signals/edges/maneuvers；三 profile 对比）。
