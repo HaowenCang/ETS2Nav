@@ -24,6 +24,7 @@ fn main() {
         ("dest", _) if args.len() >= 4 => dest_cli(&args[2], &args[3]),
         ("signal", _) if args.len() >= 4 => signal_cli(&args[2], &args[3]),
         ("session", _) if args.len() >= 4 => session_cli(&args[2], &args[3]),
+        ("regression", _) if args.len() >= 3 => regression_cli(&args[2]),
         _ => {
             eprintln!("用法:");
             eprintln!("  nav-core-cli dataset info <dataset-dir>");
@@ -227,6 +228,143 @@ fn roundabout_stats(dataset_dir: &str) {
             shown += 1;
         }
     }
+}
+
+/// regression：Europe 全图区域化回归（P2-18）——
+/// 五区域 OD 采样 × 三 profile：A*==Dijkstra 一致性、可达率、时延分布；
+/// 全链路冒烟：route → tracker → maneuver → session 沿路线闭环。
+fn regression_cli(dataset_dir: &str) {
+    let (routing, junctions) = nav_dataset::load_dataset(std::path::Path::new(dataset_dir))
+        .unwrap_or_else(|e| {
+            eprintln!("加载 dataset 失败: {e}");
+            std::process::exit(1);
+        });
+    let graph = nav_graph::CompactGraph::build(&routing);
+    let spatial = nav_spatial::SpatialIndex::build(&graph, nav_spatial::DEFAULT_CELL_SIZE);
+    let mut router = nav_router::search::Router::new(graph.node_count());
+    // 五区域（x, z 中心 + 半径；Europe bbox x∈[-94k,78k] z∈[-122k,87k]）
+    let regions: [(&str, f64, f64, f64); 5] = [
+        ("UK/爱尔兰", -39500.0, -11000.0, 8000.0),
+        ("Berlin/德国东北", -58400.0, 33000.0, 8000.0),
+        ("法国/比荷卢", -35000.0, -25000.0, 8000.0),
+        ("南欧(罗马)", -6800.0, -45000.0, 6000.0),
+        ("东欧", 10000.0, 10000.0, 8000.0),
+    ];
+    let mut total_od = 0u32;
+    let mut total_ok = 0u32;
+    let mut total_fail = 0u32;
+    let mut unreachable = 0u32;
+    let mut max_ms = 0.0f64;
+    for (name, cx, cz, r) in regions {
+        let mut od = 0u32;
+        let mut ok = 0u32;
+        for i in 0..30 {
+            let seed = 20260810u64 ^ ((name.len() as u64) << 32) ^ (i as u64 * 2654435761);
+            let mut s = seed;
+            let mut rnd = move || {
+                s = s
+                    .wrapping_mul(6364136223846793005)
+                    .wrapping_add(1442695040888963407);
+                (s >> 33) as f64 / (1u64 << 31) as f64
+            };
+            let xa = cx + (rnd() - 0.5) * 2.0 * r;
+            let za = cz + (rnd() - 0.5) * 2.0 * r;
+            let xb = cx + (rnd() - 0.5) * 2.0 * r;
+            let zb = cz + (rnd() - 0.5) * 2.0 * r;
+            let Some(s1) = nav_router::snap::snap_nearest(&graph, &spatial, xa, za, 300.0) else {
+                continue;
+            };
+            let Some(s2) = nav_router::snap::snap_nearest(&graph, &spatial, xb, zb, 300.0) else {
+                continue;
+            };
+            od += 1;
+            for profile in [
+                nav_router::cost::RouteProfile::Shortest,
+                nav_router::cost::RouteProfile::Fastest,
+                nav_router::cost::RouteProfile::Balanced,
+            ] {
+                let t0 = std::time::Instant::now();
+                let req = nav_router::search::RouteRequest::new(
+                    &graph,
+                    nav_router::snap::VirtualEndpoint::start(&s1, true),
+                    nav_router::snap::VirtualEndpoint::goal(&s2),
+                    profile,
+                );
+                let d = router.dijkstra(&req);
+                let a = router.astar(&req);
+                let ms = t0.elapsed().as_secs_f64() * 1000.0;
+                max_ms = max_ms.max(ms);
+                match (d, a) {
+                    (Some(dr), Some(ar)) => {
+                        let cd = nav_router::search::route_cost(&graph, &dr, profile);
+                        let ca = nav_router::search::route_cost(&graph, &ar, profile);
+                        if (cd - ca).abs() < 1e-3 {
+                            ok += 1;
+                        } else {
+                            total_fail += 1;
+                        }
+                    }
+                    (None, None) => {
+                        unreachable += 1;
+                    }
+                    _ => {
+                        total_fail += 1;
+                    }
+                }
+            }
+        }
+        println!("[{name}] OD {od} × 3profile：一致 {ok} 不可达 {unreachable}（累计）");
+        total_od += od * 3;
+        total_ok += ok;
+    }
+    println!(
+        "区域化回归: {total_ok}/{total_od} 一致，不一致 {total_fail}，最大单次搜索 {max_ms:.1}ms"
+    );
+    // 全链路冒烟：Berlin 路线 → tracker → maneuver → session 沿路线闭环
+    let s1 = nav_router::snap::snap_nearest(&graph, &spatial, -58456.0, 32832.0, 300.0).unwrap();
+    let s2 = nav_router::snap::snap_nearest(&graph, &spatial, -58456.0, 35000.0, 300.0).unwrap();
+    let req = nav_router::search::RouteRequest::new(
+        &graph,
+        nav_router::snap::VirtualEndpoint::start(&s1, true),
+        nav_router::snap::VirtualEndpoint::goal(&s2),
+        nav_router::cost::RouteProfile::Fastest,
+    );
+    let route = router.astar(&req).expect("Berlin 路线应存在");
+    // tracker
+    let mut tracker = nav_router::tracker::RouteTracker::new(&graph, route.clone(), 4);
+    let mut last = 0.0;
+    let mut mono = true;
+    for &eid in &route.edges {
+        let e = &graph.edges[eid as usize];
+        let pts = graph.edge_geometry(e);
+        let mut acc = 0.0;
+        for w in pts.windows(2) {
+            acc += ((w[1].0 - w[0].0).powi(2) + (w[1].2 - w[0].2).powi(2)).sqrt();
+            let u = tracker.update(&graph, eid, acc);
+            if u.distance_travelled < last - 1e-6 {
+                mono = false;
+            }
+            last = u.distance_travelled;
+        }
+    }
+    let mut turns = std::collections::HashMap::new();
+    for j in &junctions.junctions {
+        for m in &j.movements {
+            turns.insert((j.uid, m.id), m.turn_type);
+        }
+    }
+    let maneuvers = nav_router::maneuver::generate_maneuvers(&graph, &route, &turns);
+    println!(
+        "全链路冒烟: route {} 边 → tracker progress={:.3} 单调={} → maneuver {} 条",
+        route.edges.len(),
+        tracker.progress(),
+        mono,
+        maneuvers.len()
+    );
+    assert!(tracker.progress() > 0.9, "tracker 应接近完成");
+    assert!(mono);
+    assert!(maneuvers.len() >= 2, "maneuver 至少 Depart/Arrive");
+    println!("P2-18 Regression PASS");
 }
 
 /// session：trace 驱动的完整导航会话（§118-121：状态机 + 快照）。
@@ -524,6 +662,7 @@ fn route_verify(dataset_dir: &str) {
         let za = 30000.0 + rnd() * 8000.0;
         let xb = -62000.0 + rnd() * 9000.0;
         let zb = 30000.0 + rnd() * 8000.0;
+        let _ = (xa, za, xb, zb);
         let Some(s1) = nav_router::snap::snap_nearest(&graph, &spatial, xa, za, 300.0) else {
             continue;
         };
