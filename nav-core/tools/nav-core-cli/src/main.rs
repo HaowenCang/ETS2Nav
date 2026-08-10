@@ -23,6 +23,7 @@ fn main() {
         ("roundabout-stats", _) if args.len() >= 3 => roundabout_stats(&args[2]),
         ("dest", _) if args.len() >= 4 => dest_cli(&args[2], &args[3]),
         ("signal", _) if args.len() >= 4 => signal_cli(&args[2], &args[3]),
+        ("session", _) if args.len() >= 4 => session_cli(&args[2], &args[3]),
         _ => {
             eprintln!("用法:");
             eprintln!("  nav-core-cli dataset info <dataset-dir>");
@@ -226,6 +227,126 @@ fn roundabout_stats(dataset_dir: &str) {
             shown += 1;
         }
     }
+}
+
+/// session：trace 驱动的完整导航会话（§118-121：状态机 + 快照）。
+fn session_cli(trace_path: &str, dataset_dir: &str) {
+    let (routing, junctions) = nav_dataset::load_dataset(std::path::Path::new(dataset_dir))
+        .unwrap_or_else(|e| {
+            eprintln!("加载 dataset 失败: {e}");
+            std::process::exit(1);
+        });
+    let graph = std::rc::Rc::new(nav_graph::CompactGraph::build(&routing));
+    let spatial = std::rc::Rc::new(nav_spatial::SpatialIndex::build(
+        &graph,
+        nav_spatial::DEFAULT_CELL_SIZE,
+    ));
+    let mut turns: std::collections::HashMap<(u64, u32), i8> = std::collections::HashMap::new();
+    for j in &junctions.junctions {
+        for m in &j.movements {
+            turns.insert((j.uid, m.id), m.turn_type);
+        }
+    }
+    let frames: Vec<nav_telemetry::TraceFrame> =
+        nav_telemetry::replay(std::path::Path::new(trace_path))
+            .unwrap_or_else(|e| {
+                eprintln!("打开 trace 失败: {e}");
+                std::process::exit(1);
+            })
+            .collect();
+    let mut session = nav_router::session::NavigationSession::new(
+        graph,
+        spatial,
+        turns,
+        nav_router::session::SessionConfig::default(),
+    );
+    // 起点帧确定位置
+    session.on_frame(&frames[0].snap);
+    // 目的地：trace 终点（坐标）
+    let last = frames.last().unwrap().snap.position;
+    let (routing2, _j2) = nav_dataset::load_dataset(std::path::Path::new(dataset_dir)).unwrap();
+    let graph2 = nav_graph::CompactGraph::build(&routing2);
+    let spatial2 = nav_spatial::SpatialIndex::build(&graph2, nav_spatial::DEFAULT_CELL_SIZE);
+    let dest = nav_router::destination::DestinationResolver::new(Vec::new(), &routing2.nodes)
+        .resolve_coordinate(
+            &graph2,
+            &spatial2,
+            last[0],
+            last[2],
+            nav_router::destination::DestKind::Coordinate,
+        )
+        .unwrap();
+    match session.set_destination(dest) {
+        Ok(()) => println!("目的地已设置（trace 终点）→ {}", session.state().name()),
+        Err(e) => {
+            println!("设置目的地失败: {e}");
+            return;
+        }
+    }
+    // 逐帧驱动：沿规划路线的几何点生成帧（验证状态机闭环——避免 trace 自由驾驶偏航干扰）
+    let mut last_state = nav_router::session::SessionState::Idle;
+    let mut route_pts: Vec<(f64, f64, f64, f64)> = Vec::new(); // (x, y, z, yaw)
+    if let Some(route) = session.route().cloned() {
+        let g = session.graph();
+        let mut raw: Vec<(f64, f64, f64, f64)> = Vec::new();
+        for eid in &route.edges {
+            let e = &g.edges[*eid as usize];
+            let pts = g.edge_geometry(e);
+            for w in pts.windows(2) {
+                let yaw = (w[1].2 - w[0].2).atan2(w[1].0 - w[0].0);
+                raw.push((w[0].0, w[0].1, w[0].2, yaw));
+            }
+        }
+        if let Some((pe, _, _)) = route.end_virtual {
+            let e = &g.edges[pe as usize];
+            let pts = g.edge_geometry(e);
+            if let Some((x, y, z)) = pts.last() {
+                let (lx, _, lz) = pts[pts.len() - 2];
+                let yaw = (z - lz).atan2(x - lx);
+                raw.push((*x, *y, *z, yaw));
+            }
+        }
+        // 5m 插值（几何点间距大——matcher 需要平滑帧）
+        for w in raw.windows(2) {
+            let (ax, ay, az, ayaw) = w[0];
+            let (bx, by, bz, _) = w[1];
+            let dx = bx - ax;
+            let dz = bz - az;
+            let seg = (dx * dx + dz * dz).sqrt();
+            let steps = (seg / 5.0).ceil().max(1.0) as u32;
+            for k in 0..steps {
+                let t = k as f64 / steps as f64;
+                route_pts.push((ax + dx * t, ay + (by - ay) * t, az + dz * t, ayaw));
+            }
+        }
+        if let Some(&last) = raw.last() {
+            route_pts.push(last);
+        }
+        println!("沿路线插值生成 {} 个帧点", route_pts.len());
+    }
+    for (i, (x, y, z, yaw)) in route_pts.iter().enumerate() {
+        let mut snap = frames[0].snap.clone();
+        snap.position = [*x, *y, *z];
+        snap.heading = [0.0, (yaw / 2.0).sin() as f32, 0.0, (yaw / 2.0).cos() as f32];
+        snap.speed = 14.0;
+        let snap = session.on_frame(&snap);
+        if snap.state != last_state {
+            println!(
+                "帧 {i}: → {}（matched={:?} 剩余={:.0}m progress={:.2} diag={}）",
+                snap.state.name(),
+                snap.match_confidence,
+                snap.remaining_m.unwrap_or(-1.0),
+                snap.progress.unwrap_or(0.0),
+                snap.diagnostics
+            );
+            last_state = snap.state;
+        }
+        if snap.state == nav_router::session::SessionState::Arrived {
+            println!("到达（帧 {i}）——状态机闭环验证 PASS");
+            break;
+        }
+    }
+    println!("最终状态: {}", session.state().name());
 }
 
 /// signal：路线受控 movement 静态绑定 + runtime 关联（§111-117）。

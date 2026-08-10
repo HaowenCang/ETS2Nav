@@ -9,3 +9,4 @@ nav-dataset = { path = "../nav-dataset" }
 nav-graph = { path = "../nav-graph" }
 nav-spatial = { path = "../nav-spatial" }
 nav-matcher = { path = "../nav-matcher" }
+nav-telemetry = { path = "../nav-telemetry" }
