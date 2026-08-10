@@ -5,4 +5,5 @@
 //   search —— Dijkstra Oracle + A*（P2-09 §70-78）
 //   alternatives —— 多策略路线（P2-10 §79-82）
 pub mod cost;
+pub mod search;
 pub mod snap;
