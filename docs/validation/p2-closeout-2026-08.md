@@ -37,6 +37,7 @@
 ## 四、已知限制与遗留（P3 输入）
 
 1. **G15 Full Session（§178）**：完整游戏会话端到端验证——需游戏会话（最大遗留）
+   （**配套清单：docs/validation/p2-gameplay-test-checklist-2026-08.md**——T1~T6 六项游戏内实测项的操作/验收/产出定义）
 2. **游戏内实测类**：UK 环岛方向（§103）、Speed Gate 限速采集（§40-41）、信号 runtime VERIFIED（§115）、驾驶 corpus（§104）、Runtime CPU（§144）/Game FPS（§146）
 3. **环岛几何识别**：SCS 环岛放射直通结构实证；`r_1w_*` token 系列待验证；出口引导 maneuver 集成待几何识别
 4. **matcher route bias（§50）/权重冻结**：trace calibration 后（游戏会话）
