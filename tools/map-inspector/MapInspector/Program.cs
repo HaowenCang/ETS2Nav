@@ -485,6 +485,107 @@ if (cmdArgs.Contains("--searchdb"))
     Console.WriteLine($"search.db 写入 {pois.Count} 条 → {Path.GetFullPath(outPath)}");
 }
 
+if (cmdArgs.Contains("--dataset"))
+{
+    // P1-11 Dataset Writer：manifest/map.db/routing.graph/junction.graph/search.db/diagnostics.json
+    var defs = new ScsDefinitions.DefinitionResolver(overlay);
+    var prefabs = new ScsPrefab.PrefabResolver(overlay);
+    var builder = new ScsMapModel.SemanticMapBuilder(defs, prefabs, overlay);
+    var map = builder.Build(sectors);
+    var rgraph = ScsMapModel.RoutingGraphBuilder.Build(map, sectors);
+    var outDir = Arg(args, "--dataset") ?? "dataset";
+    Directory.CreateDirectory(outDir);
+    foreach (var f in new[] { "routing.graph", "junction.graph", "map.db", "search.db", "manifest.json", "diagnostics.json" })
+    {
+        var p = Path.Combine(outDir, f);
+        if (File.Exists(p)) File.Delete(p);
+    }
+    // routing.graph / junction.graph
+    ScsMapModel.DatasetWriter.WriteRoutingGraph(rgraph, Path.Combine(outDir, "routing.graph"));
+    ScsMapModel.DatasetWriter.WriteJunctionGraph(map, Path.Combine(outDir, "junction.graph"));
+    // manifest / diagnostics
+    ScsMapModel.DatasetWriter.WriteManifest(outDir, rgraph, map, secNames, DateTime.UtcNow);
+    ScsMapModel.DatasetWriter.WriteDiagnostics(outDir, map, rgraph, prefabs.FailedPpds, new[] { "P1-11 dataset build" });
+    // map.db（SQLite：roads/junctions 表）
+    using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={Path.Combine(outDir, "map.db")}"))
+    {
+        conn.Open();
+        using var cmd = conn.CreateCommand();
+        cmd.CommandText = "CREATE TABLE roads (uid TEXT PRIMARY KEY, node0 TEXT, node1 TEXT, look TEXT, speed_class TEXT, speed_limit INTEGER, direction TEXT, length REAL);"
+            + "CREATE TABLE junctions (uid TEXT PRIMARY KEY, prefab TEXT, node_count INTEGER, movement_count INTEGER);"
+            + "CREATE TABLE movements (junction_uid TEXT, entry TEXT, exit TEXT, length REAL, turn INTEGER, semaphore_id INTEGER, signal_group_type TEXT);";
+        cmd.ExecuteNonQuery();
+        using var tx = conn.BeginTransaction();
+        cmd.Transaction = tx;
+        foreach (var r in map.Roads)
+        {
+            cmd.CommandText = "INSERT INTO roads VALUES ($u,$a,$b,$l,$s,$sl,$d,$len);";
+            cmd.Parameters.Clear();
+            cmd.Parameters.AddWithValue("$u", r.Uid.ToString("x16"));
+            cmd.Parameters.AddWithValue("$a", r.Node0.ToString("x16"));
+            cmd.Parameters.AddWithValue("$b", r.Node1.ToString("x16"));
+            cmd.Parameters.AddWithValue("$l", r.RoadLook);
+            cmd.Parameters.AddWithValue("$s", r.SpeedClass);
+            cmd.Parameters.AddWithValue("$sl", r.SpeedLimit);
+            cmd.Parameters.AddWithValue("$d", r.Direction.ToString());
+            cmd.Parameters.AddWithValue("$len", r.Length);
+            cmd.ExecuteNonQuery();
+        }
+        foreach (var j in map.Junctions)
+        {
+            cmd.CommandText = "INSERT INTO junctions VALUES ($u,$p,$n,$m);";
+            cmd.Parameters.Clear();
+            cmd.Parameters.AddWithValue("$u", j.Uid.ToString("x16"));
+            cmd.Parameters.AddWithValue("$p", j.PrefabToken);
+            cmd.Parameters.AddWithValue("$n", j.NodeUids.Length);
+            cmd.Parameters.AddWithValue("$m", j.Movements.Count);
+            cmd.ExecuteNonQuery();
+            foreach (var m in j.Movements)
+            {
+                cmd.CommandText = "INSERT INTO movements VALUES ($u,$e,$x,$l,$t,$s,$g);";
+                cmd.Parameters.Clear();
+                cmd.Parameters.AddWithValue("$u", j.Uid.ToString("x16"));
+                cmd.Parameters.AddWithValue("$e", m.EntryNodeUid.ToString("x16"));
+                cmd.Parameters.AddWithValue("$x", m.ExitNodeUid.ToString("x16"));
+                cmd.Parameters.AddWithValue("$l", m.Length);
+                cmd.Parameters.AddWithValue("$t", m.TurnType);
+                cmd.Parameters.AddWithValue("$s", m.SemaphoreId);
+                cmd.Parameters.AddWithValue("$g", (object?)m.SignalGroupType ?? DBNull.Value);
+                cmd.ExecuteNonQuery();
+            }
+        }
+        tx.Commit();
+    }
+    // search.db（复用 P1-08 生成器逻辑）
+    var pois = ScsMapModel.PoiExtractor.Extract(sectors, map, prefabs);
+    using (var conn2 = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={Path.Combine(outDir, "search.db")}"))
+    {
+        conn2.Open();
+        using var cmd = conn2.CreateCommand();
+        cmd.CommandText = "CREATE TABLE poi (id INTEGER PRIMARY KEY, type TEXT, name TEXT, x REAL, z REAL, access_node TEXT, meta TEXT);"
+            + "CREATE VIRTUAL TABLE poi_fts USING fts5(name, type, content='poi', content_rowid='id');"
+            + "CREATE TRIGGER poi_ai AFTER INSERT ON poi BEGIN INSERT INTO poi_fts(rowid, name, type) VALUES (new.id, new.name, new.type); END;";
+        cmd.ExecuteNonQuery();
+        using var tx = conn2.BeginTransaction();
+        cmd.Transaction = tx;
+        cmd.CommandText = "INSERT INTO poi (type, name, x, z, access_node, meta) VALUES ($t,$n,$x,$z,$a,$m);";
+        foreach (var p in pois)
+        {
+            cmd.Parameters.Clear();
+            cmd.Parameters.AddWithValue("$t", p.Type.ToString());
+            cmd.Parameters.AddWithValue("$n", p.Name);
+            cmd.Parameters.AddWithValue("$x", p.X);
+            cmd.Parameters.AddWithValue("$z", p.Z);
+            cmd.Parameters.AddWithValue("$a", p.AccessNodeUid?.ToString("x16") ?? (object)DBNull.Value);
+            cmd.Parameters.AddWithValue("$m", (object?)p.Meta ?? DBNull.Value);
+            cmd.ExecuteNonQuery();
+        }
+        tx.Commit();
+    }
+    Console.WriteLine($"Dataset 写入 {outDir}/：routing.graph {new FileInfo(Path.Combine(outDir, "routing.graph")).Length} B，junction.graph {new FileInfo(Path.Combine(outDir, "junction.graph")).Length} B，map.db {new FileInfo(Path.Combine(outDir, "map.db")).Length} B，search.db {new FileInfo(Path.Combine(outDir, "search.db")).Length} B");
+    Console.WriteLine($"  manifest.json + diagnostics.json 已写；POI {pois.Count}");
+}
+
 static bool BfsReachable(ScsGraph.RoutingGraph g, int from, int to)
 {
     if (from == to) return true;
