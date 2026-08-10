@@ -4,4 +4,5 @@
 //   cost —— EdgeCostProvider / Fastest / Shortest / Balanced（P2-08 §58-69）
 //   search —— Dijkstra Oracle + A*（P2-09 §70-78）
 //   alternatives —— 多策略路线（P2-10 §79-82）
+pub mod cost;
 pub mod snap;
