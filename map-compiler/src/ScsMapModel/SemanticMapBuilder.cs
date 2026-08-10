@@ -22,24 +22,6 @@ public sealed class SemanticMapBuilder
         _provider = provider;
     }
 
-    /// <summary>加载 semaphore_profile 文档（signal group 类型绑定用）。</summary>
-    private ScsSii.SiiDocument? LoadSemaphoreProfiles()
-    {
-        if (_provider is null) return null;
-        try
-        {
-            var doc = new ScsSii.SiiDocument();
-            foreach (var f in _provider.Enumerate("/def/world")
-                .Where(p => p.Contains("semaphore_profile") && p.EndsWith(".sii")))
-            {
-                var d = ScsDefinitions.DefinitionLoader.Load(_provider, f);
-                doc.Units.AddRange(d.Units);
-            }
-            return doc;
-        }
-        catch { return null; }
-    }
-
     /// <summary>构建语义图。Prefab 加载失败/方向未解析均不阻断（降级 + 计数）。</summary>
     public SemanticMap Build(IEnumerable<SectorFile> sectors)
     {
@@ -68,6 +50,8 @@ public sealed class SemanticMapBuilder
                     if (laneToken != null)
                         speedClass = _defs.GetTrafficLane(laneToken)?.SpeedClass ?? "";
                 }
+                // 铁路/有轨电车不作为普通道路进入路由网络（P1 收官评审 M1：P2 不得规划穿越铁轨）
+                if (speedClass.StartsWith("rail", StringComparison.OrdinalIgnoreCase)) continue;
                 var mid = nodePos.TryGetValue(road.Node0, out var p0) ? p0 : (0, 0);
                 var sr = new SemanticRoad
                 {
@@ -93,9 +77,6 @@ public sealed class SemanticMapBuilder
         }
 
         // prefab → junction（movement 节点映射：(curveNode + Origin) % N → NodeUids）
-        var profileDocs = new Dictionary<string, ScsSii.Semaphore.SemaphoreProfile>();
-        var siiDoc = new ScsSii.SiiDocument();
-        var semProfiles = new Dictionary<string, ScsSii.Semaphore.SemaphoreProfile>();
         foreach (var sec in secList)
         {
             foreach (var pf in sec.Prefabs)

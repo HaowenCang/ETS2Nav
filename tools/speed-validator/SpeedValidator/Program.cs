@@ -59,8 +59,9 @@ if (!trackOnly)
             roadSegs.Add((a.X, a.Z, b.X, b.Z, limit));
         }
     }
-    xs = roadSegs.Select(s => s.X0).ToArray(); zs = roadSegs.Select(s => s.Z0).ToArray();
-    limits = roadSegs.Select(s => (double)s.Limit).ToArray();
+    xs = roadSegs.Select(s => s.X0).Concat(roadSegs.Select(s => s.X1)).ToArray();
+    zs = roadSegs.Select(s => s.Z0).Concat(roadSegs.Select(s => s.Z1)).ToArray();
+    limits = roadSegs.Select(s => (double)s.Limit).Concat(roadSegs.Select(s => (double)s.Limit)).ToArray();
     Console.WriteLine($"map 道路段 {roadSegs.Count}（含限速）");
 }
 

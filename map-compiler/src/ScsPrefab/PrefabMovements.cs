@@ -60,33 +60,35 @@ public static class PrefabMovements
             var visited = new bool[pd.NavNodes.Count];
             visited[start] = true;
             var path = new List<int>();
-            Dfs(pd, start, entryCtrl, path, visited, result, prefabToken, semaphoreByCurve, adj, physical);
+            Dfs(pd, start, entryCtrl, 0, path, visited, result, prefabToken, semaphoreByCurve, adj, physical);
         }
         return result;
     }
 
-    private static void Dfs(PrefabDescriptor pd, int node, int entryCtrl, List<int> path, bool[] visited,
+    private static void Dfs(PrefabDescriptor pd, int node, int entryCtrl, int hops, List<int> path, bool[] visited,
         List<PrefabMovement> result, string token, Dictionary<int, int> semaphores,
         List<List<(int Target, int[] Curves)>> adj, Dictionary<int, int> physical)
     {
         foreach (var (target, curveList) in adj[node])
         {
-            // 每连接取第一条曲线（车道合并；P1-06 细化多车道）
-            int curve = curveList[0];
             bool targetPhysical = physical.TryGetValue(target, out int exitCtrl);
             if (visited[target]) continue;
-            if (path.Count + 1 >= MaxDepth) continue;
+            // MaxDepth 按 NavNode 跳数限制（串联展开后曲线数随跳数增长——不能用曲线数）
+            if (hops + 1 >= MaxDepth) continue;
             visited[target] = true;
-            path.Add(curve);
+            // 串联展开：连接的全部曲线首尾相接（路径段序列）——全部追加进 path；
+            // 同 target 的多个连接（真正多车道）保留为独立 movement（每个连接一次遍历）
+            int addStart = path.Count;
+            path.AddRange(curveList);
             if (targetPhysical)
             {
                 var first = pd.NavCurves[path[0]];
-                var last = pd.NavCurves[curve];
+                var last = pd.NavCurves[path[^1]];
                 result.Add(new PrefabMovement
                 {
                     PrefabToken = token,
                     EntryCurve = path[0],
-                    ExitCurve = curve,
+                    ExitCurve = path[^1],
                     EntryNode = (byte)entryCtrl,
                     ExitNode = (byte)exitCtrl,
                     EntryLane = first.StartLane,
@@ -99,12 +101,12 @@ public static class PrefabMovements
                     TurnAngle = TurnAngleBetween(first, last),
                 });
                 // 到达 Physical 节点即停：换线属于另一 movement（避免多跳组合爆炸；SCS 语义）
-                path.RemoveAt(path.Count - 1);
+                path.RemoveRange(addStart, curveList.Length);
                 visited[target] = false;
                 continue;
             }
-            Dfs(pd, target, entryCtrl, path, visited, result, token, semaphores, adj, physical);
-            path.RemoveAt(path.Count - 1);
+            Dfs(pd, target, entryCtrl, hops + 1, path, visited, result, token, semaphores, adj, physical);
+            path.RemoveRange(addStart, curveList.Length);
             visited[target] = false;
         }
     }

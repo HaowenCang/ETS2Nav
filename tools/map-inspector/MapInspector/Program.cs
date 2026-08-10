@@ -14,10 +14,12 @@ using ScsValidation.Validators;
 
 var cmdArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
 var installDir = Arg(args, "--install");   // 游戏安装根目录（经 GameInstall+Overlay 直接读 .scs）
-string dir = Arg(args, "--dir") ?? @"E:\Projects\Pi\ETS2Nav\vendor\extracted\base_map\map\europe";
+string dir = Arg(args, "--dir") ?? @"E:\Projects\Pi\ETS2Nav\vendor\extracted";   // 含 base_map/ 与 def/ 的解包根
 
 // 资源层（P1-02）：所有 sector 读取经 IScsResourceProvider；上层不直接触碰文件系统
 // DirectoryProvider/OverlayProvider 均实现 IDisposable（P1-03 评审 m2：句柄所有权）
+// --install 模式经 Overlay 读 .scs 的 /map/europe；--dir 模式读解包根的 /base_map/map/europe
+string MapPrefix = installDir != null ? "/map/europe/" : "/base_map/map/europe/";
 using OverlayProvider overlay = installDir != null
     ? BuildInstallOverlay(installDir)
     : new OverlayProvider(new DirectoryProvider(dir));
@@ -27,12 +29,18 @@ var secNames = (Arg(args, "--sectors") ?? "")
 if (cmdArgs.Contains("--all-sectors") || cmdArgs.Contains("--region"))
 {
     var region = Arg(args, "--region") ?? "europe";
-    secNames = overlay.Enumerate("/map/europe")
+    secNames = overlay.Enumerate(installDir != null ? "/map/europe" : "/base_map/map/europe")
         .Where(p => p.EndsWith(".base") && p.Contains("/sec+"))
         .Select(p => Path.GetFileNameWithoutExtension(p))
         .Where(n => RegionMatches(n, region))
         .OrderBy(n => n)
         .ToArray();
+    // --region 未知区域：明确报错而非静默空集（P1 收官评审 B2）
+    if (secNames.Length == 0)
+    {
+        Console.Error.WriteLine($"ERROR: 区域 '{Arg(args, "--region") ?? ""}' 无匹配 sector（支持 germany/europe）");
+        Environment.Exit(2);
+    }
 }
 else if (secNames.Length == 0)
 {
@@ -44,13 +52,18 @@ foreach (var name in secNames)
 {
     foreach (var ext in new[] { ".base", ".aux" })
     {
-        var vp = $"/map/europe/{name}{ext}";
+        var vp = $"{MapPrefix}{name}{ext}";
         if (!overlay.Exists(vp)) continue;
         using var s = overlay.Open(vp);
         sectors.Add(SectorFile.Read(s, name));   // SectorName 不带扩展名（P1-03 评审 m3）
     }
 }
 Console.WriteLine($"已加载 {sectors.Count} 个 sector（{sectors.Sum(s => s.Items.Count)} items / {sectors.Sum(s => s.Nodes.Count)} nodes）");
+if (sectors.Count == 0)
+{
+    Console.Error.WriteLine("ERROR: 0 个 sector 被加载——检查 --install/--dir/--sectors/--region 参数");
+    Environment.Exit(2);
+}
 var graph = RoadGraph.Build(sectors);
 
 // --install 模式：GameInstall.Detect + BuildOverlay（含 DLC 地图过滤）；返回 OverlayProvider（IDisposable）
@@ -151,6 +164,7 @@ if (cmdArgs.Contains("--gate"))
     }
     bool pass = issues.Count == 0 && oneWayDeadEnd == 0 && ok >= od * 0.9;
     Console.WriteLine(pass ? "GATE 初步通过（OD≥90% + 0 fatal + 0 死端）" : "GATE 未通过——见上");
+    Environment.Exit(pass ? 0 : 1);   // 退出码传播（P1 收官评审 B1：回归套件依赖）
 }
 
 if (cmdArgs.Contains("--semantic"))

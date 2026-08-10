@@ -36,7 +36,7 @@ if exist %DET1% rmdir /s /q %DET1%
 if exist %DET2% rmdir /s /q %DET2%
 call tools\map-inspector\MapInspector\bin\Debug\net9.0\map-inspector.exe --install "%ETS2_INSTALL%" --sectors sec+0002-0002,sec+0002-0003 --dataset %DET1%
 call tools\map-inspector\MapInspector\bin\Debug\net9.0\map-inspector.exe --install "%ETS2_INSTALL%" --sectors sec+0002-0002,sec+0002-0003 --dataset %DET2%
-python -c "import hashlib,sys; h=lambda p: hashlib.sha256(open(p,'rb').read()).hexdigest(); a=h(r'%DET1%\routing.graph'); b=h(r'%DET2%\routing.graph'); print('  routing.graph hash:', a[:16]); sys.exit(0 if a==b else 1)"
+python -c "import hashlib,sys; files=['routing.graph','junction.graph','map.db','search.db']; h=lambda p: hashlib.sha256(open(p,'rb').read()).hexdigest(); a=[h(r'%DET1%\\'+f) for f in files]; b=[h(r'%DET2%\\'+f) for f in files]; print('  routing:', a[0][:16], 'junction:', a[1][:16]); sys.exit(0 if a==b else 1)"
 if errorlevel 1 (echo   FAIL determinism & set FAIL=1) else (echo   PASS)
 
 echo.
@@ -46,8 +46,10 @@ if errorlevel 1 (echo   FAIL dataset-reader & set FAIL=1) else (echo   PASS)
 
 echo.
 echo [6/6] Europe scale (failed_prefabs must be 0)
-call tools\map-inspector\MapInspector\bin\Debug\net9.0\map-inspector.exe --install "%ETS2_INSTALL%" --all-sectors --dataset %TEMP%\p1-europe >nul 2>&1
-python -c "import json,sys; d=json.load(open(r'%TEMP%\p1-europe\diagnostics.json',encoding='utf-8')); n=len(d['failed_prefabs']); print('  failed_prefabs:', n); sys.exit(1 if n else 0)"
+if exist %TEMP%\p1-europe rmdir /s /q %TEMP%\p1-europe
+call tools\map-inspector\MapInspector\bin\Debug\net9.0\map-inspector.exe --install "%ETS2_INSTALL%" --all-sectors --dataset %TEMP%\p1-europe
+if errorlevel 1 (echo   FAIL europe-scale (build) & set FAIL=1)
+python -c "import json,sys; d=json.load(open(r'%TEMP%\\p1-europe\\diagnostics.json',encoding='utf-8')); n=len(d['failed_prefabs']); print('  failed_prefabs:', n); sys.exit(1 if n else 0)"
 if errorlevel 1 (echo   FAIL europe-scale & set FAIL=1) else (echo   PASS)
 
 echo.

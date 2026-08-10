@@ -10,7 +10,9 @@ namespace ScsMapModel;
 /// </summary>
 public sealed class SpeedModel
 {
-    private readonly List<(double X, double Z, string Country, double Radius)> _cityCountries = new();
+    // 城市 country 区域（CityItem 的 Width/Height 为城市矩形范围——判定用 bbox 而非半径圆，
+    // 避免跨边境误判（P1 收官评审 M3：柏林东北角 6.3% road 曾被 szczecin 半径误判为 poland））
+    private readonly List<(double X, double Z, double HalfW, double HalfH, string Country)> _cityCountries = new();
     private readonly string _defaultCountry;
     private readonly DefinitionResolver _defs;
 
@@ -27,20 +29,21 @@ public sealed class SpeedModel
                 // 城市 country：city token → defs.Cities（key 可能带 city. 前缀）
                 var city = defs.GetCity(c.City);
                 var country = city?.Country ?? _defaultCountry;
-                _cityCountries.Add((n.X, n.Z, country, Math.Max(c.Width, c.Height) * 2 + 5000));
+                _cityCountries.Add((n.X, n.Z, Math.Max(c.Width / 2, 800), Math.Max(c.Height / 2, 800), country));
             }
         }
     }
 
-    /// <summary>road 所在国家（最近城市判定；无城市回退默认）。</summary>
+    /// <summary>road 所在国家（城市 bbox 判定；无城市回退默认）。</summary>
     public string CountryAt(double x, double z)
     {
         string best = _defaultCountry;
         double bestDist = double.MaxValue;
-        foreach (var (cx, cz, country, radius) in _cityCountries)
+        foreach (var (cx, cz, hw, hh, country) in _cityCountries)
         {
-            double d = Math.Sqrt((x - cx) * (x - cx) + (z - cz) * (z - cz));
-            if (d < bestDist && d <= radius) { bestDist = d; best = country; }
+            if (Math.Abs(x - cx) > hw || Math.Abs(z - cz) > hh) continue;   // bbox 外
+            double d = Math.Abs(x - cx) + Math.Abs(z - cz);                  // L1 距离（bbox 内排序）
+            if (d < bestDist) { bestDist = d; best = country; }
         }
         return best;
     }
@@ -58,9 +61,9 @@ public sealed class SpeedModel
     public int GetSpeedLimit(string country, string speedClass, bool isCity, string vehicleClass = "truck")
     {
         var cd = _defs.GetCountry(country);
-        if (cd is null) return 0;
-        if (!cd.SpeedLimits.TryGetValue(vehicleClass, out var byLane)) return 0;
-        if (!byLane.TryGetValue(speedClass, out var lim)) return 0;
-        return isCity ? lim.UrbanLimit : lim.Limit;
+        if (cd is null) return -1;                                   // 未知国家（无限速表）
+        if (!cd.SpeedLimits.TryGetValue(vehicleClass, out var byLane)) return -1;
+        if (!byLane.TryGetValue(speedClass, out var lim)) return -1;  // 未知 speed_class
+        return isCity ? lim.UrbanLimit : lim.Limit;                  // 0 = 无限速（autobahn 等）
     }
 }
