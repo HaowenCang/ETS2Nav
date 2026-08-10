@@ -11,13 +11,13 @@
 
 - [x] **P0 阶段**（✅ 门评审通过 2026-08-10，tag v0.1.0-p0；A6/A8 工具并入 P1-01）
 - [x] **P1 Map Compiler**（✅ 关门 2026-08-10，tag v0.2.0-p1；15 工作包 P1-00~P1-14 完成 + 4 子代理收官评审修复 + Regression Suite ALL PASS；执行基线 = P1-map-compiler-plan.md）
-- [ ] P2 Navigation Core（⏳ 未开始——计划草稿已撤，待批准后重启）
+- [ ] P2 Navigation Core（🔄 进行中 2026-08-10：执行基线 = P2-navigation-core-plan.md；19 工作包 P2-00~P2-19；Rust 实现）
 - [ ] P3 Driving Assistant
 - [ ] P4 正式 UI
 - [ ] P5 全欧洲测试
 - [ ] P6 性能优化与发布
 
-**当前状态**：**P1 关门（tag v0.2.0-p1，2026-08-10）**——15 工作包全部完成 + 4 子代理收官评审修复 + Regression Suite ALL PASS（真实退出码判定）。P1-09 完成条件裁剪：telemetry 实测延后 P2（工具就绪）。**下一步：P2 未开始**（文档一致性全面审查进行中；P2 计划草稿已撤，待用户批准后重启规划）。**P0-D 验收通过**（avg -1.3% / 1%low +0.7%）；**P0-B 数据源重大定案**：ETS2LA 插件共存激活信号灯数组（隔离测试定案：仅 ets2la_plugin.dll 单文件激活，无主程序依赖，方案 C：先共存推进后评估逆向）。
+**当前状态**：**P1 关门（tag v0.2.0-p1，2026-08-10）**——15 工作包全部完成 + 4 子代理收官评审修复 + Regression Suite ALL PASS（真实退出码判定）。P1-09 完成条件裁剪：telemetry 实测延后 P2（工具就绪）。**下一步：P2 执行中**（P2-00 Dataset Consumer Audit 启动；执行基线 P2-navigation-core-plan.md）。**P0-D 验收通过**（avg -1.3% / 1%low +0.7%）；**P0-B 数据源重大定案**：ETS2LA 插件共存激活信号灯数组（隔离测试定案：仅 ets2la_plugin.dll 单文件激活，无主程序依赖，方案 C：先共存推进后评估逆向）。
 
 **已建立**：执行计划（本文件）、本地 git 仓库、.gitignore、GitHub 仓库（HaowenCang/ETS2Nav private）。
 
