@@ -3,5 +3,6 @@ resolver = "2"
 members = [
     "crates/nav-dataset",
     "crates/nav-graph",
+    "crates/nav-telemetry",
     "tools/nav-core-cli",
 ]
