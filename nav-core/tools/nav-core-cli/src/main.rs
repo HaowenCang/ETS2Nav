@@ -951,6 +951,7 @@ fn speed_cli(xz: &str, dataset_dir: &str, horizon: Option<&String>) {
                 horizon_m,
                 breaks.len()
             );
+            println!("breaks={} (machine-readable)", breaks.len());
             let mut prev = -1.0f32;
             for (i, b) in breaks.iter().enumerate() {
                 let d = b.offset_m - prev;

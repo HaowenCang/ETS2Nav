@@ -142,6 +142,7 @@ foreach (var name in secNames)
     }
 }
 Console.WriteLine($"sign 实例总数: {signTotal}；命中: {camSigns.Count} 种 token");
+Console.WriteLine($"VERDICT={(camSigns.Count == 0 && camModelTokens.Count == 0 && camTokens.Count == 0 ? "NO-GO" : "REVIEW")} (machine-readable)");
 foreach (var (k, v) in camSigns.OrderByDescending(x => x.Value).Take(20))
     Console.WriteLine($"  {k}: {v} 实例");
 if (camSigns.Count == 0) Console.WriteLine("  （无命中——sign 模型名不含 speed_camera）");
