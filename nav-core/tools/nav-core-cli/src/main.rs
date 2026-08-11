@@ -32,6 +32,7 @@ fn main() {
         ("server", _) if args.len() >= 3 => {
             server_cli_run(&args[2], args.get(3), args.get(4), args.get(5))
         }
+        ("syntrace", _) if args.len() >= 5 => syntrace_cli(&args[2], &args[3], &args[4]),
         ("bench", _) if args.len() >= 3 => bench_cli(&args[2]),
         _ => {
             eprintln!("用法:");
@@ -1299,7 +1300,119 @@ fn server_cli_run(
         .unwrap_or(8123);
     let web_root = web
         .and_then(|w| w.strip_prefix("--web=").map(|v| v.to_string()))
-        .unwrap_or_else(|| "tools/ets2nav-web".to_string());
+        .unwrap_or_else(|| "../tools/ets2nav-web".to_string());
     let trace = replay.and_then(|r| r.strip_prefix("--replay=").map(|v| v.to_string()));
     server_cli::server_cli(dataset_dir, trace.as_deref(), port, &web_root);
+}
+
+/// 合成 trace 生成（P4 UI 回放验证）：路线插值 + 速度曲线 → .navtrace
+/// 用法：nav-core-cli syntrace <x1,z1:x2,z2> <dataset-dir> <out.navtrace>
+fn syntrace_cli(xz: &str, dataset_dir: &str, out: &str) {
+    let parts: Vec<&str> = xz.split(':').collect();
+    let parse = |s: &str| -> (f64, f64) {
+        let v: Vec<&str> = s.split(',').collect();
+        (v[0].trim().parse().unwrap(), v[1].trim().parse().unwrap())
+    };
+    let (x1, z1) = parse(parts[0]);
+    let (x2, z2) = parse(parts[1]);
+    let (routing, junctions) = nav_dataset::load_dataset(std::path::Path::new(dataset_dir))
+        .unwrap_or_else(|e| {
+            eprintln!("加载 dataset 失败: {e}");
+            std::process::exit(1);
+        });
+    let graph = nav_graph::CompactGraph::build(&routing);
+    let spatial = nav_spatial::SpatialIndex::build(&graph, nav_spatial::DEFAULT_CELL_SIZE);
+    let _ = junctions;
+    let s1 = nav_router::snap::snap_nearest(&graph, &spatial, x1, z1, 300.0).unwrap();
+    let s2 = nav_router::snap::snap_nearest(&graph, &spatial, x2, z2, 300.0).unwrap();
+    let mut router = nav_router::search::Router::new(graph.node_count());
+    let req = nav_router::search::RouteRequest::new(
+        &graph,
+        nav_router::snap::VirtualEndpoint::start(&s1, true),
+        nav_router::snap::VirtualEndpoint::goal(&s2),
+        nav_router::cost::RouteProfile::Fastest,
+    );
+    let route = router.astar(&req).expect("路线应存在");
+    // 几何插值（5m）
+    let mut route_pts: Vec<(f64, f64, f64, f64)> = Vec::new();
+    let mut raw: Vec<(f64, f64, f64, f64)> = Vec::new();
+    for &eid in &route.edges {
+        let e = &graph.edges[eid as usize];
+        let pts = graph.edge_geometry(e);
+        for w in pts.windows(2) {
+            let yaw = (w[1].2 - w[0].2).atan2(w[1].0 - w[0].0);
+            raw.push((w[0].0, w[0].1, w[0].2, yaw));
+        }
+    }
+    if let Some((pe, _, _)) = route.end_virtual {
+        let e = &graph.edges[pe as usize];
+        let pts = graph.edge_geometry(e);
+        if let Some((x, y, z)) = pts.last() {
+            let (lx, _, lz) = pts[pts.len() - 2];
+            raw.push((*x, *y, *z, (z - lz).atan2(x - lx)));
+        }
+    }
+    for w in raw.windows(2) {
+        let (ax, ay, az, ayaw) = w[0];
+        let (bx, by, bz, _) = w[1];
+        let dx = bx - ax;
+        let dz = bz - az;
+        let seg = (dx * dx + dz * dz).sqrt();
+        let steps = (seg / 5.0).ceil().max(1.0) as u32;
+        for k in 0..steps {
+            let t = k as f64 / steps as f64;
+            route_pts.push((ax + dx * t, ay + (by - ay) * t, az + dz * t, ayaw));
+        }
+    }
+    if let Some(&last) = raw.last() {
+        route_pts.push(last);
+    }
+    // 速度曲线：0→8s 加速到 22 m/s 巡航 → 最后 200m 减速到 5
+    let total = route_pts.len() as f64;
+    let mut frames = Vec::new();
+    let mut sim = 0u64;
+    for (i, (x, y, z, _yaw)) in route_pts.iter().enumerate() {
+        let frac = i as f64 / total;
+        let cruise = 22.0f32;
+        let speed = if frac < 0.15 {
+            cruise * (frac / 0.15) as f32
+        } else if frac > 0.85 {
+            cruise * ((1.0 - frac) / 0.15).max(0.05) as f32
+        } else {
+            cruise
+        };
+        let snap = nav_telemetry::TelemetrySnapshot {
+            sequence: 780 + i as u32,
+            layout_version: 1,
+            running: true,
+            paused: false,
+            simulation_time: sim,
+            paused_simulation_time: 0,
+            render_time: 0,
+            game_time_minutes: 0,
+            local_scale: 1.0,
+            rest_stop_minutes: 0,
+            position: [*x, *y, *z],
+            heading: [0.0, 0.0, 0.0, 1.0],
+            speed,
+            speed_limit: 0.0,
+            fuel_amount: 1.0,
+            fuel_range: 1000.0,
+            fuel_warning: false,
+            job: None,
+        };
+        frames.push(snap);
+        sim += 50_000; // 20Hz
+    }
+    let mut rec = nav_telemetry::TraceRecorder::create(std::path::Path::new(out)).unwrap();
+    for f in &frames {
+        rec.record(f).unwrap();
+    }
+    rec.flush().unwrap();
+    println!(
+        "SYNTRACE OK frames={} dist={:.0}m out={}",
+        frames.len(),
+        route.distance_m,
+        out
+    );
 }

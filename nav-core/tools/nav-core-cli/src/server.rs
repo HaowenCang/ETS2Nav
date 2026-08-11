@@ -143,6 +143,8 @@ pub struct ServerShared {
     pub latest_json: Mutex<String>,
     /// 已连接的 WS 客户端（广播线程轮询；连接线程向此注册）。
     pub ws_clients: Mutex<Vec<TcpStream>>,
+    /// 待设目的地（HTTP /api/route 写入，数据源线程消费——UI 设目的地 → session 导航）。
+    pub pending_dest: Mutex<Option<(f64, f64)>>,
 }
 
 impl ServerShared {
@@ -150,6 +152,7 @@ impl ServerShared {
         std::sync::Arc::new(ServerShared {
             latest_json: Mutex::new("null".to_string()),
             ws_clients: Mutex::new(Vec::new()),
+            pending_dest: Mutex::new(None),
         })
     }
 

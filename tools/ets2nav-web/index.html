@@ -1,0 +1,80 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="theme-color" content="#0b0f14">
+<title>ETS2Nav</title>
+<link rel="stylesheet" href="vendor/maplibre-gl.css">
+<link rel="stylesheet" href="style.css">
+<script src="vendor/maplibre-gl.js"></script>
+<script src="vendor/qrcode.min.js"></script>
+<link rel="manifest" href="manifest.json">
+<meta name="mobile-web-app-capable" content="yes">
+</head>
+<body>
+<!-- 地图层 -->
+<div id="map"></div>
+
+<!-- 顶部：速度/限速卡片（§56） -->
+<div id="topbar">
+  <div id="speed-card">
+    <div id="speed-val">–</div>
+    <div id="speed-unit">km/h</div>
+  </div>
+  <div id="limit-card">
+    <div id="limit-val">–</div>
+    <div id="limit-label">地图限速</div>
+  </div>
+  <div id="state-chip">IDLE</div>
+</div>
+
+<!-- 下一转向卡片 -->
+<div id="maneuver-card" class="hidden">
+  <div id="maneuver-type">–</div>
+  <div id="maneuver-dist">–</div>
+  <div id="maneuver-exit">–</div>
+</div>
+
+<!-- 信号 + GLOSA 卡片 -->
+<div id="signal-card" class="hidden">
+  <div id="signal-state">–</div>
+  <div id="signal-remaining">–</div>
+  <div id="glosa">–</div>
+</div>
+
+<!-- 提醒播报 -->
+<div id="reminder-bar" class="hidden"></div>
+
+<!-- 剩余路线卡片 -->
+<div id="route-card">
+  <div id="route-remain">–</div>
+  <div id="route-progress"><div id="route-progress-fill"></div></div>
+  <div id="route-dest">–</div>
+</div>
+
+<!-- 设置面板（§61：LAN/二维码、连接） -->
+<div id="settings">
+  <button id="btn-settings" title="设置">⚙</button>
+  <div id="settings-panel" class="hidden">
+    <div id="conn-status">未连接</div>
+    <label>服务器<input id="server-url" value="ws://127.0.0.1:8123/ws"></label>
+    <button id="btn-connect">连接</button>
+    <div id="qr-box" class="hidden"><canvas id="qr"></canvas><div id="qr-url"></div></div>
+  </div>
+</div>
+
+<!-- 目的地设置 -->
+<div id="dest-bar">
+  <input id="dest-x" placeholder="终点 x">
+  <input id="dest-z" placeholder="终点 z">
+  <button id="btn-route">设目的地</button>
+  <button id="btn-reset">清除</button>
+  <button id="btn-follow" title="跟随车辆">◎</button>
+</div>
+
+<div id="follow-hint" class="hidden">已暂停跟随 — 点 ◎ 恢复</div>
+
+<script src="app.js"></script>
+</body>
+</html>

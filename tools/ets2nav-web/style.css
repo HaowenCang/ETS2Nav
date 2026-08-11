@@ -1,0 +1,65 @@
+/* ETS2Nav P4 正式 UI（§56 高德式深色卡片布局） */
+* { box-sizing: border-box; margin: 0; padding: 0; }
+html, body { height: 100%; overflow: hidden; background: #0b0f14; font-family: system-ui, -apple-system, "Segoe UI", sans-serif; color: #e8edf2; }
+#map { position: absolute; inset: 0; }
+
+/* 顶部：速度 + 限速 */
+#topbar { position: absolute; top: 10px; left: 10px; display: flex; gap: 8px; align-items: flex-start; z-index: 10; }
+#speed-card, #limit-card { background: rgba(10,14,19,.92); border: 1px solid rgba(255,255,255,.08); border-radius: 12px; padding: 10px 14px; min-width: 96px; backdrop-filter: blur(6px); }
+#speed-val { font-size: 34px; font-weight: 700; line-height: 1; }
+#speed-unit { font-size: 11px; color: #8b96a5; margin-top: 2px; }
+#limit-val { font-size: 22px; font-weight: 700; line-height: 1; color: #ffb454; }
+#limit-label { font-size: 10px; color: #8b96a5; margin-top: 2px; }
+#state-chip { background: rgba(10,14,19,.92); border: 1px solid rgba(255,255,255,.08); border-radius: 20px; padding: 6px 12px; font-size: 11px; letter-spacing: .08em; margin-top: 8px; }
+#state-chip.navigating { color: #4cc38a; border-color: rgba(76,195,138,.4); }
+#state-chip.rerouting { color: #ffb454; border-color: rgba(255,180,84,.4); }
+
+/* 下一转向 */
+#maneuver-card { position: absolute; top: 10px; right: 10px; z-index: 10; background: rgba(10,14,19,.92); border: 1px solid rgba(255,255,255,.08); border-radius: 12px; padding: 12px 16px; min-width: 180px; backdrop-filter: blur(6px); }
+#maneuver-type { font-size: 18px; font-weight: 700; }
+#maneuver-dist { font-size: 24px; font-weight: 700; color: #4cc38a; margin-top: 4px; }
+#maneuver-exit { font-size: 12px; color: #8b96a5; margin-top: 2px; }
+
+/* 信号 + GLOSA */
+#signal-card { position: absolute; top: 110px; right: 10px; z-index: 10; background: rgba(10,14,19,.92); border: 1px solid rgba(255,255,255,.08); border-radius: 12px; padding: 12px 16px; min-width: 180px; backdrop-filter: blur(6px); }
+#signal-state { font-size: 20px; font-weight: 700; }
+#signal-state.red { color: #ff5d5d; }
+#signal-state.green { color: #4cc38a; }
+#signal-state.yellow { color: #ffd166; }
+#signal-remaining { font-size: 14px; color: #8b96a5; margin-top: 2px; }
+#glosa { margin-top: 8px; font-size: 15px; font-weight: 600; color: #7db8ff; min-height: 18px; }
+
+/* 提醒播报 */
+#reminder-bar { position: absolute; bottom: 90px; left: 50%; transform: translateX(-50%); z-index: 20; background: rgba(10,14,19,.95); border: 1px solid rgba(255,180,84,.35); border-radius: 20px; padding: 8px 18px; font-size: 15px; font-weight: 600; color: #ffd9a0; animation: pulse 1.2s ease; }
+@keyframes pulse { 0% { opacity: 0; transform: translateX(-50%) scale(.96); } 100% { opacity: 1; transform: translateX(-50%) scale(1); } }
+
+/* 剩余路线 */
+#route-card { position: absolute; bottom: 10px; left: 10px; z-index: 10; background: rgba(10,14,19,.92); border: 1px solid rgba(255,255,255,.08); border-radius: 12px; padding: 12px 16px; min-width: 220px; backdrop-filter: blur(6px); }
+#route-remain { font-size: 22px; font-weight: 700; }
+#route-dest { font-size: 12px; color: #8b96a5; margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; max-width: 260px; }
+#route-progress { height: 5px; background: rgba(255,255,255,.1); border-radius: 3px; margin-top: 8px; overflow: hidden; }
+#route-progress-fill { height: 100%; width: 0%; background: #4cc38a; border-radius: 3px; transition: width .3s; }
+
+/* 设置 */
+#settings { position: absolute; bottom: 10px; right: 10px; z-index: 30; }
+#btn-settings { width: 42px; height: 42px; border-radius: 50%; border: 1px solid rgba(255,255,255,.15); background: rgba(10,14,19,.92); color: #e8edf2; font-size: 18px; cursor: pointer; }
+#settings-panel { position: absolute; bottom: 52px; right: 0; background: rgba(10,14,19,.96); border: 1px solid rgba(255,255,255,.12); border-radius: 12px; padding: 14px; width: 240px; backdrop-filter: blur(8px); }
+#settings-panel input { width: 100%; margin: 6px 0; padding: 6px 8px; background: #141a22; border: 1px solid rgba(255,255,255,.12); border-radius: 6px; color: #e8edf2; font-size: 12px; }
+#settings-panel button { width: 100%; margin-top: 6px; padding: 7px; background: #1d6fd1; border: none; border-radius: 6px; color: #fff; font-size: 13px; cursor: pointer; }
+#conn-status { font-size: 12px; color: #8b96a5; }
+#conn-status.on { color: #4cc38a; }
+#qr-box { margin-top: 8px; text-align: center; }
+#qr-box canvas { width: 140px; height: 140px; background: #fff; border-radius: 8px; }
+#qr-url { font-size: 10px; color: #8b96a5; margin-top: 4px; word-break: break-all; }
+
+/* 目的地 */
+#dest-bar { position: absolute; bottom: 10px; left: 50%; transform: translateX(-50%); z-index: 15; display: flex; gap: 6px; background: rgba(10,14,19,.92); border: 1px solid rgba(255,255,255,.12); border-radius: 12px; padding: 8px 10px; backdrop-filter: blur(6px); }
+#dest-bar input { width: 84px; padding: 6px 8px; background: #141a22; border: 1px solid rgba(255,255,255,.12); border-radius: 6px; color: #e8edf2; font-size: 12px; }
+#dest-bar button { padding: 6px 12px; border: none; border-radius: 6px; font-size: 12px; cursor: pointer; }
+#btn-route { background: #1d6fd1; color: #fff; }
+#btn-reset { background: #2a3340; color: #c8d0da; }
+#btn-follow { background: #2a3340; color: #c8d0da; }
+
+#follow-hint { position: absolute; top: 60px; left: 50%; transform: translateX(-50%); z-index: 25; background: rgba(10,14,19,.92); border: 1px solid rgba(255,255,255,.15); border-radius: 16px; padding: 6px 14px; font-size: 12px; color: #8b96a5; }
+
+.hidden { display: none !important; }
