@@ -21,7 +21,7 @@
 | P3-07 | 合成回放套件 | ✅ | run-p3-tests.bat **ALL PASS**（P2 回归全链 + cargo 门 + 冒烟） |
 | P3-08 | 性能 + 关门 | ✅ | 限速查询 p99 **0.2µs**（目标 <10µs）；全部指标达标 |
 
-**总测试**：workspace 90 全绿（+41 vs P2 的 49；审计修复补 3）；fmt PASS；clippy 0。
+**总测试**：workspace 93 全绿（--all-targets 实测口径：P2 49 → P3 +44，审计两轮修复补 5）；fmt PASS；clippy 0。
 
 ## 二、性能数字（P3-08 bench，Europe v4 全图）
 
@@ -40,7 +40,8 @@
    country×class×city 模型（每 edge 单值）；真实分段在相邻边之间——前方限速
    由查询层聚合（零 schema 变更、零数据重建）。
 2. **movement 边限速 100% -1**：写入端未定义该语义——查询层继承前值（Berlin
-   断点 24→3 实证）。
+   断点 24→3 实证；审计 B1 修复后起点边限速正确并入，实测断点 2 个——24 为
+   旧模型按边计数，真实断点以 2 为准）。
 3. **摄像头 No-Go**：speed_camera 编码在 1.60 Europe 无实例（sign.sii 定义存在
    但 0 引用）——按 §42 不实现"前方 500m 测速"，camera-probe 留作 DLC 更新重验。
 
@@ -58,7 +59,7 @@
 
 ## 五、资产
 
-- 代码：nav-router speed/reminder/speak 三模块（+38 测试）
+- 代码：nav-router speed/reminder/speak/session 四模块（+44 测试；审计闭环补：虚拟段 3、overspeed/防轰炸、distance_to_edge、§40 随位推进各 1）
 - 工具：camera-probe（五级扫描）、run-p3-tests.bat（4 步套件）
 - 报告：docs/validation/p3-01~p3-07-2026-08.md（7 份）+ p3-closeout-2026-08.md（P3-00 为计划文档 P3-driving-assistant-plan.md；P3-08 内容并入本报告）
 - 计划：P3-driving-assistant-plan.md（实证修正版）

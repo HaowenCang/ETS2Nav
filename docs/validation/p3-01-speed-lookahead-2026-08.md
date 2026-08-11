@@ -19,7 +19,7 @@
 
 CLI：`nav-core-cli speed <x1,z1:x2,z2> <dataset-dir> [horizon_m]`——route fastest 后输出断点表。
 
-## 二、单元测试（审计后 10 个；原 7 个新增，审计修复补 3 个虚拟段形态测试）
+## 二、单元测试（当前 10 个：P3-01 新增 7 + 审计 B1 补 3 个虚拟段形态测试；speed_change_ahead 由虚拟段测试间接覆盖）
 
 | 测试 | 断言 |
 |---|---|
