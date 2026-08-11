@@ -8,6 +8,7 @@ pub mod alternatives;
 pub mod cost;
 pub mod destination;
 pub mod maneuver;
+pub mod reminder;
 pub mod reroute;
 pub mod roundabout;
 pub mod search;
