@@ -24,6 +24,8 @@ public class MapItem
     public required ulong Uid { get; init; }
     public uint Flags { get; init; }
     public int ViewDistance { get; init; }   // 米（原始值 ×10）
+    /// <summary>模型/prefab token（P3-05：仅 Model 填充；其余类型 null）。</summary>
+    public string? Token { get; init; }
 }
 
 public sealed class RoadItem : MapItem
@@ -707,7 +709,7 @@ private static MapItem ReadTerrain(BinaryReader r, ulong uid, uint flags, int vi
 
 private static MapItem ReadModel(BinaryReader r, ulong uid, uint flags, int view)
 {
-    r.ReadToken();           // name
+    var name = r.ReadToken();           // name
     r.ReadToken();           // look
     r.ReadToken();           // variant
     r.ReadTokenArray();      // additional parts
@@ -716,7 +718,7 @@ private static MapItem ReadModel(BinaryReader r, ulong uid, uint flags, int view
     r.ReadToken();           // terrain material
     r.ReadUInt32();          // terrain color
     r.ReadSingle();          // terrain rotation
-    return new MapItem { Type = ItemType.Model, Uid = uid, Flags = flags, ViewDistance = view };
+    return new MapItem { Type = ItemType.Model, Uid = uid, Flags = flags, ViewDistance = view, Token = name };
 }
 
 private static MapItem ReadMover(BinaryReader r, ulong uid, uint flags, int view)
