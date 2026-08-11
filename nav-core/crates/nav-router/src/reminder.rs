@@ -1,5 +1,5 @@
 // P3-02~05：提醒决策模块（v0.2 §39/§41/§36/§37/§38）。
-// 本文件：§39 限速对照 + §41 超速提醒 + §36 红灯减速 + §37 即将绿灯。
+// 本文件：§39 限速对照 + §41 超速提醒 + §36 红灯减速 + §37 即将绿灯 + §38 GLOSA。
 // 纯决策逻辑（输入快照 → 输出提醒事件），不依赖 UI/TTS（P3-06 语义分离）。
 
 use crate::signal::{LightState, SignalConfidence};
@@ -159,6 +159,131 @@ pub fn green_imminent(
         && v_ms < cfg.max_speed_ms
         && remaining_s < cfg.max_remaining_s as f64
         && remaining_s >= 0.0
+}
+
+// ─── §38 GLOSA ─────────────────────────────────────────────────────────────
+
+/// §38 GLOSA 参数。
+#[derive(Debug, Clone, Copy, PartialEq)]
+pub struct GlosaConfig {
+    /// 绿灯时长 G（s）。数据源实证（P3-00）：dataset v2 仅存 signal_group_type
+    /// profile 名，未存 interval——绿灯时长以配置默认提供，B2 T3 实测后校准。
+    pub green_duration_s: f32,
+    /// 合理加速度（m/s²）。
+    pub max_accel: f32,
+    /// 距停止线过近（m）不输出（刹车距离内无意义）。
+    pub min_distance_m: f32,
+    /// 距停止线过远（m）不输出（窗口估计不确定度随距离增大）。
+    pub max_distance_m: f32,
+}
+
+impl Default for GlosaConfig {
+    fn default() -> Self {
+        GlosaConfig {
+            green_duration_s: 15.0,
+            max_accel: 2.0,
+            min_distance_m: 20.0,
+            max_distance_m: 500.0,
+        }
+    }
+}
+
+/// GLOSA 建议（§38 低精度速度区间）。
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct GlosaAdvice {
+    /// 区间下限（km/h，5 的倍数向下取整）。
+    pub v_min_kmh: i16,
+    /// 区间上限（km/h，5 的倍数向上取整）。
+    pub v_max_kmh: i16,
+    /// 窗口与物理约束交集非空。
+    pub feasible: bool,
+}
+
+/// §38 GLOSA：绿灯通行窗口 [t1, t2] × 距离 d → 理论速度范围 d/t2 ≤ v ≤ d/t1，
+/// 与限速（当前与前方取低）及合理加速度求交集，输出低精度区间。
+///
+/// - 红灯：窗口 = [remaining, remaining + G]（remaining 为到绿灯开始）；
+/// - 绿灯：窗口 = [0, remaining]（remaining 为绿灯剩余）；
+/// - 黄/未知：不输出（feasible=false）；
+/// - 加速可达上限 v ≤ sqrt(v_now² + 2·a·d)（恒定加速度近似）；
+/// - 量化：下限 floor 到 5 km/h、上限 ceil 到 5 km/h（§38 不制造虚假精度）。
+pub fn glosa_advice(
+    distance_m: f32,
+    state: LightState,
+    confidence: SignalConfidence,
+    remaining_s: f64,
+    v_now_ms: f32,
+    limit_kmh: i16,
+    cfg: &GlosaConfig,
+) -> GlosaAdvice {
+    if confidence != SignalConfidence::Verified
+        || distance_m < cfg.min_distance_m
+        || distance_m > cfg.max_distance_m
+        || remaining_s < 0.0
+    {
+        return GlosaAdvice {
+            v_min_kmh: 0,
+            v_max_kmh: 0,
+            feasible: false,
+        };
+    }
+    // 窗口 [t1, t2]（秒）
+    let (t1, t2) = match state {
+        LightState::Red => (
+            remaining_s as f32,
+            remaining_s as f32 + cfg.green_duration_s,
+        ),
+        LightState::Green => (0.0, remaining_s as f32),
+        _ => {
+            return GlosaAdvice {
+                v_min_kmh: 0,
+                v_max_kmh: 0,
+                feasible: false,
+            }
+        }
+    };
+    if t2 <= 0.0 || t2 < t1 {
+        return GlosaAdvice {
+            v_min_kmh: 0,
+            v_max_kmh: 0,
+            feasible: false,
+        };
+    }
+    // 理论速度范围（m/s）
+    let v_lo = distance_m / t2; // d/t2 ≤ v
+    let mut v_hi = if t1 > 0.0 {
+        distance_m / t1
+    } else {
+        f32::INFINITY
+    };
+    // 物理约束：加速可达上限 + 限速 cap（当前与前方取低）
+    let v_acc_hi = (v_now_ms * v_now_ms + 2.0 * cfg.max_accel * distance_m).sqrt();
+    v_hi = v_hi.min(v_acc_hi);
+    if limit_kmh > 0 {
+        v_hi = v_hi.min(limit_kmh as f32 / 3.6);
+    }
+    if v_lo > v_hi {
+        return GlosaAdvice {
+            v_min_kmh: 0,
+            v_max_kmh: 0,
+            feasible: false,
+        };
+    }
+    // 低精度量化（§38：53.6~64.2 → 50~65 式显示）；epsilon 吸收 f32 边界误差
+    // （仅 ceil 方向需要——floor 方向的 44.999 会误入下档）
+    let q = |x: f32, up: bool| -> i16 {
+        let kmh = x * 3.6;
+        if up {
+            (((kmh - 1e-3) / 5.0).ceil() as i16 * 5).max(5)
+        } else {
+            ((kmh / 5.0).floor() as i16 * 5).max(0)
+        }
+    };
+    GlosaAdvice {
+        v_min_kmh: q(v_lo, false),
+        v_max_kmh: q(v_hi, true),
+        feasible: true,
+    }
 }
 
 #[cfg(test)]
@@ -364,5 +489,154 @@ mod tests {
             -1.0,
             &cfg
         ));
+    }
+
+    // ─── §38 GLOSA ───
+
+    #[test]
+    fn glosa_window_math() {
+        // 红灯剩余 5.6s、G=15 → 窗口 [5.6, 20.6]；d=100m：
+        // v ∈ [100/20.6, 100/5.6] = [4.85, 17.86] m/s = [17.5, 64.3] km/h
+        // 加速上限（v_now=10, a=2, d=100）：sqrt(100+400)=22.4 m/s 不压；
+        // 限速 80 不压 → 量化 [15, 65]
+        let cfg = GlosaConfig::default();
+        let a = glosa_advice(
+            100.0,
+            LightState::Red,
+            SignalConfidence::Verified,
+            5.6,
+            10.0,
+            80,
+            &cfg,
+        );
+        assert!(a.feasible);
+        assert_eq!(a.v_min_kmh, 15);
+        assert_eq!(a.v_max_kmh, 65);
+    }
+
+    #[test]
+    fn glosa_limit_caps_upper() {
+        // 同上但限速 50 → 上限压到 50（量化 50）；下限不变
+        let cfg = GlosaConfig::default();
+        let a = glosa_advice(
+            100.0,
+            LightState::Red,
+            SignalConfidence::Verified,
+            5.6,
+            10.0,
+            50,
+            &cfg,
+        );
+        assert!(a.feasible);
+        assert_eq!(a.v_max_kmh, 50);
+    }
+
+    #[test]
+    fn glosa_green_phase() {
+        // 绿灯剩余 8s、d=100 → v ∈ [100/8, ∞) = [45, ∞) km/h；限速 60 cap
+        let cfg = GlosaConfig::default();
+        let a = glosa_advice(
+            100.0,
+            LightState::Green,
+            SignalConfidence::Verified,
+            8.0,
+            10.0,
+            60,
+            &cfg,
+        );
+        assert!(a.feasible);
+        assert_eq!(a.v_min_kmh, 45);
+        assert_eq!(a.v_max_kmh, 60);
+    }
+
+    #[test]
+    fn glosa_unreachable_window() {
+        // 绿灯仅剩 2s、d=200m → v_min = 100 m/s = 360 km/h > 限速 80 → 不可行
+        let cfg = GlosaConfig::default();
+        let a = glosa_advice(
+            200.0,
+            LightState::Green,
+            SignalConfidence::Verified,
+            2.0,
+            10.0,
+            80,
+            &cfg,
+        );
+        assert!(!a.feasible);
+    }
+
+    #[test]
+    fn glosa_accel_caps_upper() {
+        // 绿灯剩余充足（60s）→ 窗口上限 ∞，加速可达性生效：
+        // v_now=0、d=100、a=2 → sqrt(0+400)=20 m/s=72 km/h → 量化 75
+        let cfg = GlosaConfig::default();
+        let a = glosa_advice(
+            100.0,
+            LightState::Green,
+            SignalConfidence::Verified,
+            60.0,
+            0.0,
+            80,
+            &cfg,
+        );
+        assert!(a.feasible);
+        assert_eq!(a.v_max_kmh, 75); // 72 ceil 到 75
+    }
+
+    #[test]
+    fn glosa_unverified_or_bad_state() {
+        let cfg = GlosaConfig::default();
+        // 未验证
+        assert!(
+            !glosa_advice(
+                100.0,
+                LightState::Red,
+                SignalConfidence::Probable,
+                5.6,
+                10.0,
+                80,
+                &cfg
+            )
+            .feasible
+        );
+        // 黄灯
+        assert!(
+            !glosa_advice(
+                100.0,
+                LightState::Yellow,
+                SignalConfidence::Verified,
+                5.6,
+                10.0,
+                80,
+                &cfg
+            )
+            .feasible
+        );
+        // 距离过近（<20m）
+        assert!(
+            !glosa_advice(
+                10.0,
+                LightState::Green,
+                SignalConfidence::Verified,
+                8.0,
+                10.0,
+                60,
+                &cfg
+            )
+            .feasible
+        );
+        // 距离过远（>500m）
+        assert!(
+            !glosa_advice(
+                600.0,
+                LightState::Green,
+                SignalConfidence::Verified,
+                8.0,
+                10.0,
+                60,
+                &cfg
+            )
+            .feasible
+        );
     }
 }
