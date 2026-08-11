@@ -215,9 +215,13 @@ pub fn server_cli(dataset_dir: &str, trace_path: Option<&str>, port: u16, web_ro
                     // 消费 UI 目的地请求（§60：POST /api/route → 导航启动）
                     if let Some((tx, tz)) = *thread_shared.pending_dest.lock().unwrap() {
                         *thread_shared.pending_dest.lock().unwrap() = None;
-                        if let Some(snap_pt) =
-                            nav_router::snap::snap_nearest(&thread_graph, &thread_spatial, tx, tz, 300.0)
-                        {
+                        if let Some(snap_pt) = nav_router::snap::snap_nearest(
+                            &thread_graph,
+                            &thread_spatial,
+                            tx,
+                            tz,
+                            300.0,
+                        ) {
                             let dest = nav_router::destination::Destination {
                                 kind: nav_router::destination::DestKind::Coordinate,
                                 name: "目标".to_string(),
