@@ -26,6 +26,42 @@ using OverlayProvider overlay = installDir != null
 
 var secNames = (Arg(args, "--sectors") ?? "")
     .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+if (cmdArgs.Contains("--check-fingerprint"))
+{
+    // A4（§9）：当前安装指纹 vs dataset manifest——DLC/archive 变更检测
+    var installDir2 = Arg(args, "--install");
+    var dsDir2 = Arg(args, "--dataset");
+    if (installDir2 == null || dsDir2 == null)
+    {
+        Console.WriteLine("FINGERPRINT FAIL args: need --install and --dataset");
+        return 1;
+    }
+    try
+    {
+        var inst = ScsResource.GameInstall.Detect(installDir2);
+        var manifestPath = Path.Combine(dsDir2, "manifest.json");
+        if (!File.Exists(manifestPath))
+        {
+            Console.WriteLine("FINGERPRINT FAIL manifest-missing");
+            return 1;
+        }
+        var m = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(
+            File.ReadAllText(manifestPath));
+        var stored = m.TryGetProperty("content_fingerprint", out var v) ? v.GetString() : null;
+        if (stored == inst.ContentFingerprint)
+        {
+            Console.WriteLine("FINGERPRINT MATCH");
+            return 0;
+        }
+        Console.WriteLine("FINGERPRINT CHANGED stored=" + (stored ?? "none") + " cur=" + inst.ContentFingerprint);
+        return 1;
+    }
+    catch (Exception ex)
+    {
+        Console.WriteLine("FINGERPRINT FAIL " + ex.Message);
+        return 1;
+    }
+}
 if (cmdArgs.Contains("--all-sectors") || cmdArgs.Contains("--region"))
 {
     var region = Arg(args, "--region") ?? "europe";
@@ -217,13 +253,13 @@ if (cmdArgs.Contains("--prefab"))
             mvTotal += ScsPrefab.PrefabMovements.Recover(pd, t).Count;
         }
         Console.WriteLine($"prefab 覆盖：{ok}/{tokens.Count} 加载成功，movements 共 {mvTotal}");
-        return;
+        return 0;
     }
     var pd0 = res.Load(token);
     if (pd0 == null)
     {
         Console.WriteLine($"{token} 加载失败：{res.FailedPpds.LastOrDefault(f => f.Token == token).Error}");
-        return;
+        return 0;
     }
     var mv = ScsPrefab.PrefabMovements.Recover(pd0, token);
     Console.WriteLine($"{token}: v0x{pd0.Version:x} nodes={pd0.ControlNodes.Count} curves={pd0.NavCurves.Count} navNodes={pd0.NavNodes.Count} semaphores={pd0.Semaphores.Count} movements={mv.Count}");
@@ -522,7 +558,12 @@ if (cmdArgs.Contains("--dataset"))
     {
         try { gameVersion = ScsResource.GameInstall.Detect(installDir)?.GameVersion; } catch { }
     }
-    ScsMapModel.DatasetWriter.WriteManifest(outDir, rgraph, map, secNames, DateTime.UtcNow, gameVersion);
+    string? fp = null;
+    if (installDir != null)
+    {
+        try { fp = ScsResource.GameInstall.Detect(installDir)?.ContentFingerprint; } catch { }
+    }
+    ScsMapModel.DatasetWriter.WriteManifest(outDir, rgraph, map, secNames, DateTime.UtcNow, gameVersion, fp);
     ScsMapModel.DatasetWriter.WriteDiagnostics(outDir, map, rgraph, prefabs.FailedPpds, new[] { "P1-11 dataset build" });
     // map.db（SQLite：roads/junctions 表）
     using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={Path.Combine(outDir, "map.db")}"))
@@ -678,3 +719,5 @@ static List<int> FindLargestComponent(ScsGraph.RoutingGraph g)
     }
     return best;
 }
+
+return 0;
