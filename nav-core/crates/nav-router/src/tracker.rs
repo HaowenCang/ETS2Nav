@@ -193,6 +193,26 @@ impl RouteTracker {
         seg + self.suffix_time[self.edge_index + 1]
     }
 
+    /// 到 route 边 target_index 入口的剩余距离（O(1)）。
+    /// 修正（审计 B3）：edge_remaining 已含 suffix[edge_index+1..end]——目标边之后的
+    /// 距离须减除，否则双重计数。终点虚拟段在 suffix 中，相减自动抵消。
+    pub fn distance_to_edge(&self, graph: &CompactGraph, target_index: usize) -> Option<f64> {
+        let n = self.route.edges.len();
+        if self.route.edges.is_empty() || target_index <= self.edge_index || target_index >= n {
+            return None;
+        }
+        let eid = self.route.edges[self.edge_index.min(n - 1)];
+        let len = edge_len(graph, eid);
+        let rem = (len - self.edge_offset).max(0.0);
+        // suffix[i] = 边 i 起全长；suffix[from+1] - suffix[target] = 中间边[from+1..target) 全长
+        Some(rem + self.suffix_distance[self.edge_index + 1] - self.suffix_distance[target_index])
+    }
+
+    /// 已走累计距离（审计 B2：§40 前方变化点 = 断点绝对偏移 - travelled）。
+    pub fn travelled_m(&self) -> f64 {
+        self.distance_travelled
+    }
+
     /// 总进度（0..1）。
     pub fn progress(&self) -> f64 {
         let total = self.suffix_distance[0];
@@ -347,6 +367,26 @@ mod tests {
             "progress={}",
             t.progress()
         );
+    }
+
+    #[test]
+    fn distance_to_edge_arithmetic() {
+        // 审计 B3 回归：到目标边入口 = 当前边剩余 + 中间边全长（edge_remaining 含
+        // suffix[from+1..end]——若直接复用会双重计数且多算目标之后全部路线）。
+        let g = graph(); // 3 边各 1000m
+        let mut t = RouteTracker::new(&g, route_of(&g), 2);
+        // 边 0 中段（offset 500）：到边 2 入口 = 500 + 1000(边1) = 1500
+        t.update(&g, 0, 500.0);
+        let d = t.distance_to_edge(&g, 2).expect("target 在前方");
+        assert!((d - 1500.0).abs() < 1e-6, "d={}", d);
+        // 不可能是 2000+（edge_remaining 全量口径：500+1000+1000=2500）
+        assert!(d < 2000.0, "双重计数/后缀残留: d={}", d);
+        // 当前边之后的第一个边：到边 1 入口 = 500
+        let d1 = t.distance_to_edge(&g, 1).expect("边 1 在前方");
+        assert!((d1 - 500.0).abs() < 1e-6, "d1={}", d1);
+        // 边界：目标为当前边/越界 → None
+        assert!(t.distance_to_edge(&g, 0).is_none());
+        assert!(t.distance_to_edge(&g, 99).is_none());
     }
 
     #[test]

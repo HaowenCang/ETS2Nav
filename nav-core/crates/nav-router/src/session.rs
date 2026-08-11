@@ -284,15 +284,21 @@ impl NavigationSession {
         let remaining_s = self.tracker.as_ref().map(|t| t.time_remaining(&self.graph));
         let next_maneuver = self.next_maneuver();
         let upcoming_signal = self.next_signal();
-        // —— P3 提醒事件流（§40/§41/§36/§38 决策接入；§39 对照进 diagnostics）——
+        // —— P3 提醒事件流（§37/§40/§41/§36/§38 决策接入；§39 对照进 diagnostics）——
+        // 审计修复（687ab14 复审轮）：①now_s 单位 µs→s（§48 防轰炸）；②GLOSA cap 用当前
+        // 匹配边限速（原以节点 id 索引边数组——越界 panic/错误 cap）；③§40 断点偏移减
+        // travelled（不随位置推进→重复播报/永不播报）；④§36/§38 距离用 tracker
+        // distance_to_edge（原双重计数）；⑤§37 green_imminent 接入。
         let mut reminders: Vec<crate::speak::ReminderEvent> = Vec::new();
         if self.state == SessionState::Navigating {
-            let now_s = snap.simulation_time as f64 / 1000.0;
+            let now_s = snap.simulation_time as f64 / 1e6; // µs → s
             let speak_cfg = crate::speak::SpeakConfig::default();
+            let mut matched_limit: i16 = -1;
             // §39 限速对照（diagnostic——B2 T1 ground truth 记录）
             if mm.edge_id != u32::MAX {
                 let e = &self.graph.edges[mm.edge_id as usize];
                 if e.kind == nav_graph::EdgeKind::Road {
+                    matched_limit = e.speed_limit;
                     let cmp = crate::reminder::compare_speed_limit(e.speed_limit, snap.speed_limit);
                     if cmp.mismatch {
                         diag.push_str(&format!(
@@ -302,41 +308,42 @@ impl NavigationSession {
                     }
                     // §41 超速提醒
                     let cfg41 = crate::reminder::OverSpeedConfig::default();
-                    if let Some(trigger) =
-                        crate::reminder::overspeed_check(snap.speed, e.speed_limit, &cfg41)
+                    if crate::reminder::overspeed_check(snap.speed, e.speed_limit, &cfg41).is_some()
+                        && self.reminder_gate.allow("overspeed", now_s, &speak_cfg)
                     {
-                        if self.reminder_gate.allow("overspeed", now_s, &speak_cfg) {
-                            reminders.push(crate::speak::ReminderEvent::OverSpeed {
-                                limit_kmh: e.speed_limit,
-                            });
-                        }
-                        let _ = trigger;
+                        reminders.push(crate::speak::ReminderEvent::OverSpeed {
+                            limit_kmh: e.speed_limit,
+                        });
                     }
                 }
             }
-            // §40 前方限速变化（首个变化点 ≤ 提前距离）
-            if let (Some(route), Some(_tracker)) = (self.route.as_ref(), self.tracker.as_ref()) {
+            // §40 前方限速变化（审计 B2：首个尚在前方的变化点，偏移减 travelled）
+            if let (Some(route), Some(tracker)) = (self.route.as_ref(), self.tracker.as_ref()) {
+                let traveled = tracker.travelled_m();
                 let breaks = crate::speed::speed_breaks_ahead(route, &self.graph, 3000.0);
-                if let Some(change) = breaks.get(1) {
+                if let Some(change) = breaks.iter().find(|b| b.offset_m as f64 > traveled + 0.5) {
+                    let ahead_m = change.offset_m as f64 - traveled;
                     let v_kmh = (snap.speed * 3.6).abs();
                     let road_class = self.graph.edges[route.edges[0] as usize].road_class;
                     let ahead =
                         crate::speak::speak_ahead_distance_m(v_kmh, road_class, 0, &speak_cfg);
-                    if change.offset_m <= ahead as f32
+                    if ahead_m <= ahead as f64
                         && self.reminder_gate.allow("speedlimit", now_s, &speak_cfg)
                     {
                         reminders.push(crate::speak::ReminderEvent::SpeedLimitChange {
-                            distance_m: change.offset_m as u32,
+                            distance_m: ahead_m.max(1.0) as u32,
                             limit_kmh: change.limit,
                         });
                     }
                 }
             }
-            // §36/§38 信号提醒（upcoming_signal 已关联时）
+            // §36/§37/§38 信号提醒（upcoming_signal 已关联时；审计 B3 修正距离）
             if let Some(up) = &upcoming_signal {
                 if let (Some(state), Some(rem)) = (up.state, up.remaining_time) {
                     let d = self
-                        .dist_to_signal(up.route_edge_index)
+                        .tracker
+                        .as_ref()
+                        .and_then(|t| t.distance_to_edge(&self.graph, up.route_edge_index))
                         .unwrap_or(f64::INFINITY) as f32;
                     if state == crate::signal::LightState::Red
                         && up.confidence == crate::signal::SignalConfidence::Verified
@@ -349,17 +356,27 @@ impl NavigationSession {
                                 distance_m: d as u32,
                             });
                         }
+                        // §37 即将绿灯（低速 + 剩余 <3s——防诱导加速）
+                        let cfg37 = crate::reminder::GreenImminentConfig::default();
+                        if crate::reminder::green_imminent(
+                            state,
+                            up.confidence,
+                            snap.speed,
+                            rem,
+                            &cfg37,
+                        ) && self.reminder_gate.allow("green", now_s, &speak_cfg)
+                        {
+                            reminders.push(crate::speak::ReminderEvent::GreenImminent);
+                        }
+                        // §38 GLOSA（审计 M3：cap 用当前匹配边限速）
                         let cfg38 = crate::reminder::GlosaConfig::default();
-                        let limit = self.graph.edges
-                            [self.graph.edges[up.movement_edge_id as usize].from as usize]
-                            .speed_limit;
                         let adv = crate::reminder::glosa_advice(
                             d,
                             state,
                             up.confidence,
                             rem,
                             snap.speed,
-                            limit,
+                            matched_limit,
                             &cfg38,
                         );
                         if adv.feasible && self.reminder_gate.allow("glosa", now_s, &speak_cfg) {
@@ -397,21 +414,6 @@ impl NavigationSession {
         // 找 route_edge_index > from 的第一个非 Continue 类型
         ms.into_iter()
             .find(|m| m.route_edge_index > from && m.mtype != crate::maneuver::ManeuverType::Depart)
-    }
-
-    /// 到目标 route 边索引的剩余距离（米）：当前边剩余 + 中间边全长（P3 A4 §36/§38 输入）。
-    fn dist_to_signal(&self, target_index: usize) -> Option<f64> {
-        let route = self.route.as_ref()?;
-        let tracker = self.tracker.as_ref()?;
-        let from = tracker.edge_index();
-        if target_index <= from {
-            return None;
-        }
-        let mut d = tracker.edge_remaining(&self.graph);
-        for &eid in &route.edges[from + 1..=target_index] {
-            d += self.graph.edges[eid as usize].length as f64;
-        }
-        Some(d)
     }
 
     /// 下一个受控信号（§112）。
@@ -543,7 +545,7 @@ mod tests {
         s.set_destination(dest).expect("规划应成功");
         // 帧 1：沿路线第一点，速度 60 m/s（216 km/h）→ 超速触发
         let mut t = telemetry_at(20.0, 60.0);
-        t.simulation_time = 1000; // 1s——gate 干净
+        t.simulation_time = 1_000_000; // 1s（µs 单位）——gate 干净
         let snap = s.on_frame(&t);
         assert_eq!(snap.state, SessionState::Navigating);
         assert!(
@@ -555,12 +557,108 @@ mod tests {
         );
         // 同类 10s 内不重复（§48 防轰炸）
         let mut t2 = telemetry_at(30.0, 60.0);
-        t2.simulation_time = 5000;
+        t2.simulation_time = 5_000_000; // 5s——30s 防轰炸窗口内
         let snap2 = s.on_frame(&t2);
         assert!(!snap2
             .reminders
             .iter()
             .any(|r| matches!(r, crate::speak::ReminderEvent::OverSpeed { .. })));
+    }
+
+    #[test]
+    fn speedlimit_change_reminder_follows_position() {
+        // 审计 B2 回归：断点偏移（路线起点绝对量）须减 travelled——通过断点后不再播报。
+        // 边 0-1：100m 限速 80；边 1-2：50m 限速 80；边 2-3：550m 限速 50。
+        // 起点 x=5（边 0）→ 终点 650（边 2）；变化点 @ start段(95)+边1(50)=145。
+        let nodes = vec![
+            Node {
+                uid: 1,
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            Node {
+                uid: 2,
+                x: 100.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            Node {
+                uid: 3,
+                x: 150.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            Node {
+                uid: 4,
+                x: 700.0,
+                y: 0.0,
+                z: 0.0,
+            },
+        ];
+        let mk = |from: u32, to: u32, limit: i16| Edge {
+            from,
+            to,
+            kind: EdgeKind::Road,
+            length: (nodes[to as usize].x - nodes[from as usize].x) as f32,
+            source_uid: 0,
+            geometry: vec![
+                (nodes[from as usize].x, 0.0, nodes[from as usize].z),
+                (nodes[to as usize].x, 0.0, nodes[to as usize].z),
+            ],
+            speed_limit: limit,
+            road_class: 1,
+            semaphore_id: -1,
+            flags: 0,
+            movement_id: None,
+        };
+        let g = std::rc::Rc::new(CompactGraph::build(&RoutingGraph {
+            nodes: nodes.clone(),
+            edges: vec![mk(0, 1, 80), mk(1, 2, 80), mk(2, 3, 50)],
+        }));
+        let sp = std::rc::Rc::new(SpatialIndex::build(&g, 256.0));
+        let dest = Destination {
+            kind: DestKind::Coordinate,
+            name: "goal".into(),
+            position: (650.0, 0.0, 0.0),
+            access_snap: crate::snap::snap_nearest(&g, &sp, 650.0, 0.0, 100.0).unwrap(),
+        };
+        let mut s = NavigationSession::new(g, sp, TurnLookup::new(), SessionConfig::default());
+        s.on_frame(&telemetry_at(5.0, 8.0)); // 定位
+        s.set_destination(dest).expect("规划应成功");
+        // 帧 1：x=110（边 1 上，edges[0]）traveled≈10 → 断点前方 145-10=135 ≤ 144 → 触发
+        let mut t = telemetry_at(110.0, 8.0);
+        t.simulation_time = 1_000_000;
+        let snap = s.on_frame(&t);
+        let ev = snap
+            .reminders
+            .iter()
+            .find(|r| matches!(r, crate::speak::ReminderEvent::SpeedLimitChange { .. }));
+        assert!(
+            ev.is_some(),
+            "接近变化点时应有 SpeedLimitChange，实际: {:?}",
+            snap.reminders
+        );
+        if let Some(crate::speak::ReminderEvent::SpeedLimitChange {
+            distance_m,
+            limit_kmh,
+        }) = ev
+        {
+            assert!(
+                (*distance_m as f64 - 135.0).abs() < 15.0,
+                "distance_m 应为约 135m: {}",
+                distance_m
+            );
+            assert_eq!(*limit_kmh, 50, "变化后限速 50");
+        }
+        // 帧 2：x=170（边 2 上，traveled≈160 > 145 已通过变化点）→ 不再播报
+        let mut t2 = telemetry_at(170.0, 8.0);
+        t2.simulation_time = 5_000_000;
+        let snap2 = s.on_frame(&t2);
+        assert!(!snap2
+            .reminders
+            .iter()
+            .any(|r| matches!(r, crate::speak::ReminderEvent::SpeedLimitChange { .. })));
     }
 
     #[test]
