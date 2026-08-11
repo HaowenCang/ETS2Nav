@@ -27,7 +27,7 @@
 
 **总测试**：workspace 93 全绿（--all-targets 实测口径：P2 49 → P3 +44，其中审计两轮修复净增 6——毛增 7 删 1）；fmt PASS；clippy 0。
 
-## 二、性能数字（P3-08 bench，Europe v4 全图）
+## 二、性能数字（计划包 P3-09 bench，Europe v4 全图）
 
 | 指标 | 实测 | 目标 | 判定 |
 |---|---|---|---|
@@ -61,6 +61,28 @@
 | 长 road 跨城市边界中点判定 | — | 已知近似 |
 
 **交付形态**：提醒模块默认关闭（D6 决策）——P4 UI 接入时以配置开关启用。
+
+## 四-B、审计 MINOR 登记（herdr 4 session 闭环，2026-08-11；不强制修复）
+
+correctness（8 项）：
+- §40 horizon 为路线起点绝对量，不随 traveled 平移——变化点距起点 >3000m 时随行驶漏报（建议修复：horizon 传 traveled+3000）
+- §49 提前距离 road_class 恒取 route.edges[0]、complexity 恒 0（行驶中不随当前路段更新）
+- §38 GLOSA 仅红灯接入（绿灯窗口未接入）
+- §37/§38 事件路径无 session 层测试（§40/§41 已有）
+- 保留原 4：speed.rs horizon 端点断点排除、CLI 持续显示错位（首条 1m）、speak.rs doc/clamp 顺序、bench/CLI 输入 panic
+
+docs（4 项）：
+- p3-01 测试表体未按代码 9 项重排（含重复/缺失行）
+- p3-01 §四 实测输出仍为审计前旧值（正向 3 断点/反向 44·232·1174·1413·2709——B1 修复后为 2 断点）
+- speed_change_ahead 死代码 + p3-01"由虚拟段测试间接覆盖"表述不成立
+- 281,141 标注口径（movement 281,012 + transit 129）未回写
+
+plan（2 项）：
+- 当前限速查询独立 API/CLI 未交付（运行时 matched_limit 已覆盖语义）
+- 数字口径漂移风险（以 --all-targets 93 实测为准）
+
+perf（7 项，首轮报告）：
+- bench/CLI 输入 panic 友好报错、unwrap 使用、加载口径注释等（详见 perf 首轮审计输出）
 
 ## 五、资产
 

@@ -13,7 +13,7 @@
       + route regression + match replay + signal link + perf smoke）
 [2/4] cargo fmt --check / clippy 0 / cargo test 无 FAILED（workspace 87 测试，含
       P3-01~06 的 38 个提醒/限速/播报断言（7+10+10+6+5；审计闭环后总测试 93 含虚拟段/随位推进补测））
-[3/4] P3 speed lookahead smoke：nav-core-cli speed Berlin → breaks=3（机器可读
+[3/4] P3 speed lookahead smoke：nav-core-cli speed Berlin → breaks=2（机器可读
       标记——P3-01 实证修正后 Berlin 3000m 断点数）
 [4/4] camera verdict smoke：camera-probe 全量 → VERDICT=NO-GO（P3-05 结论
       机器可读标记）
@@ -29,7 +29,7 @@ bat findstr 不可靠，顺带固化机器可读性）。
 P1 Regression Suite: ALL PASS
 P2 Regression Suite: ALL PASS
 [2/4] FMT PASS / CLIPPY PASS / CARGO TEST PASS
-[3/4] SPEED LOOKAHEAD PASS（breaks=3）
+[3/4] SPEED LOOKAHEAD PASS（breaks=2）
 [4/4] CAMERA VERDICT PASS（VERDICT=NO-GO）
 P3 Regression Suite: ALL PASS
 ```
