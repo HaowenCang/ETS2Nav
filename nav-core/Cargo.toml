@@ -8,4 +8,5 @@ members = [
     "crates/nav-matcher",
     "crates/nav-router",
     "tools/nav-core-cli",
+    "tools/od-corpus",
 ]

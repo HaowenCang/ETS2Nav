@@ -10,3 +10,4 @@ nav-telemetry = { path = "../../crates/nav-telemetry" }
 nav-spatial = { path = "../../crates/nav-spatial" }
 nav-matcher = { path = "../../crates/nav-matcher" }
 nav-router = { path = "../../crates/nav-router" }
+serde_json = "1"

@@ -62,6 +62,9 @@ pub struct NavigationSnapshot {
     pub upcoming_signal: Option<UpcomingSignal>,
     /// P3 提醒事件流（§39/§41/§36/§37/§38 决策接入；每帧当前触发状态）。
     pub reminders: Vec<crate::speak::ReminderEvent>,
+    /// P4 UI（§56 速度/限速卡片）：本帧车辆速度与地图限速（km/h；-1=未知）。
+    pub speed_kmh: f32,
+    pub map_limit_kmh: i16,
     pub destination: Option<String>,
     pub diagnostics: String,
 }
@@ -92,8 +95,8 @@ impl Default for SessionConfig {
 
 /// 导航会话（headless 状态机）。
 pub struct NavigationSession {
-    graph: std::rc::Rc<CompactGraph>,
-    spatial: std::rc::Rc<SpatialIndex>,
+    graph: std::sync::Arc<CompactGraph>,
+    spatial: std::sync::Arc<SpatialIndex>,
     turns: TurnLookup,
     cfg: SessionConfig,
     state: SessionState,
@@ -112,8 +115,8 @@ pub struct NavigationSession {
 
 impl NavigationSession {
     pub fn new(
-        graph: std::rc::Rc<CompactGraph>,
-        spatial: std::rc::Rc<SpatialIndex>,
+        graph: std::sync::Arc<CompactGraph>,
+        spatial: std::sync::Arc<SpatialIndex>,
         turns: TurnLookup,
         cfg: SessionConfig,
     ) -> Self {
@@ -290,10 +293,10 @@ impl NavigationSession {
         // travelled（不随位置推进→重复播报/永不播报）；④§36/§38 距离用 tracker
         // distance_to_edge（原双重计数）；⑤§37 green_imminent 接入。
         let mut reminders: Vec<crate::speak::ReminderEvent> = Vec::new();
+        let mut matched_limit: i16 = -1;
         if self.state == SessionState::Navigating {
             let now_s = snap.simulation_time as f64 / 1e6; // µs → s
             let speak_cfg = crate::speak::SpeakConfig::default();
-            let mut matched_limit: i16 = -1;
             // §39 限速对照（diagnostic——B2 T1 ground truth 记录）
             if mm.edge_id != u32::MAX {
                 let e = &self.graph.edges[mm.edge_id as usize];
@@ -401,6 +404,8 @@ impl NavigationSession {
             next_maneuver,
             upcoming_signal,
             reminders,
+            speed_kmh: snap.speed * 3.6,
+            map_limit_kmh: matched_limit,
             destination: self.destination.as_ref().map(|d| d.name.clone()),
             diagnostics: diag,
         }
@@ -459,8 +464,8 @@ mod tests {
 
     /// 直线图（0→1→2），目的地节点 2。
     fn setup() -> (
-        std::rc::Rc<CompactGraph>,
-        std::rc::Rc<SpatialIndex>,
+        std::sync::Arc<CompactGraph>,
+        std::sync::Arc<SpatialIndex>,
         Destination,
     ) {
         let nodes = vec![
@@ -499,11 +504,11 @@ mod tests {
             flags: 0,
             movement_id: None,
         };
-        let g = std::rc::Rc::new(CompactGraph::build(&RoutingGraph {
+        let g = std::sync::Arc::new(CompactGraph::build(&RoutingGraph {
             nodes: nodes.clone(),
             edges: vec![mk(0, 1), mk(1, 2)],
         }));
-        let sp = std::rc::Rc::new(SpatialIndex::build(&g, 256.0));
+        let sp = std::sync::Arc::new(SpatialIndex::build(&g, 256.0));
         let dest = Destination {
             kind: DestKind::Coordinate,
             name: "goal".into(),
@@ -612,11 +617,11 @@ mod tests {
             flags: 0,
             movement_id: None,
         };
-        let g = std::rc::Rc::new(CompactGraph::build(&RoutingGraph {
+        let g = std::sync::Arc::new(CompactGraph::build(&RoutingGraph {
             nodes: nodes.clone(),
             edges: vec![mk(0, 1, 80), mk(1, 2, 80), mk(2, 3, 50)],
         }));
-        let sp = std::rc::Rc::new(SpatialIndex::build(&g, 256.0));
+        let sp = std::sync::Arc::new(SpatialIndex::build(&g, 256.0));
         let dest = Destination {
             kind: DestKind::Coordinate,
             name: "goal".into(),

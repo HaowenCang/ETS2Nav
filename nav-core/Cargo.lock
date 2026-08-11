@@ -105,6 +105,7 @@ dependencies = [
  "nav-router",
  "nav-spatial",
  "nav-telemetry",
+ "serde_json",
 ]
 
 [[package]]
@@ -156,6 +157,16 @@ version = "0.1.0"
 dependencies = [
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "od-corpus"
+version = "0.1.0"
+dependencies = [
+ "nav-dataset",
+ "nav-graph",
+ "nav-router",
+ "nav-spatial",
 ]
 
 [[package]]

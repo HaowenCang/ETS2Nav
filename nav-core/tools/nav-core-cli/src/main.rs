@@ -3,6 +3,9 @@
 use std::path::Path;
 use std::time::Instant;
 
+mod server;
+mod server_cli;
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
     if args.len() < 3 {
@@ -26,6 +29,9 @@ fn main() {
         ("signal", _) if args.len() >= 4 => signal_cli(&args[2], &args[3]),
         ("session", _) if args.len() >= 4 => session_cli(&args[2], &args[3]),
         ("regression", _) if args.len() >= 3 => regression_cli(&args[2]),
+        ("server", _) if args.len() >= 3 => {
+            server_cli_run(&args[2], args.get(3), args.get(4), args.get(5))
+        }
         ("bench", _) if args.len() >= 3 => bench_cli(&args[2]),
         _ => {
             eprintln!("用法:");
@@ -563,8 +569,8 @@ fn session_cli(trace_path: &str, dataset_dir: &str) {
             eprintln!("加载 dataset 失败: {e}");
             std::process::exit(1);
         });
-    let graph = std::rc::Rc::new(nav_graph::CompactGraph::build(&routing));
-    let spatial = std::rc::Rc::new(nav_spatial::SpatialIndex::build(
+    let graph = std::sync::Arc::new(nav_graph::CompactGraph::build(&routing));
+    let spatial = std::sync::Arc::new(nav_spatial::SpatialIndex::build(
         &graph,
         nav_spatial::DEFAULT_CELL_SIZE,
     ));
@@ -1279,4 +1285,21 @@ fn dataset_info(dir: &str) {
             std::process::exit(1);
         }
     }
+}
+
+/// P4 nav-server（§60/§61）：nav-core-cli server <dataset-dir> [--replay trace] [--port N] [--web dir]
+fn server_cli_run(
+    dataset_dir: &str,
+    replay: Option<&String>,
+    port: Option<&String>,
+    web: Option<&String>,
+) {
+    let port: u16 = port
+        .and_then(|p| p.strip_prefix("--port=").map(|v| v.parse().unwrap_or(8123)))
+        .unwrap_or(8123);
+    let web_root = web
+        .and_then(|w| w.strip_prefix("--web=").map(|v| v.to_string()))
+        .unwrap_or_else(|| "tools/ets2nav-web".to_string());
+    let trace = replay.and_then(|r| r.strip_prefix("--replay=").map(|v| v.to_string()));
+    server_cli::server_cli(dataset_dir, trace.as_deref(), port, &web_root);
 }
