@@ -8,18 +8,22 @@
 ---
 
 ## 一、出口条件对照（P3-driving-assistant-plan.md §1 十个工作包）
+> 编号映射说明（审计闭环第四轮）：交付实施时工作包合并/顺序调整（对照+超速合并为
+> p3-02 报告、红灯绿灯提前、摄像头延后），故交付报告编号与计划 §1 编号存在偏移——
+> 下表以**计划 §1 编号为准**，交付列给出实际报告/提交定位。
 
-| 包 | 内容 | 状态 | 证据 |
-|---|---|---|---|
-| P3-00 | 计划 + 基线核查 | ✅ | 实证：RoadItem 无显式 speed_limit → **免 dataset v3** |
-| P3-01 | 前方限速查询（§40） | ✅ | speed.rs：10 测试（审计 B1 修复：虚拟段独立聚合）；Berlin 断点 2 个（起点边限速正确并入）；Europe 实测 |
-| P3-02 | 限速对照 diagnostic（§39）+ 超速（§41） | ✅ | reminder.rs：10 测试（±5 容差/≤50:+3/>50:+5） |
-| P3-03 | 红灯减速（§36）+ 即将绿灯（§37） | ✅ | 10 测试（d_stop 模型/四条件组合） |
-| P3-04 | GLOSA（§38） | ✅ | 6 测试（窗口∩限速∩加速；量化 5 km/h） |
-| P3-05 | 测速摄像头验证（§42） | ✅ **No-Go** | camera-probe 五级扫描 0 命中（73,141 prefab/2,024 model/144,912 sign） |
-| P3-06 | 事件流 + TTS（§48/§49） | ✅ | speak.rs：5 测试 + 中文语音文本 + SAPI smoke（3 voices） |
-| P3-07 | 合成回放套件 | ✅ | run-p3-tests.bat **ALL PASS**（P2 回归全链 + cargo 门 + 冒烟） |
-| P3-08 | 性能 + 关门 | ✅ | 限速查询 p99 **0.2µs**（目标 <10µs）；全部指标达标 |
+| 计划包 | 交付（报告） | 内容 | 状态 | 证据 |
+|---|---|---|---|---|
+| P3-00 | P3-driving-assistant-plan.md | 计划 + 基线核查 | ✅ | 实证：RoadItem 无显式 speed_limit → **免 dataset v3** |
+| P3-01 | p3-01-speed-lookahead | 前方限速查询（§40） | ✅ | speed.rs：9 测试（7 新增 − 删 1 + 审计 B1 补 3 虚拟段）；Berlin 断点 2 个（起点边限速正确并入）；Europe 实测 |
+| P3-02 | p3-02-speed-compare（§39 部分） | 限速对照 diagnostic（§39） | ✅ | compare_speed_limit ±5 容差；map -1 不对照 |
+| P3-03 | p3-02-speed-compare（§41 部分） | 超速提醒（§41） | ✅ | overspeed_check 阈值可配置（≤50:+3 / >50:+5）；limit≤0 不提醒 |
+| P3-04 | p3-03-signal-reminders | 红灯减速（§36）+ 即将绿灯（§37） | ✅ | 10 测试（d_stop 模型/四条件组合）；§37 运行时接入（审计 M5 修复） |
+| P3-05 | p3-04-glosa | GLOSA（§38） | ✅ | 6 测试（窗口∩限速∩加速；量化 5 km/h；floor/ceil 对称 epsilon） |
+| P3-06 | p3-06-reminder-speech | 事件流 + TTS（§48/§49） | ✅ | speak.rs：5 测试 + 中文语音文本 + SAPI smoke（3 voices） |
+| P3-07 | p3-05-camera-verdict | 测速摄像头验证（§42） | ✅ **No-Go** | camera-probe 五级扫描 0 命中（73,141 prefab/2,024 model/144,912 sign） |
+| P3-08 | p3-07-regression-suite | 合成回放套件 | ✅ | run-p3-tests.bat **ALL PASS**（P2 回归全链 + cargo 门 + 冒烟） |
+| P3-09 | p3-closeout（本报告） | 性能 + 关门 | ✅ | 限速查询 p99 **0.2µs**（目标 <10µs）；进程工作集 328MB；tag v0.4.0-p3 |
 
 **总测试**：workspace 93 全绿（--all-targets 实测口径：P2 49 → P3 +44，其中审计两轮修复净增 6——毛增 7 删 1）；fmt PASS；clippy 0。
 
@@ -53,6 +57,7 @@
 | 信号 runtime 关联 VERIFIED 实机确认 | B2 T3 | 提醒/GLOSA 以合成信号验证；绿灯时长 G=15s 配置默认待校准 |
 | 提醒实机验收（TTS 听感/误报/提前距离参数/30s 间隔） | B4 | speak.rs 参数均为默认设计值 |
 | 摄像头功能 | — | No-Go 结论；DLC 更新后 camera-probe 重验 |
+| sign/city rule 未入 dataset | — | 限速源仅 country×class×city（§55 裁剪实证）；DLC 更新后可经 camera-probe 同入口重验 |
 | 长 road 跨城市边界中点判定 | — | 已知近似 |
 
 **交付形态**：提醒模块默认关闭（D6 决策）——P4 UI 接入时以配置开关启用。
