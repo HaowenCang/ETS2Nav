@@ -84,6 +84,53 @@ foreach (var p in phaseList)
 Console.WriteLine("\n说明：比较各次进入同一路口的转换时刻。若 game.time 对固定周期取模后相位一致 → 全局时钟；");
 Console.WriteLine("若相位随进入时刻变化 → 加载锚定。固定周期可从 semaphore_profile 的 interval 总和获得。");
 
+// ---- TL-03 Warp 检测：sim 跳变（Δsim 与 wall×scale 期望偏差 > 300ms 且非暂停）----
+Console.WriteLine("\n=== TL-03 Warp 检测（B7 实验：warp 下信号灯行为） ===");
+var warps = new List<(long WallMs, double JumpMs)>();
+for (int i = 1; i < samples.Count; i++)
+{
+    var a = samples[i - 1];
+    var b = samples[i];
+    double dwallMs = b.WallMs - a.WallMs;
+    if (dwallMs <= 0 || dwallMs > 5000) continue;          // 采样间隙忽略
+    double expectedUs = dwallMs * a.Scale * 1000.0;         // 期望 sim 推进
+    double actualUs = (double)(b.SimUs > a.SimUs ? b.SimUs - a.SimUs : 0);
+    double jumpMs = (actualUs - expectedUs) / 1000.0;
+    if (jumpMs > 300.0)
+        warps.Add((b.WallMs, jumpMs));
+}
+if (warps.Count > 0)
+{
+    Console.WriteLine($"检出 sim 跳变 {warps.Count} 处（>300ms 超额推进）：");
+    foreach (var w in warps.Take(10))
+        Console.WriteLine($"  wall={w.WallMs / 1000.0:F1}s 超额 {w.JumpMs:F0}ms —— warp 候选");
+}
+else Console.WriteLine("无 sim 跳变（未 warp 或数据无 warp 段）");
+
+// ---- TL-04 Reset 检测：sim 倒退（读档/快速旅行重置）----
+Console.WriteLine("\n=== TL-04 Reset 检测（load/quick travel/teleport 后相位重置） ===");
+var resets = new List<(long WallMs, ulong FromUs, ulong ToUs)>();
+for (int i = 1; i < samples.Count; i++)
+{
+    if (samples[i].SimUs < samples[i - 1].SimUs)
+        resets.Add((samples[i].WallMs, samples[i - 1].SimUs, samples[i].SimUs));
+}
+if (resets.Count > 0)
+{
+    Console.WriteLine($"检出 sim 倒退 {resets.Count} 处：");
+    foreach (var r in resets.Take(10))
+        Console.WriteLine($"  wall={r.WallMs / 1000.0:F1}s sim {r.FromUs / 1_000_000.0:F1}s → {r.ToUs / 1_000_000.0:F1}s —— reset/快速旅行候选");
+}
+else Console.WriteLine("无 sim 倒退（无 reset 或数据无该段）");
+
+// ---- TL-05 特殊 profile：手动标记（采集侧 P 键）统计 ----
+var profs = events.Where(e => e.Kind == "PROF").ToList();
+if (profs.Count > 0)
+    Console.WriteLine($"\n=== TL-05 特殊 profile 路口标记：{profs.Count} 处（采集侧 P 键）——与事件时刻的相位/时钟对照分析 ===");
+var rstMarks = events.Where(e => e.Kind == "RST").ToList();
+if (rstMarks.Count > 0)
+    Console.WriteLine($"\n=== TL-04 手动标记（R 键）：{rstMarks.Count} 处——与自动检测对照 ===");
+
 // ---- 可选：样本 dump ----
 if (args.Contains("--dump"))
 {

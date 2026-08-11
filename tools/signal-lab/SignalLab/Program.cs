@@ -27,7 +27,7 @@ const int SampleIntervalMs = 10;      // 100 Hz
 const string OutDir = "signal-lab-data";
 
 Console.WriteLine("signal-lab：P0-B 时钟域实验仪器（Ctrl+C/按 Q 退出）");
-Console.WriteLine("按键：F9=未分类转换  1=红→绿  2=绿→红  3=其他   S=开始/结束会话   Q=退出");
+Console.WriteLine("按键：F9=未分类转换  1=红→绿  2=绿→红  3=其他   R=疑似重置/快速旅行  P=特殊profile路口  S=开始/结束会话  Q=退出");
 Console.WriteLine("操作：接近信号灯路口后按 S 开始，灯组变色的瞬间按键标记，驶离后按 S 结束。");
 
 Directory.CreateDirectory(OutDir);
@@ -59,6 +59,8 @@ var keyThread = new Thread(() =>
                 case ConsoleKey.D1: LogEvent("R2G"); break;
                 case ConsoleKey.D2: LogEvent("G2R"); break;
                 case ConsoleKey.D3: LogEvent("OTHER"); break;
+                case ConsoleKey.R: LogEvent("RST"); break;   // TL-04：读档/快速旅行疑似重置
+                case ConsoleKey.P: LogEvent("PROF"); break;  // TL-05：特殊 profile 路口（sleep_time/blockable）
                 case ConsoleKey.S:
                     sampling = !sampling;
                     Console.WriteLine(sampling ? "[会话开始]" : "[会话结束]");
