@@ -62,8 +62,9 @@ map-specific 数据不足，不实现（登记）。单条 road 限速取中点�
 horizon 截断；-1（未知）与 0（无限速）如实上报（不合并）。零 schema 变更。
 
 **D3 提醒事件流**：统一 ReminderEvent 枚举（SpeedLimit/OverSpeed/RedLight/
-GreenImminent/Glosa/Camera），与 §48 语义分离（UI/TTS 消费端各自转换）；
-会话管线 session.rs 输出提醒流（headless 可断言）。
+GreenImminent/Glosa——Camera 变体随 §42 No-Go 移除），与 §48 语义分离
+（UI/TTS 消费端各自转换）；会话管线 session.rs 输出提醒流（NavigationSnapshot.
+reminders，headless 可断言；2026-08-11 审计修复 A4 兑现）。
 
 **D4 TTS 频率管理**：D=f(v, road_class, maneuver complexity) 计算播报提前距离
 （§49 标准档），同类提醒最小间隔（§48 防轰炸）——配置化（低频/标准/高频）。

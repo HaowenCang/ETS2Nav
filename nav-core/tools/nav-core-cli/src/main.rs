@@ -236,7 +236,7 @@ fn roundabout_stats(dataset_dir: &str) {
 fn bench_cli(dataset_dir: &str) {
     // 1) 加载计时
     let t0 = std::time::Instant::now();
-    let (routing, _j) = nav_dataset::load_dataset(std::path::Path::new(dataset_dir))
+    let (routing, junctions) = nav_dataset::load_dataset(std::path::Path::new(dataset_dir))
         .unwrap_or_else(|e| {
             eprintln!("加载 dataset 失败: {e}");
             std::process::exit(1);
@@ -255,6 +255,7 @@ fn bench_cli(dataset_dir: &str) {
     let graph = nav_graph::CompactGraph::build(&routing);
     let build_ms = t1.elapsed().as_secs_f64() * 1000.0;
     drop(routing); // 构建后释放原始数据（运行时只保留压缩图）
+    drop(junctions); // 审计 perf-M2：junction.graph 数据运行时也不需要
     let t2 = std::time::Instant::now();
     let spatial = nav_spatial::SpatialIndex::build(&graph, nav_spatial::DEFAULT_CELL_SIZE);
     let spatial_ms = t2.elapsed().as_secs_f64() * 1000.0;
@@ -359,7 +360,63 @@ fn bench_cli(dataset_dir: &str) {
         sp(0.5) * 1000.0,
         sp(0.99) * 1000.0
     );
+    // 5) 真实进程内存（审计 perf-M2：GetProcessMemoryInfo 工作集实测口径）
+    println!(
+        "[内存-进程] 工作集 {:.0}MB（GetProcessMemoryInfo 实测，含 junctions）",
+        process_working_set_mb()
+    );
     println!("Bench PASS");
+}
+
+/// Windows 进程工作集（MB）。零依赖 psapi FFI（同 nav-telemetry 模式）。
+#[cfg(windows)]
+fn process_working_set_mb() -> f64 {
+    #[repr(C)]
+    struct ProcessMemoryCounters {
+        cb: u32,
+        page_fault_count: u32,
+        peak_working_set_size: usize,
+        working_set_size: usize,
+        quota_peak_paged_pool_usage: usize,
+        quota_paged_pool_usage: usize,
+        quota_peak_non_paged_pool_usage: usize,
+        quota_non_paged_pool_usage: usize,
+        pagefile_usage: usize,
+        peak_pagefile_usage: usize,
+    }
+    #[link(name = "psapi")]
+    unsafe extern "system" {
+        fn GetCurrentProcess() -> *mut core::ffi::c_void;
+        fn GetProcessMemoryInfo(
+            h: *mut core::ffi::c_void,
+            counters: *mut ProcessMemoryCounters,
+            cb: u32,
+        ) -> i32;
+    }
+    let mut c = ProcessMemoryCounters {
+        cb: std::mem::size_of::<ProcessMemoryCounters>() as u32,
+        page_fault_count: 0,
+        peak_working_set_size: 0,
+        working_set_size: 0,
+        quota_peak_paged_pool_usage: 0,
+        quota_paged_pool_usage: 0,
+        quota_peak_non_paged_pool_usage: 0,
+        quota_non_paged_pool_usage: 0,
+        pagefile_usage: 0,
+        peak_pagefile_usage: 0,
+    };
+    unsafe {
+        if GetProcessMemoryInfo(GetCurrentProcess(), &mut c, c.cb) != 0 {
+            c.working_set_size as f64 / 1e6
+        } else {
+            f64::NAN
+        }
+    }
+}
+
+#[cfg(not(windows))]
+fn process_working_set_mb() -> f64 {
+    f64::NAN
 }
 
 /// regression：Europe 全图区域化回归（P2-18）——
@@ -600,6 +657,13 @@ fn session_cli(trace_path: &str, dataset_dir: &str) {
         snap.heading = [0.0, (yaw / 2.0).sin() as f32, 0.0, (yaw / 2.0).cos() as f32];
         snap.speed = 14.0;
         let snap = session.on_frame(&snap);
+        // P3 提醒事件流打印（§39-41/§36-38 运行时接入）
+        for r in &snap.reminders {
+            println!("帧 {i}: 提醒 {}", nav_router::speak::to_speech_zh(r));
+        }
+        if !snap.diagnostics.is_empty() {
+            println!("帧 {i}: diag {}", snap.diagnostics);
+        }
         if snap.state != last_state {
             println!(
                 "帧 {i}: → {}（matched={:?} 剩余={:.0}m progress={:.2} diag={}）",

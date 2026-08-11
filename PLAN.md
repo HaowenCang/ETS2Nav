@@ -12,7 +12,7 @@
 - [x] **P0 阶段**（✅ 门评审通过 2026-08-10，tag v0.1.0-p0；A6/A8 工具并入 P1-01）
 - [x] **P1 Map Compiler**（✅ 关门 2026-08-10，tag v0.2.0-p1；15 工作包 P1-00~P1-14 完成 + 4 子代理收官评审修复 + Regression Suite ALL PASS；执行基线 = P1-map-compiler-plan.md）
 - [x] **P2 Navigation Core**（✅ 关门 2026-08-10，tag v0.3.0-p2；19 工作包全部完成 + 4 子代理收官审查（BLOCKER 1/MAJOR 7 修复）+ run-p2-tests.bat 7 步 ALL PASS；性能：路线 p99 0.39ms/匹配 p99 0.010ms/常驻内存 217MB/加载 298ms；G15 完整游戏会话等游戏内实测项列为已知限制，P3 前置）
-- [ ] P3 Driving Assistant
+- [x] P3 Driving Assistant（✅ 关门 2026-08-11，tag v0.4.0-p3；A1 十工作包完成——限速链/提醒决策/GLOSA/TTS 语义/摄像头 No-Go；90 测试全绿；herdr 独立审计闭环 BLOCKER/MAJOR 修复完成）
 - [ ] P4 正式 UI
 - [ ] P5 全欧洲测试
 - [ ] P6 性能优化与发布

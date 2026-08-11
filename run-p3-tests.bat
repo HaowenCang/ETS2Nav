@@ -21,7 +21,7 @@ cargo test 2>&1 | findstr /C:"FAILED" >nul
 if errorlevel 1 (echo CARGO TEST PASS) else (echo CARGO TEST FAIL & set FAIL=1)
 
 echo === [3/4] P3 speed lookahead smoke ===
-target\release\nav-core-cli.exe speed -58456,32832:-52925,36510 %DATASET% 3000 | findstr /C:"breaks=3" >nul
+target\release\nav-core-cli.exe speed -58456,32832:-52925,36510 %DATASET% 3000 | findstr /C:"breaks=2" >nul
 if errorlevel 1 set FAIL=1
 if %FAIL%==1 (echo SPEED LOOKAHEAD FAIL) else (echo SPEED LOOKAHEAD PASS)
 

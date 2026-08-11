@@ -5,7 +5,7 @@
 // (offset_m, limit) 断点，提供"前方 300 m 限速 50"式查询。零 schema 变更。
 
 use crate::search::Route;
-use nav_graph::{CompactGraph, EdgeKind};
+use nav_graph::{CompactEdge, CompactGraph, EdgeKind};
 
 /// 限速断点：offset_m 为沿路线起点（含起点虚拟段偏移）累计距离，limit 单位 km/h
 /// （-1 未知 / 0 无限速 / >0 限速）。-1 与 0 不与任何值合并，如实上报。
@@ -17,65 +17,80 @@ pub struct SpeedBreak {
 
 /// 沿 route 聚合前方限速断点（§40）。
 ///
-/// - 相邻同值去重（含虚拟段起始偏移截断后的首边）；
+/// - 相邻同值去重；-1/0 不与任何值合并（如实上报）；
 /// - horizon_m 截断（超过后停止）；
-/// - 空 edges（纯虚拟段路线）返回空；
-/// - 首边按 start_virtual 偏移截断，末边按 end_virtual 偏移截断；
+/// - **虚拟段独立聚合**（P3-审计 B1 修复）：start_virtual/end_virtual 的边
+///   不在 route.edges 序列中（search.rs 语义：edges 为完整边序列，虚拟段为
+///   吸附边上的部分段）——先推 start_e 限速段（offset 0 起）并按 seg 推进，
+///   再 edges 全序列（每边全长），最后 end_e 限速段（seg 后不再推进）；
 /// - **JunctionMovement/Ferry/Train/ServiceAccess 边继承前值**（P3-01 实证：
 ///   写入端未定义这些边类型的限速语义，routing.graph 中 100% 为 -1；
-///   路口内部短连接不产生限速变化，应继承所连接道路限速）。
+///   路口内部短连接不产生限速变化，应继承所连接道路限速）；
+/// - 无虚拟段且 edges 为空时返回空。
 pub fn speed_breaks_ahead(route: &Route, graph: &CompactGraph, horizon_m: f32) -> Vec<SpeedBreak> {
-    if route.edges.is_empty() {
+    if route.edges.is_empty() && route.start_virtual.is_none() && route.end_virtual.is_none() {
         return Vec::new();
     }
     let mut out: Vec<SpeedBreak> = Vec::new();
     let mut acc: f32 = 0.0;
     let mut cur: Option<i16> = None;
 
-    for (i, &eid) in route.edges.iter().enumerate() {
-        let e = &graph.edges[eid as usize];
-        // 首边扣除起点虚拟段已行驶长度；末边扣除终点虚拟段未行驶长度
-        let mut len = e.length.max(0.0);
-        if i == 0 {
-            if let Some((_, off, forward)) = route.start_virtual {
-                len -= if forward {
-                    off as f32
-                } else {
-                    e.length - off as f32
-                };
-            }
+    // 断点推进：限速变化时记录；超 horizon 停止。
+    let advance = |e: &CompactEdge,
+                   len: f32,
+                   acc: &mut f32,
+                   out: &mut Vec<SpeedBreak>,
+                   cur: &mut Option<i16>| {
+        if *acc >= horizon_m {
+            return;
         }
-        if i + 1 == route.edges.len() {
-            if let Some((_, off, forward)) = route.end_virtual {
-                let rest = if forward {
-                    e.length - off as f32
-                } else {
-                    off as f32
-                };
-                len -= (e.length - rest).max(0.0);
-            }
-        }
-        let len = len.max(0.0);
-        if acc >= horizon_m {
-            break;
-        }
-        // 非 Road 边继承当前限速（不产生断点）
         let limit = if e.kind == EdgeKind::Road {
             e.speed_limit
         } else {
-            cur.unwrap_or(-1)
+            cur.unwrap_or(e.speed_limit)
         };
-        if cur != Some(limit) {
+        if *cur != Some(limit) {
             out.push(SpeedBreak {
-                offset_m: acc,
+                offset_m: *acc,
                 limit,
             });
-            cur = Some(limit);
+            *cur = Some(limit);
         }
-        acc += len;
+        *acc += len.max(0.0);
+    };
+
+    // 起点虚拟段（start_e ∉ edges）
+    if let Some((eid, offset, forward)) = route.start_virtual {
+        let e = &graph.edges[eid as usize];
+        let seg = if forward {
+            e.length - offset as f32
+        } else {
+            offset as f32
+        };
+        advance(e, seg, &mut acc, &mut out, &mut cur);
     }
-    // horizon 后首个断点补记（若有变化）——由 acc >= horizon 提前 break 的
-    // 语义保证：超出 horizon 的断点不产生。
+    // edges 全序列（每边全长）
+    for &eid in &route.edges {
+        let e = &graph.edges[eid as usize];
+        advance(e, e.length, &mut acc, &mut out, &mut cur);
+    }
+    // 终点虚拟段（end_e ∉ edges）
+    if let Some((eid, _offset, _forward)) = route.end_virtual {
+        if acc < horizon_m {
+            let e = &graph.edges[eid as usize];
+            let limit = if e.kind == EdgeKind::Road {
+                e.speed_limit
+            } else {
+                cur.unwrap_or(e.speed_limit)
+            };
+            if cur != Some(limit) {
+                out.push(SpeedBreak {
+                    offset_m: acc,
+                    limit,
+                });
+            }
+        }
+    }
     out
 }
 
@@ -247,12 +262,13 @@ mod tests {
     }
 
     #[test]
-    fn start_offset_shifts_first_break() {
+    fn start_forward_virtual_segment() {
+        // 真实 Route 形态（审计 B1）：start_e 不在 edges 序列中。
+        // start_e(100m, 80) offset 40 fwd → 虚拟段 60m（80）；edges[0](100m, 50) 全长
         let (g, eids) = graph_with_limits(&[80, 50]);
-        let mut r = route_on(&eids);
-        r.start_virtual = Some((eids[0], 40.0, true)); // 已行驶 40m
+        let mut r = route_on(&eids[1..]); // edges 不含 start_e
+        r.start_virtual = Some((eids[0], 40.0, true));
         let breaks = speed_breaks_ahead(&r, &g, 1000.0);
-        // 首边剩余 60m → 断点在 60m 处
         assert_eq!(
             breaks,
             vec![
@@ -262,6 +278,51 @@ mod tests {
                 },
                 SpeedBreak {
                     offset_m: 60.0,
+                    limit: 50
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn start_backward_virtual_segment() {
+        // backward：虚拟段 = [0, offset]（倒回边起点 40m），edges[0] 全长
+        let (g, eids) = graph_with_limits(&[80, 50]);
+        let mut r = route_on(&eids[1..]);
+        r.start_virtual = Some((eids[0], 40.0, false));
+        let breaks = speed_breaks_ahead(&r, &g, 1000.0);
+        assert_eq!(
+            breaks,
+            vec![
+                SpeedBreak {
+                    offset_m: 0.0,
+                    limit: 80
+                },
+                SpeedBreak {
+                    offset_m: 40.0,
+                    limit: 50
+                },
+            ]
+        );
+    }
+
+    #[test]
+    fn end_virtual_segment_break() {
+        // edges: [100m 80]；end_e(60m, 50) fwd offset 30 → seg=30
+        // 终点限速与 edges 末值不同 → 断点产生在 edges 总长 100m 处
+        let (g, eids) = graph_with_limits(&[80, 50]);
+        let mut r = route_on(&eids[..1]);
+        r.end_virtual = Some((eids[1], 30.0, true));
+        let breaks = speed_breaks_ahead(&r, &g, 1000.0);
+        assert_eq!(
+            breaks,
+            vec![
+                SpeedBreak {
+                    offset_m: 0.0,
+                    limit: 80
+                },
+                SpeedBreak {
+                    offset_m: 100.0,
                     limit: 50
                 },
             ]

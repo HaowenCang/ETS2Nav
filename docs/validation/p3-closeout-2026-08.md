@@ -12,7 +12,7 @@
 | 包 | 内容 | 状态 | 证据 |
 |---|---|---|---|
 | P3-00 | 计划 + 基线核查 | ✅ | 实证：RoadItem 无显式 speed_limit → **免 dataset v3** |
-| P3-01 | 前方限速查询（§40） | ✅ | speed.rs：8 测试；Berlin 断点 3 个（movement 继承修正 24→3）；Europe 实测 |
+| P3-01 | 前方限速查询（§40） | ✅ | speed.rs：10 测试（审计 B1 修复：虚拟段独立聚合）；Berlin 断点 2 个（起点边限速正确并入）；Europe 实测 |
 | P3-02 | 限速对照 diagnostic（§39）+ 超速（§41） | ✅ | reminder.rs：10 测试（±5 容差/≤50:+3/>50:+5） |
 | P3-03 | 红灯减速（§36）+ 即将绿灯（§37） | ✅ | 10 测试（d_stop 模型/四条件组合） |
 | P3-04 | GLOSA（§38） | ✅ | 6 测试（窗口∩限速∩加速；量化 5 km/h） |
@@ -21,7 +21,7 @@
 | P3-07 | 合成回放套件 | ✅ | run-p3-tests.bat **ALL PASS**（P2 回归全链 + cargo 门 + 冒烟） |
 | P3-08 | 性能 + 关门 | ✅ | 限速查询 p99 **0.2µs**（目标 <10µs）；全部指标达标 |
 
-**总测试**：workspace 87 全绿（+38 vs P2 的 49）；fmt PASS；clippy 0。
+**总测试**：workspace 90 全绿（+41 vs P2 的 49；审计修复补 3）；fmt PASS；clippy 0。
 
 ## 二、性能数字（P3-08 bench，Europe v4 全图）
 
@@ -32,6 +32,7 @@
 | 路线 p99 | 0.378ms | <500ms | ✅ |
 | 匹配 p99 | 0.012ms | <10ms | ✅ |
 | **限速查询 p99** | **0.2µs** | **<10µs** | ✅ 超 50× |
+| 进程工作集（实测） | 328MB（释放 junctions 后） | <500MB | ✅ |
 
 ## 三、本阶段实证结论（计划修正）
 
@@ -59,7 +60,7 @@
 
 - 代码：nav-router speed/reminder/speak 三模块（+38 测试）
 - 工具：camera-probe（五级扫描）、run-p3-tests.bat（4 步套件）
-- 报告：docs/validation/p3-00~p3-08-2026-08.md（9 份）
+- 报告：docs/validation/p3-01~p3-07-2026-08.md（7 份）+ p3-closeout-2026-08.md（P3-00 为计划文档 P3-driving-assistant-plan.md；P3-08 内容并入本报告）
 - 计划：P3-driving-assistant-plan.md（实证修正版）
 
 ## 六、下一步（PLAN-P3plus.md §6：A2 P4 UI 先行）

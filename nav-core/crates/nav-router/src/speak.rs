@@ -110,7 +110,9 @@ pub fn to_speech_zh(ev: &ReminderEvent) -> String {
             distance_m,
             limit_kmh,
         } => {
-            if *limit_kmh <= 0 {
+            if *limit_kmh < 0 {
+                format!("前方{}，限速未知", dist_zh(*distance_m))
+            } else if *limit_kmh == 0 {
                 format!("前方{}，解除限速", dist_zh(*distance_m))
             } else {
                 format!("前方{}，限速{}", dist_zh(*distance_m), limit_kmh)
@@ -209,6 +211,13 @@ mod tests {
                 limit_kmh: 0
             }),
             "前方5百米，解除限速"
+        );
+        assert_eq!(
+            to_speech_zh(&ReminderEvent::SpeedLimitChange {
+                distance_m: 500,
+                limit_kmh: -1
+            }),
+            "前方5百米，限速未知"
         );
         assert_eq!(
             to_speech_zh(&ReminderEvent::OverSpeed { limit_kmh: 50 }),

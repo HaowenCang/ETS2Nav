@@ -19,18 +19,21 @@
 
 CLI：`nav-core-cli speed <x1,z1:x2,z2> <dataset-dir> [horizon_m]`——route fastest 后输出断点表。
 
-## 二、单元测试（8 个新增）
+## 二、单元测试（审计后 10 个；原 7 个新增，审计修复补 3 个虚拟段形态测试）
 
 | 测试 | 断言 |
 |---|---|
 | basic_breaks | 80/50/70 → 断点 @0/100/200m |
+| start_forward_virtual_segment | start_e 不在 edges：虚拟段 60m→edges[0] 全长 → 断点 @0/60m（审计 B1 修复） |
+| start_backward_virtual_segment | backward 虚拟段 [0,offset] 40m → 断点 @0/40m（审计 B1 修复） |
+| end_virtual_segment_break | end_e 不在 edges：edges 总长 100m 处断点 @100m（审计 B1 修复） |
 | adjacent_same_merged | 80/80/50 → 合并为 80@0、50@200 |
 | horizon_truncates | horizon 250m 截断 300m 处断点 |
 | unknown_and_unlimited_not_merged | -1/0 各自成断点不合并 |
 | start_offset_shifts_first_break | start_virtual 40m → 首断点 @60m |
-| movement_edges_inherit_previous_limit | Road 80→Movement(-1)→Road 50 → 断点 @0/120m（movement 不产断点） |
-| empty_route | 空 edges 返回空 |
-| speed_change_ahead | 首变化点即第 2 断点 |
+| start_backward_virtual_segment | backward 虚拟段 [0,offset] 40m → 断点 @0/40m（审计 B1 修复） |
+| end_virtual_segment_break | end_e ∉ edges：edges 总长 100m 处断点 @100m（审计 B1 修复） |
+| start_forward_virtual_segment | start_e ∉ edges：虚拟段 60m→edges[0] 全长 → 断点 @0/60m（审计 B1 修复） |
 
 ## 三、数据实证（Europe v4 全图，P3-00 计划实证的延续）
 
@@ -63,6 +66,7 @@ routing.graph 696,717 边 speed_limit 分布：
 ## 五、门与回归
 
 - cargo fmt --check PASS；clippy 0 warnings；cargo test **56 全绿**（+7，无 FAILED）
+- **审计修复（2026-08-11）**：虚拟段独立聚合重写（start/end_virtual 边不在 edges 序列——审计 B1），补 3 测试（start_forward/start_backward/end_virtual）→ workspace 90
 - P1/P2 无受影响（nav-router lib 测试 29→37 全过；CLI 编译干净）
 
 ## 六、已知限制（登记）

@@ -35,6 +35,15 @@ pub fn compare_speed_limit(map_limit_kmh: i16, telemetry_limit_ms: f32) -> Speed
             diff_kmh: 0,
         };
     }
+    if !telemetry_limit_ms.is_finite() {
+        // NaN/Inf 源（审计 MINOR-5）：不对照，避免虚假告警
+        return SpeedLimitCompare {
+            map_limit_kmh,
+            telemetry_limit_kmh: -1,
+            mismatch: false,
+            diff_kmh: 0,
+        };
+    }
     let tel_kmh = (telemetry_limit_ms * 3.6).round() as i16;
     let diff = tel_kmh - map_limit_kmh;
     SpeedLimitCompare {
@@ -121,7 +130,7 @@ pub fn red_light_warning(
     if state != LightState::Red && state != LightState::Yellow {
         return false;
     }
-    distance_to_stop_line_m < stopping_distance(v_ms, cfg)
+    distance_to_stop_line_m >= 0.0 && distance_to_stop_line_m < stopping_distance(v_ms, cfg)
 }
 
 // ─── §37 即将绿灯 ─────────────────────────────────────────────────────────
@@ -217,6 +226,9 @@ pub fn glosa_advice(
     cfg: &GlosaConfig,
 ) -> GlosaAdvice {
     if confidence != SignalConfidence::Verified
+        || !distance_m.is_finite()
+        || !remaining_s.is_finite()
+        || !v_now_ms.is_finite()
         || distance_m < cfg.min_distance_m
         || distance_m > cfg.max_distance_m
         || remaining_s < 0.0
@@ -269,14 +281,15 @@ pub fn glosa_advice(
             feasible: false,
         };
     }
-    // 低精度量化（§38：53.6~64.2 → 50~65 式显示）；epsilon 吸收 f32 边界误差
-    // （仅 ceil 方向需要——floor 方向的 44.999 会误入下档）
+    // 低精度量化（§38：53.6~64.2 → 50~65 式显示）；epsilon 对称吸收 f32 边界误差
+    // （审计 M2 修复：floor 方向裸除会使恰为 5 倍数的 v_min 低估一档——v_min 是
+    // "必须不低于"的硬约束，低估不安全；两方向各取 ±epsilon）
     let q = |x: f32, up: bool| -> i16 {
         let kmh = x * 3.6;
         if up {
             (((kmh - 1e-3) / 5.0).ceil() as i16 * 5).max(5)
         } else {
-            ((kmh / 5.0).floor() as i16 * 5).max(0)
+            (((kmh + 1e-3) / 5.0).floor() as i16 * 5).max(0)
         }
     };
     GlosaAdvice {
@@ -581,6 +594,25 @@ mod tests {
         );
         assert!(a.feasible);
         assert_eq!(a.v_max_kmh, 75); // 72 ceil 到 75
+    }
+
+    #[test]
+    fn glosa_vmin_boundary_floor_epsilon() {
+        // 审计 M2 回归：d=25/t2=3 绿灯 → v_lo=25/3=8.333 m/s=30.0 km/h
+        // f32 管线可能落在 29.999998——floor 裸除会低估到 25（不安全方向）；
+        // 对称 epsilon 修复后必须 30
+        let cfg = GlosaConfig::default();
+        let a = glosa_advice(
+            25.0,
+            LightState::Green,
+            SignalConfidence::Verified,
+            3.0,
+            0.0, // v_now=0 → v_acc_hi=10 m/s ≥ v_lo=8.33，可行
+            80,
+            &cfg,
+        );
+        assert!(a.feasible);
+        assert_eq!(a.v_min_kmh, 30);
     }
 
     #[test]

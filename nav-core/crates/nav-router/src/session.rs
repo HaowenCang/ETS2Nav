@@ -60,6 +60,8 @@ pub struct NavigationSnapshot {
     pub progress: Option<f64>,
     pub next_maneuver: Option<Maneuver>,
     pub upcoming_signal: Option<UpcomingSignal>,
+    /// P3 提醒事件流（§39/§41/§36/§37/§38 决策接入；每帧当前触发状态）。
+    pub reminders: Vec<crate::speak::ReminderEvent>,
     pub destination: Option<String>,
     pub diagnostics: String,
 }
@@ -104,6 +106,8 @@ pub struct NavigationSession {
     low_speed_frames: u32,
     last_position: Option<(f64, f64, f64)>,
     frames: u64,
+    /// P3 播报频率门（§48 同类最小间隔）。
+    reminder_gate: crate::speak::ReminderGate,
 }
 
 impl NavigationSession {
@@ -128,6 +132,7 @@ impl NavigationSession {
             tracker: None,
             route: None,
             destination: None,
+            reminder_gate: crate::speak::ReminderGate::new(),
             low_speed_frames: 0,
             last_position: None,
             frames: 0,
@@ -279,6 +284,94 @@ impl NavigationSession {
         let remaining_s = self.tracker.as_ref().map(|t| t.time_remaining(&self.graph));
         let next_maneuver = self.next_maneuver();
         let upcoming_signal = self.next_signal();
+        // —— P3 提醒事件流（§40/§41/§36/§38 决策接入；§39 对照进 diagnostics）——
+        let mut reminders: Vec<crate::speak::ReminderEvent> = Vec::new();
+        if self.state == SessionState::Navigating {
+            let now_s = snap.simulation_time as f64 / 1000.0;
+            let speak_cfg = crate::speak::SpeakConfig::default();
+            // §39 限速对照（diagnostic——B2 T1 ground truth 记录）
+            if mm.edge_id != u32::MAX {
+                let e = &self.graph.edges[mm.edge_id as usize];
+                if e.kind == nav_graph::EdgeKind::Road {
+                    let cmp = crate::reminder::compare_speed_limit(e.speed_limit, snap.speed_limit);
+                    if cmp.mismatch {
+                        diag.push_str(&format!(
+                            "speedcmp:map{}!=tel{};",
+                            cmp.map_limit_kmh, cmp.telemetry_limit_kmh
+                        ));
+                    }
+                    // §41 超速提醒
+                    let cfg41 = crate::reminder::OverSpeedConfig::default();
+                    if let Some(trigger) =
+                        crate::reminder::overspeed_check(snap.speed, e.speed_limit, &cfg41)
+                    {
+                        if self.reminder_gate.allow("overspeed", now_s, &speak_cfg) {
+                            reminders.push(crate::speak::ReminderEvent::OverSpeed {
+                                limit_kmh: e.speed_limit,
+                            });
+                        }
+                        let _ = trigger;
+                    }
+                }
+            }
+            // §40 前方限速变化（首个变化点 ≤ 提前距离）
+            if let (Some(route), Some(_tracker)) = (self.route.as_ref(), self.tracker.as_ref()) {
+                let breaks = crate::speed::speed_breaks_ahead(route, &self.graph, 3000.0);
+                if let Some(change) = breaks.get(1) {
+                    let v_kmh = (snap.speed * 3.6).abs();
+                    let road_class = self.graph.edges[route.edges[0] as usize].road_class;
+                    let ahead =
+                        crate::speak::speak_ahead_distance_m(v_kmh, road_class, 0, &speak_cfg);
+                    if change.offset_m <= ahead as f32
+                        && self.reminder_gate.allow("speedlimit", now_s, &speak_cfg)
+                    {
+                        reminders.push(crate::speak::ReminderEvent::SpeedLimitChange {
+                            distance_m: change.offset_m as u32,
+                            limit_kmh: change.limit,
+                        });
+                    }
+                }
+            }
+            // §36/§38 信号提醒（upcoming_signal 已关联时）
+            if let Some(up) = &upcoming_signal {
+                if let (Some(state), Some(rem)) = (up.state, up.remaining_time) {
+                    let d = self
+                        .dist_to_signal(up.route_edge_index)
+                        .unwrap_or(f64::INFINITY) as f32;
+                    if state == crate::signal::LightState::Red
+                        && up.confidence == crate::signal::SignalConfidence::Verified
+                    {
+                        let cfg36 = crate::reminder::RedLightConfig::default();
+                        if crate::reminder::red_light_warning(d, snap.speed, state, &cfg36)
+                            && self.reminder_gate.allow("redlight", now_s, &speak_cfg)
+                        {
+                            reminders.push(crate::speak::ReminderEvent::RedLight {
+                                distance_m: d as u32,
+                            });
+                        }
+                        let cfg38 = crate::reminder::GlosaConfig::default();
+                        let limit = self.graph.edges
+                            [self.graph.edges[up.movement_edge_id as usize].from as usize]
+                            .speed_limit;
+                        let adv = crate::reminder::glosa_advice(
+                            d,
+                            state,
+                            up.confidence,
+                            rem,
+                            snap.speed,
+                            limit,
+                            &cfg38,
+                        );
+                        if adv.feasible && self.reminder_gate.allow("glosa", now_s, &speak_cfg) {
+                            reminders.push(crate::speak::ReminderEvent::Glosa {
+                                v_min_kmh: adv.v_min_kmh,
+                                v_max_kmh: adv.v_max_kmh,
+                            });
+                        }
+                    }
+                }
+            }
+        }
         NavigationSnapshot {
             state: self.state,
             position: Some(pos),
@@ -290,6 +383,7 @@ impl NavigationSession {
             progress,
             next_maneuver,
             upcoming_signal,
+            reminders,
             destination: self.destination.as_ref().map(|d| d.name.clone()),
             diagnostics: diag,
         }
@@ -303,6 +397,21 @@ impl NavigationSession {
         // 找 route_edge_index > from 的第一个非 Continue 类型
         ms.into_iter()
             .find(|m| m.route_edge_index > from && m.mtype != crate::maneuver::ManeuverType::Depart)
+    }
+
+    /// 到目标 route 边索引的剩余距离（米）：当前边剩余 + 中间边全长（P3 A4 §36/§38 输入）。
+    fn dist_to_signal(&self, target_index: usize) -> Option<f64> {
+        let route = self.route.as_ref()?;
+        let tracker = self.tracker.as_ref()?;
+        let from = tracker.edge_index();
+        if target_index <= from {
+            return None;
+        }
+        let mut d = tracker.edge_remaining(&self.graph);
+        for &eid in &route.edges[from + 1..=target_index] {
+            d += self.graph.edges[eid as usize].length as f64;
+        }
+        Some(d)
     }
 
     /// 下一个受控信号（§112）。
@@ -423,6 +532,35 @@ mod tests {
             fuel_warning: false,
             job: None,
         }
+    }
+
+    #[test]
+    fn overspeed_reminder_emitted() {
+        // P3 A4：超速（speed 60 m/s vs 限速 50 → +3 阈值 53）→ OverSpeed 事件
+        let (g, sp, dest) = setup();
+        let mut s = NavigationSession::new(g, sp, TurnLookup::new(), SessionConfig::default());
+        s.on_frame(&telemetry_at(10.0, 14.0));
+        s.set_destination(dest).expect("规划应成功");
+        // 帧 1：沿路线第一点，速度 60 m/s（216 km/h）→ 超速触发
+        let mut t = telemetry_at(20.0, 60.0);
+        t.simulation_time = 1000; // 1s——gate 干净
+        let snap = s.on_frame(&t);
+        assert_eq!(snap.state, SessionState::Navigating);
+        assert!(
+            snap.reminders
+                .iter()
+                .any(|r| matches!(r, crate::speak::ReminderEvent::OverSpeed { .. })),
+            "应产生 OverSpeed 提醒，实际: {:?}",
+            snap.reminders
+        );
+        // 同类 10s 内不重复（§48 防轰炸）
+        let mut t2 = telemetry_at(30.0, 60.0);
+        t2.simulation_time = 5000;
+        let snap2 = s.on_frame(&t2);
+        assert!(!snap2
+            .reminders
+            .iter()
+            .any(|r| matches!(r, crate::speak::ReminderEvent::OverSpeed { .. })));
     }
 
     #[test]
