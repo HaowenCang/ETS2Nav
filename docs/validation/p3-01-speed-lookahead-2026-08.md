@@ -19,7 +19,7 @@
 
 CLI：`nav-core-cli speed <x1,z1:x2,z2> <dataset-dir> [horizon_m]`——route fastest 后输出断点表。
 
-## 二、单元测试（当前 10 个：P3-01 新增 7 + 审计 B1 补 3 个虚拟段形态测试；speed_change_ahead 由虚拟段测试间接覆盖）
+## 二、单元测试（当前 9 个：P3-01 新增 7 − 删除 start_offset_shifts_first_break（审计 B1：原测试固化错误模型）+ 审计补 3 个虚拟段形态测试；speed_change_ahead 由虚拟段测试间接覆盖）
 
 | 测试 | 断言 |
 |---|---|
@@ -66,8 +66,8 @@ routing.graph 696,717 边 speed_limit 分布：
 ## 五、门与回归
 
 - cargo fmt --check PASS；clippy 0 warnings；cargo test **56 全绿**（+7，无 FAILED）
-- **审计修复（2026-08-11）**：虚拟段独立聚合重写（start/end_virtual 边不在 edges 序列——审计 B1），补 3 测试（start_forward/start_backward/end_virtual）→ workspace 90
-- P1/P2 无受影响（nav-router lib 测试 29→37 全过；CLI 编译干净）
+- **审计修复（2026-08-11）**：虚拟段独立聚合重写（start/end_virtual 边不在 edges 序列——审计 B1），补 3 测试（start_forward/start_backward/end_virtual）→ workspace 93（--all-targets 实测）
+- P1/P2 无受影响（nav-router lib 测试 30→37 全过；CLI 编译干净）
 
 ## 六、已知限制（登记）
 

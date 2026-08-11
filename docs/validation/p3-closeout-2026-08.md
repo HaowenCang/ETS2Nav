@@ -21,7 +21,7 @@
 | P3-07 | 合成回放套件 | ✅ | run-p3-tests.bat **ALL PASS**（P2 回归全链 + cargo 门 + 冒烟） |
 | P3-08 | 性能 + 关门 | ✅ | 限速查询 p99 **0.2µs**（目标 <10µs）；全部指标达标 |
 
-**总测试**：workspace 93 全绿（--all-targets 实测口径：P2 49 → P3 +44，审计两轮修复补 5）；fmt PASS；clippy 0。
+**总测试**：workspace 93 全绿（--all-targets 实测口径：P2 49 → P3 +44，其中审计两轮修复净增 6——毛增 7 删 1）；fmt PASS；clippy 0。
 
 ## 二、性能数字（P3-08 bench，Europe v4 全图）
 

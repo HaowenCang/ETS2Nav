@@ -28,11 +28,20 @@
 - 实机提醒验收（B4）
 - TTS 实际听感体验（B4）
 
-**数据集（实证修正，P3-00）**：RoadItem 无显式 speed_limit 属性（SectorFile.cs
-核查）——限速全部来自 SpeedModel（country × speed_class × IsCityRoad，每 road
-单值）；edge == 单条 road，真实限速分段发生在**相邻边之间**。因此**无需 dataset
-v3**：沿用 Europe v5（edge.speed_limit 已含每边限速），前方限速由 Rust 侧沿路线
-前视聚合查询提供。零 schema 变更、零数据集重建。
+**数据集（实证修正，P3-00，2026-08-11 审计闭环回写）**：RoadItem 无显式
+speed_limit 属性（SectorFile.cs 核查）——限速全部来自 SpeedModel（country ×
+speed_class × IsCityRoad，每 road 单值）；edge == 单条 road，真实限速分段发生在
+**相邻边之间**。因此**无需 dataset v3**：沿用 Europe v4（edge.speed_limit 已含
+每边限速），前方限速由 Rust 侧沿路线前视聚合查询提供。零 schema 变更、零数据集
+重建。
+
+**实证结论（审计闭环回写，与 closeout §三 对齐，共 3 项）**：
+1. 免 dataset v3（上述）；
+2. **movement 边限速 100% -1**：写入端未定义该语义（routing 边 281,141 全 -1，
+   Road 仅 1.8%=7,394）——查询层继承前值；审计 B1 修复后起点边限速正确并入，
+   Berlin 实测断点 2 个（24 为旧模型按边计数，真实断点以 2 为准）；
+3. **测速摄像头 No-Go**：五级扫描 0 实例（P3-05）——按 §42 不实现，probe 留作
+   DLC 更新重验。
 
 ---
 
@@ -59,7 +68,10 @@ map-specific 数据不足，不实现（登记）。单条 road 限速取中点�
 少数长 road 为已知近似）。
 
 **D2 前方限速查询**：沿 route edge 序列聚合 (offset_m, limit) 断点，相邻同值去重，
-horizon 截断；-1（未知）与 0（无限速）如实上报（不合并）。零 schema 变更。
+horizon 截断；-1（未知）与 0（无限速）如实上报（不合并）；**非 Road 边
+（JunctionMovement/Ferry/Train/ServiceAccess）继承前值**（P3-01 实证：写入端未
+定义这些边类型的限速语义，routing 中 100% 为 -1，路口内部短连接不产生限速变化；
+Road 自身 1.8% 未知维持 -1 如实上报）。零 schema 变更。
 
 **D3 提醒事件流**：统一 ReminderEvent 枚举（SpeedLimit/OverSpeed/RedLight/
 GreenImminent/Glosa——Camera 变体随 §42 No-Go 移除），与 §48 语义分离
