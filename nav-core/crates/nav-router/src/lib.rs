@@ -15,5 +15,6 @@ pub mod search;
 pub mod session;
 pub mod signal;
 pub mod snap;
+pub mod speak;
 pub mod speed;
 pub mod tracker;
