@@ -14,4 +14,5 @@ pub mod search;
 pub mod session;
 pub mod signal;
 pub mod snap;
+pub mod speed;
 pub mod tracker;

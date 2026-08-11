@@ -22,6 +22,7 @@ fn main() {
         ("route-verify", _) if args.len() >= 3 => route_verify(&args[2]),
         ("roundabout-stats", _) if args.len() >= 3 => roundabout_stats(&args[2]),
         ("dest", _) if args.len() >= 4 => dest_cli(&args[2], &args[3]),
+        ("speed", _) if args.len() >= 4 => speed_cli(&args[2], &args[3], args.get(4)),
         ("signal", _) if args.len() >= 4 => signal_cli(&args[2], &args[3]),
         ("session", _) if args.len() >= 4 => session_cli(&args[2], &args[3]),
         ("regression", _) if args.len() >= 3 => regression_cli(&args[2]),
@@ -901,6 +902,71 @@ fn route_verify(dataset_dir: &str) {
 }
 
 /// route：A* 路线规划（§124：distance/ETA/signals/edges/maneuvers；三 profile 对比）。
+/// 前方限速断点（§40）：route fastest 后沿路线聚合 (offset, limit)。
+/// 用法: nav-core-cli speed <x1,z1:x2,z2> <dataset-dir> [horizon_m]
+fn speed_cli(xz: &str, dataset_dir: &str, horizon: Option<&String>) {
+    let parts: Vec<&str> = xz.split(':').collect();
+    if parts.len() != 2 {
+        eprintln!("格式: <x1,z1:x2,z2> 如 -58456,32832:-52925,36510");
+        std::process::exit(1);
+    }
+    let parse = |s: &str| -> (f64, f64) {
+        let v: Vec<&str> = s.split(',').collect();
+        (v[0].trim().parse().unwrap(), v[1].trim().parse().unwrap())
+    };
+    let (x1, z1) = parse(parts[0]);
+    let (x2, z2) = parse(parts[1]);
+    let horizon_m = horizon
+        .and_then(|h| h.parse::<f32>().ok())
+        .unwrap_or(3000.0);
+    let (routing, _junctions) = nav_dataset::load_dataset(std::path::Path::new(dataset_dir))
+        .unwrap_or_else(|e| {
+            eprintln!("加载 dataset 失败: {e}");
+            std::process::exit(1);
+        });
+    let graph = nav_graph::CompactGraph::build(&routing);
+    let spatial = nav_spatial::SpatialIndex::build(&graph, nav_spatial::DEFAULT_CELL_SIZE);
+    let s1 = nav_router::snap::snap_nearest(&graph, &spatial, x1, z1, 300.0).unwrap_or_else(|| {
+        eprintln!("起点 300m 内无可路由边");
+        std::process::exit(1);
+    });
+    let s2 = nav_router::snap::snap_nearest(&graph, &spatial, x2, z2, 300.0).unwrap_or_else(|| {
+        eprintln!("终点 300m 内无可路由边");
+        std::process::exit(1);
+    });
+    let mut router = nav_router::search::Router::new(graph.node_count());
+    let req = nav_router::search::RouteRequest::new(
+        &graph,
+        nav_router::snap::VirtualEndpoint::start(&s1, true),
+        nav_router::snap::VirtualEndpoint::goal(&s2),
+        nav_router::cost::RouteProfile::Fastest,
+    );
+    match router.astar(&req) {
+        Some(r) => {
+            let breaks = nav_router::speed::speed_breaks_ahead(&r, &graph, horizon_m);
+            println!(
+                "路线 {:.0}m {} 边；前方 {:.0}m 限速断点 {} 个：",
+                r.distance_m,
+                r.edges.len(),
+                horizon_m,
+                breaks.len()
+            );
+            let mut prev = -1.0f32;
+            for (i, b) in breaks.iter().enumerate() {
+                let d = b.offset_m - prev;
+                let lim = match b.limit {
+                    -1 => "未知".to_string(),
+                    0 => "无限速".to_string(),
+                    l => format!("{l} km/h"),
+                };
+                println!("  [{i:>2}] +{:.0}m 起（持续 {:.0}m）→ {lim}", b.offset_m, d);
+                prev = b.offset_m;
+            }
+        }
+        None => eprintln!("无路线"),
+    }
+}
+
 fn route_cli(xz: &str, dataset_dir: &str) {
     let parts: Vec<&str> = xz.split(':').collect();
     if parts.len() != 2 {
