@@ -148,7 +148,7 @@ A4 性能优化 ──▶ B6 正式验收 ──▶ P6 出口
 
 | ID | 内容 | 前置 | 状态 | 验证/产出 |
 |---|---|---|---|---|
-| A1 | P3 提醒模块核心逻辑 | — | ⏳ | 合成回放断言 + Europe 全量构建；开发完成即 P3 关门（tag），启用边界待 B2、实机验收待 B4 |
+| A1 | P3 提醒模块核心逻辑 | — | ✅（2026-08-11，tag v0.4.0-p3） | speed/reminder/speak 三模块 + 38 测试；camera No-Go；run-p3-tests.bat ALL PASS；启用边界待 B2、实机验收待 B4 |
 | A2 | P4 UI（Browser/Desktop/LAN Mobile） | A1 事件接口（可先以合成事件） | ⏳ | 回放驱动交互验证；60 FPS 帧率；开发完成即 P4 关门（tag），移动端实测待 B5 |
 | A3 | P5 OD corpus 与全欧洲检查 | — | ⏳ | run-p5-tests.bat 全绿即正式关门（唯一可自足出口，无实机依赖） |
 | A4 | P6 性能优化（ALT/CH 评估、增量编译） | — | ⏳ | synthetic benchmark；§63 正式验收待 B6 |

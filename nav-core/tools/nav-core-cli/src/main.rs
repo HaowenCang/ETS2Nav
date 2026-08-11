@@ -333,6 +333,32 @@ fn bench_cli(dataset_dir: &str) {
             mp(0.99)
         );
     }
+    // 4) P3 前方限速查询热路径（10000 次 Berlin 路线 lookahead）
+    let (s1, s2) = (
+        nav_router::snap::snap_nearest(&graph, &spatial, -58456.0, 32832.0, 300.0),
+        nav_router::snap::snap_nearest(&graph, &spatial, -52925.0, 36510.0, 300.0),
+    );
+    let mut router2 = nav_router::search::Router::new(graph.node_count());
+    let req2 = nav_router::search::RouteRequest::new(
+        &graph,
+        nav_router::snap::VirtualEndpoint::start(&s1.unwrap(), true),
+        nav_router::snap::VirtualEndpoint::goal(&s2.unwrap()),
+        nav_router::cost::RouteProfile::Fastest,
+    );
+    let route = router2.astar(&req2).expect("Berlin 路线应存在");
+    let mut stimes = Vec::with_capacity(10000);
+    for _ in 0..10000 {
+        let t = std::time::Instant::now();
+        nav_router::speed::speed_breaks_ahead(&route, &graph, 3000.0);
+        stimes.push(t.elapsed().as_secs_f64() * 1000.0);
+    }
+    stimes.sort_by(|a, b| a.partial_cmp(b).unwrap());
+    let sp = |q: f64| -> f64 { stimes[((stimes.len() as f64) * q) as usize] };
+    println!(
+        "[限速查询] 10000 次（Berlin 3000m lookahead）：p50={:.3}us p99={:.3}us（P3 目标 p99<10us）",
+        sp(0.5) * 1000.0,
+        sp(0.99) * 1000.0
+    );
     println!("Bench PASS");
 }
 
