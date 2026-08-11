@@ -1,0 +1,10 @@
+[package]
+name = "od-corpus"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+nav-dataset = { path = "../../crates/nav-dataset" }
+nav-graph = { path = "../../crates/nav-graph" }
+nav-spatial = { path = "../../crates/nav-spatial" }
+nav-router = { path = "../../crates/nav-router" }
