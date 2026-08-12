@@ -92,6 +92,8 @@ for _ in range(60):  # 最多 3s
     if op != 1:
         continue
     d = json.loads(payload)
+    if d.get("type", "vehicle") != "vehicle":
+        continue  # map_state 等事件无 state 字段（N-M2 复审）
     if d["state"] == "navigating":
         seen["navigating"] = True
     if d.get("speed_kmh", 0) > 0:

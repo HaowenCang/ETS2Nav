@@ -249,6 +249,7 @@ pub fn server_cli(
         }
     }
     let turns: TurnLookup = turns_map;
+    drop(junctions); // 运行时不需要 junction.graph 数据（~54MB，bench 同口径）
 
     let shared = ServerShared::new();
 
@@ -296,8 +297,7 @@ pub fn server_cli(
                                 "destination": [tx, tz],
                             });
                             let json = ev.to_string();
-                            *thread_shared.latest_json.lock().unwrap() = json.clone();
-                            thread_shared.broadcast(&json);
+                            thread_shared.broadcast(&json); // 仅广播（latest_json 保持 vehicle 语义）
                         }
                     }
                 }
@@ -325,9 +325,7 @@ pub fn server_cli(
             // A2c-M3：每轮重建 session（Arrived 分支为 no-op——不重置则首轮到达后永久卡死）。
             loop {
                 let mut last_sim: Option<u64> = None;
-                let mut frame_count = 0u32;
-                let _ = &mut frame_count;
-                for f in &frames {
+                for (frame_count, f) in frames.iter().enumerate() {
                     consume_dest(&mut session);
                     if let Some(ls) = last_sim {
                         let dt = f.snap.simulation_time.saturating_sub(ls);
@@ -351,7 +349,6 @@ pub fn server_cli(
                             json = v.to_string();
                         }
                     }
-                    frame_count += 1;
                     *thread_shared.latest_json.lock().unwrap() = json.clone();
                     thread_shared.broadcast(&json);
                 }

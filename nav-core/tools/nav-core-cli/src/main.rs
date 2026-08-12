@@ -1373,14 +1373,15 @@ fn syntrace_cli(xz: &str, dataset_dir: &str, out: &str) {
     // 位置由速度积分驱动——原实现位置步进恒定（隐含 267 km/h）与 speed 字段矛盾）
     let cruise = 22.0f32;
     let dt_s = 0.05f32; // 20Hz
-    let total_dist = route_pts
-        .last()
-        .map(|p| {
-            let (x0, _, z0, _) = route_pts[0];
-            let (x1, _, z1, _) = *p;
-            ((x1 - x0).powi(2) + (z1 - z0).powi(2)).sqrt() as f32
+                        // N-M1（复审）：total_dist 用点表弧长（Σ 相邻段长）——弦长会提前终止行程（只走 56%）
+    let total_dist: f32 = route_pts
+        .windows(2)
+        .map(|w| {
+            let (ax, _, az, _) = w[0];
+            let (bx, _, bz, _) = w[1];
+            ((bx - ax).powi(2) + (bz - az).powi(2)).sqrt() as f32
         })
-        .unwrap_or(1.0);
+        .sum();
     let decel_start = (total_dist - 200.0).max(0.0);
     let mut dist_traveled = 0.0f32; // 当前段内弧长（位置推进用）
     let mut total_traveled = 0.0f32; // 累计总距离（速度曲线用）
@@ -1389,7 +1390,7 @@ fn syntrace_cli(xz: &str, dataset_dir: &str, out: &str) {
     let mut seq = 780u32;
     let mut idx = 0usize;
     loop {
-        // 速度曲线：0→8s 线性加速到巡航、巡航、最后 200m 减速到 5 m/s
+        // 速度曲线：0→8s 线性加速到巡航、巡航、最后 200m 减速到 0.5 m/s 下限
         let elapsed_s = frames.len() as f32 * dt_s;
         let speed = if elapsed_s < 8.0 {
             (elapsed_s / 8.0 * cruise).min(cruise).max(0.5)
