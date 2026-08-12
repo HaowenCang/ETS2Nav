@@ -1358,7 +1358,7 @@ fn syntrace_cli(xz: &str, dataset_dir: &str, out: &str) {
         let dx = bx - ax;
         let dz = bz - az;
         let seg = (dx * dx + dz * dz).sqrt();
-        let steps = (seg / 5.0).ceil().max(1.0) as u32;
+        let steps = (seg / 1.0).ceil().max(1.0) as u32; // 1m 点表（M2：位置跳变 ≤1m）
         for k in 0..steps {
             let t = k as f64 / steps as f64;
             route_pts.push((ax + dx * t, ay + (by - ay) * t, az + dz * t, ayaw));
@@ -1367,22 +1367,40 @@ fn syntrace_cli(xz: &str, dataset_dir: &str, out: &str) {
     if let Some(&last) = raw.last() {
         route_pts.push(last);
     }
-    // 速度曲线：0→8s 加速到 22 m/s 巡航 → 最后 200m 减速到 5
-    let total = route_pts.len() as f64;
+    // 速度曲线：0→8s 加速到 22 m/s 巡航 → 最后 200m 减速到 5 m/s（A2c-M2 修复：
+    // 位置由速度积分驱动——原实现位置步进恒定（隐含 267 km/h）与 speed 字段矛盾）
+    let cruise = 22.0f32;
+    let dt_s = 0.05f32; // 20Hz
+    let total_dist = route_pts
+        .last()
+        .map(|p| {
+            let (x0, _, z0, _) = route_pts[0];
+            let (x1, _, z1, _) = *p;
+            ((x1 - x0).powi(2) + (z1 - z0).powi(2)).sqrt() as f32
+        })
+        .unwrap_or(1.0);
+    let decel_start = (total_dist - 200.0).max(0.0);
+    let mut dist_traveled = 0.0f32; // 当前段内弧长（位置推进用）
+    let mut total_traveled = 0.0f32; // 累计总距离（速度曲线用）
     let mut frames = Vec::new();
     let mut sim = 0u64;
-    for (i, (x, y, z, _yaw)) in route_pts.iter().enumerate() {
-        let frac = i as f64 / total;
-        let cruise = 22.0f32;
-        let speed = if frac < 0.15 {
-            cruise * (frac / 0.15) as f32
-        } else if frac > 0.85 {
-            cruise * ((1.0 - frac) / 0.15).max(0.05) as f32
+    let mut seq = 780u32;
+    let mut idx = 0usize;
+    loop {
+        // 速度曲线：0→8s 线性加速到巡航、巡航、最后 200m 减速到 5 m/s
+        let elapsed_s = frames.len() as f32 * dt_s;
+        let speed = if elapsed_s < 8.0 {
+            (elapsed_s / 8.0 * cruise).min(cruise).max(0.5)
+        } else if total_traveled > decel_start {
+            (cruise * ((total_dist - total_traveled) / 200.0).max(0.0))
+                .min(cruise)
+                .max(0.5)
         } else {
             cruise
         };
+        let (x, y, z, _yaw) = route_pts[idx];
         let snap = nav_telemetry::TelemetrySnapshot {
-            sequence: 780 + i as u32,
+            sequence: seq,
             layout_version: 1,
             running: true,
             paused: false,
@@ -1392,7 +1410,7 @@ fn syntrace_cli(xz: &str, dataset_dir: &str, out: &str) {
             game_time_minutes: 0,
             local_scale: 1.0,
             rest_stop_minutes: 0,
-            position: [*x, *y, *z],
+            position: [x, y, z],
             heading: [0.0, 0.0, 0.0, 1.0],
             speed,
             speed_limit: 0.0,
@@ -1402,7 +1420,29 @@ fn syntrace_cli(xz: &str, dataset_dir: &str, out: &str) {
             job: None,
         };
         frames.push(snap);
-        sim += 50_000; // 20Hz
+        sim += 50_000;
+        seq += 1;
+        // 位置 = 弧长推进（speed × dt）
+        total_traveled += speed * dt_s;
+        dist_traveled += speed * dt_s;
+        if total_traveled >= total_dist {
+            break;
+        }
+        // 沿路线点表推进弧长
+        while idx + 1 < route_pts.len() {
+            let (ax, _, az, _) = route_pts[idx];
+            let (bx, _, bz, _) = route_pts[idx + 1];
+            let seg = ((bx - ax).powi(2) + (bz - az).powi(2)).sqrt() as f32;
+            if dist_traveled >= seg {
+                dist_traveled -= seg;
+                idx += 1;
+            } else {
+                break;
+            }
+        }
+        if idx + 1 >= route_pts.len() {
+            break;
+        }
     }
     let mut rec = nav_telemetry::TraceRecorder::create(std::path::Path::new(out)).unwrap();
     for f in &frames {

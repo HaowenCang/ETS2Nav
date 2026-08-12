@@ -414,11 +414,19 @@ impl NavigationSession {
     /// 下一个 maneuver（当前 tracker 位置之后；§94-99）。
     fn next_maneuver(&self) -> Option<Maneuver> {
         let route = self.route.as_ref()?;
-        let from = self.tracker.as_ref()?.edge_index();
+        let tracker = self.tracker.as_ref()?;
+        let from = tracker.edge_index();
         let ms = generate_maneuvers(&self.graph, route, &self.turns);
         // 找 route_edge_index > from 的第一个非 Continue 类型
-        ms.into_iter()
-            .find(|m| m.route_edge_index > from && m.mtype != crate::maneuver::ManeuverType::Depart)
+        let mut m = ms.into_iter().find(|m| {
+            m.route_edge_index > from && m.mtype != crate::maneuver::ManeuverType::Depart
+        })?;
+        // 审计 A2c-M1：distance_from_prev 为规划时固定值（段全长，不随接近递减）——
+        // 覆盖为 tracker 实时"距车辆距离"（P4 UI 下一转向卡片/autoZoom 依赖平滑接近）
+        if let Some(d) = tracker.distance_to_edge(&self.graph, m.route_edge_index) {
+            m.distance_from_prev = d;
+        }
+        Some(m)
     }
 
     /// 下一个受控信号（§112）。

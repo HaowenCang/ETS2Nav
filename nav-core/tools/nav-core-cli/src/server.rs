@@ -156,11 +156,13 @@ impl ServerShared {
         })
     }
 
-    /// 广播一帧 JSON 给所有 WS 客户端（失败即断开移除）。
+    /// 广播一帧 JSON 给所有 WS 客户端（写超时/失败即断开移除——A2c-M6：
+    /// 慢客户端不得冻结数据源管道——每连接写超时 2s）。
     pub fn broadcast(&self, json: &str) {
         let mut clients = self.ws_clients.lock().unwrap();
         let mut dead = Vec::new();
         for (i, c) in clients.iter_mut().enumerate() {
+            let _ = c.set_write_timeout(Some(std::time::Duration::from_secs(2)));
             if ws_send_frame(c, 0x1, json.as_bytes()).is_err() {
                 dead.push(i);
             }

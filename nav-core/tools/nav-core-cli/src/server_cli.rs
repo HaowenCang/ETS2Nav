@@ -195,7 +195,32 @@ pub fn server_cli(dataset_dir: &str, trace_path: Option<&str>, port: u16, web_ro
     let turns_src = turns.clone();
     std::thread::spawn(move || {
         let cfg = nav_router::session::SessionConfig::default();
-        let mut session = nav_router::session::NavigationSession::new(g2, s2, turns_src, cfg);
+        // 消费 UI 目的地请求（§60：POST /api/route → 导航启动）——回放/实时共用（A2c-M4）
+        let consume_dest = |session: &mut nav_router::session::NavigationSession| {
+            let pending = *thread_shared.pending_dest.lock().unwrap();
+            if let Some((tx, tz)) = pending {
+                *thread_shared.pending_dest.lock().unwrap() = None;
+                if let Some(snap_pt) =
+                    nav_router::snap::snap_nearest(&thread_graph, &thread_spatial, tx, tz, 300.0)
+                {
+                    let dest = nav_router::destination::Destination {
+                        kind: nav_router::destination::DestKind::Coordinate,
+                        name: "目标".to_string(),
+                        position: (tx, 0.0, tz),
+                        access_snap: snap_pt,
+                    };
+                    if session.set_destination(dest).is_ok() {
+                        eprintln!("[server] 目的地已设置 ({tx:.0},{tz:.0})");
+                    }
+                }
+            }
+        };
+        let mut session = nav_router::session::NavigationSession::new(
+            g2.clone(),
+            s2.clone(),
+            turns_src.clone(),
+            cfg.clone(),
+        );
         if let Some(tp) = thread_trace {
             let frames: Vec<nav_telemetry::TraceFrame> =
                 nav_telemetry::replay(std::path::Path::new(&tp))
@@ -208,31 +233,14 @@ pub fn server_cli(dataset_dir: &str, trace_path: Option<&str>, port: u16, web_ro
                 eprintln!("trace 为空");
                 std::process::exit(1);
             }
-            // 循环回放（UI 演示/验证用——帧间按 sim time 节流）
+            // 循环回放（UI 演示/验证用——帧间按 sim time 节流）。
+            // A2c-M3：每轮重建 session（Arrived 分支为 no-op——不重置则首轮到达后永久卡死）。
             loop {
                 let mut last_sim: Option<u64> = None;
+                let mut frame_count = 0u32;
+                let _ = &mut frame_count;
                 for f in &frames {
-                    // 消费 UI 目的地请求（§60：POST /api/route → 导航启动）
-                    if let Some((tx, tz)) = *thread_shared.pending_dest.lock().unwrap() {
-                        *thread_shared.pending_dest.lock().unwrap() = None;
-                        if let Some(snap_pt) = nav_router::snap::snap_nearest(
-                            &thread_graph,
-                            &thread_spatial,
-                            tx,
-                            tz,
-                            300.0,
-                        ) {
-                            let dest = nav_router::destination::Destination {
-                                kind: nav_router::destination::DestKind::Coordinate,
-                                name: "目标".to_string(),
-                                position: (tx, 0.0, tz),
-                                access_snap: snap_pt,
-                            };
-                            if session.set_destination(dest).is_ok() {
-                                eprintln!("[server] 目的地已设置 ({tx:.0},{tz:.0})");
-                            }
-                        }
-                    }
+                    consume_dest(&mut session);
                     if let Some(ls) = last_sim {
                         let dt = f.snap.simulation_time.saturating_sub(ls);
                         if dt > 0 {
@@ -241,15 +249,24 @@ pub fn server_cli(dataset_dir: &str, trace_path: Option<&str>, port: u16, web_ro
                     }
                     last_sim = Some(f.snap.simulation_time);
                     let snap = session.on_frame(&f.snap);
+                    let _ = frame_count;
                     let json = snapshot_json(&snap);
                     *thread_shared.latest_json.lock().unwrap() = json.clone();
                     thread_shared.broadcast(&json);
                 }
-                eprintln!("[server] 回放循环重启");
+                // 重建 session（新导航周期）
+                session = nav_router::session::NavigationSession::new(
+                    g2.clone(),
+                    s2.clone(),
+                    turns_src.clone(),
+                    cfg.clone(),
+                );
+                eprintln!("[server] 回放循环重启（session 已重置）");
             }
         } else {
             let mut src = nav_telemetry::TelemetrySource::new(std::time::Duration::from_secs(2));
             loop {
+                consume_dest(&mut session);
                 match src.poll() {
                     nav_telemetry::TelemetryState::Fresh(snap) => {
                         let snap2 = session.on_frame(&snap);
