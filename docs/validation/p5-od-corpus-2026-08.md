@@ -118,7 +118,17 @@ P5 Regression Suite: ALL PASS
 4. **od-check 性能**：2000 对约 190s（长距离 A*）；套件冒烟用 500 对。
 5. **A2 并行线**：P5 套件独立成门期间 nav-core-cli 由 A2 独占（2026-08-12 修复后
    workspace 门已恢复——本项为历史状态说明，无残留影响）。
+6. **审计 MINOR 登记（2026-08-12）**：
+   - a3-correctness 复审："dresden 2 行中 1 行可用"实测 2/2 行可用；"roma 8 行中首行断簇"
+     实测首行主网（WCC 273,410、scope3=20、→hamburg 87191m）；断簇节点 22-24% 口径
+     （带"约"字，WCC 24.2%/SCC 26.1% 邻域内）；run-p5-tests.bat 步骤编号 2.5/4 不连续。
+   - a3-data-integrity 复审："newcastle/sangiovanni/calarasi 三城全部行断簇"不精确
+     （newcastle 第 2 行接入 UK 分量 3 跳 scope=25，→plymouth 连通 47,619m 即 baseline 行来源）；
+     BLOCKERS 段过时残留（本段已随 16e0ab7+4303ba9 链更新——workspace 门已恢复）。
 
 **BLOCKERS: A2 并行线 nav-core-cli 编译错误（server_cli.rs 引用 nav_router::RouteProfile
 /SessionConfig 路径错误）阻塞全 workspace cargo 门——非本任务代码问题；P5 套件已独立成门
 规避。其余无。**
+
+> 注（2026-08-12 审计修复）：上段 BLOCKERS 为历史状态残留（A2 修复链 0ab13d8→933c187 已
+> 恢复 workspace 门，cargo 全量构建通过）——保留作过程记录，不再视为当前阻塞。

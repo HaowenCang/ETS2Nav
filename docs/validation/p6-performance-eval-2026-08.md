@@ -81,3 +81,11 @@
 - ALT/CH 不做（§1.2）；增量重建不做（§2.3）；指纹由 archive 名/大小/UTC mtime 推导（SHA-256 摘要——不哈希文件内容；§2.3 已述）
 - §9 未覆盖：mods/mod order 漏报路径、sector/definition 哈希、parser schema version（§2.3）
 - §63 正式性能验收以 B6 实机数据为最终依据（D6 延后）
+
+## 五、审计 MINOR 登记（2026-08-12，不强制修复）
+
+- **a4-perf-truth**（复审 0/0 后）：bench 样本口径已修（p99 0.378 P3-08 / max 0.39 P2-19）；
+  "非哈希"措辞已改（由 name/size/mtime 推导）；剩余：限速 0.2µs 为 P3-09 报告数（非独立复测）——量级一致。
+- **a4-conclusion**（复审 0/0 后）：archive 集指纹含全部 archives（非仅 dlc——实现如此，报告表述已与实现一致）；
+  §9 mods 扩展时机建议与 B3 内容相关性；P2-closeout 上游"Europe v4 全量"口径矛盾
+  （0.39 标全量实为 Berlin 19 OD——上游报告历史口径，本节已注明）。
