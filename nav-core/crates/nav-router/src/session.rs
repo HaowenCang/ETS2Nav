@@ -550,6 +550,109 @@ mod tests {
     }
 
     #[test]
+    fn off_route_reroutes_back_to_navigating() {
+        // A2a-M3（§60 交互链：偏航→重规划）：沿主路行驶后转入支路（非 route 边）
+        // → SuspectedOffRoute → Rerouting → 重规划（支路可达终点）→ Navigating。
+        // 图：主路 0→1→2→3（x 轴 0..3000），支路 2→4（z 偏移 500m）。
+        let nodes = vec![
+            Node {
+                uid: 1,
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            Node {
+                uid: 2,
+                x: 1000.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            Node {
+                uid: 3,
+                x: 2000.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            Node {
+                uid: 4,
+                x: 3000.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            Node {
+                uid: 5,
+                x: 2000.0,
+                y: 0.0,
+                z: 500.0,
+            },
+        ];
+        let mk = |from: u32, to: u32| Edge {
+            from,
+            to,
+            kind: EdgeKind::Road,
+            length: 1.0,
+            source_uid: 0,
+            geometry: vec![
+                (nodes[from as usize].x, 0.0, nodes[from as usize].z),
+                (nodes[to as usize].x, 0.0, nodes[to as usize].z),
+            ],
+            speed_limit: 50,
+            road_class: 1,
+            semaphore_id: -1,
+            flags: 0,
+            movement_id: None,
+        };
+        let g = std::sync::Arc::new(CompactGraph::build(&RoutingGraph {
+            nodes: nodes.clone(),
+            edges: vec![mk(0, 1), mk(1, 2), mk(2, 3), mk(2, 4)],
+        }));
+        let sp = std::sync::Arc::new(SpatialIndex::build(&g, 256.0));
+        let dest = Destination {
+            kind: DestKind::Coordinate,
+            name: "goal".into(),
+            position: (3000.0, 0.0, 0.0),
+            access_snap: crate::snap::snap_nearest(&g, &sp, 3000.0, 0.0, 100.0).unwrap(),
+        };
+        let mut s = NavigationSession::new(g, sp, TurnLookup::new(), SessionConfig::default());
+        s.on_frame(&telemetry_at(10.0, 14.0));
+        s.set_destination(dest).expect("规划应成功");
+        assert_eq!(s.state(), SessionState::Navigating);
+        // 沿主路推进
+        for x in [50.0f64, 100.0, 150.0, 200.0] {
+            s.on_frame(&telemetry_at(x, 14.0));
+        }
+        assert_eq!(s.state(), SessionState::Navigating);
+        // 转入支路（x=2000, z 渐增——非 route 边 2→4）→ Suspected → confirm → Rerouting
+        // → 重规划（支路可达主路→终点）→ Navigating（重规划后支路成为新路线一部分，
+        // 继续沿支路走即"在路线上"——故单阶段断言完整链路）
+        let mut saw_suspect = false;
+        let mut saw_rerouting = false;
+        let mut end_state = SessionState::Idle;
+        for i in 0..45u32 {
+            let mut t = telemetry_at(2000.0, 300.0 + i as f32 * 5.0);
+            t.simulation_time = 1_000_000 + i as u64 * 50_000;
+            let snap = s.on_frame(&t);
+            if snap.state == SessionState::SuspectedOffRoute {
+                saw_suspect = true;
+            }
+            if snap.state == SessionState::Rerouting {
+                saw_rerouting = true;
+            }
+            end_state = snap.state;
+            if snap.state == SessionState::Navigating && saw_rerouting {
+                break;
+            }
+        }
+        assert!(saw_suspect, "偏离应进入 SuspectedOffRoute");
+        assert!(saw_rerouting, "应经过 Rerouting 状态");
+        assert_eq!(
+            end_state,
+            SessionState::Navigating,
+            "重规划后回到 Navigating"
+        );
+    }
+
+    #[test]
     fn overspeed_reminder_emitted() {
         // P3 A4：超速（speed 60 m/s vs 限速 50 → +3 阈值 53）→ OverSpeed 事件
         let (g, sp, dest) = setup();

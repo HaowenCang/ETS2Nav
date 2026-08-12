@@ -202,10 +202,26 @@ pub(crate) fn snapshot_json(s: &NavigationSnapshot) -> String {
             "confidence": format!("{:?}", up.confidence),
         })
     });
+    // A2a-M2：warning 结构化——kind（ReminderEvent 变体）+ severity（1=warning/0=info）
     let reminders: Vec<serde_json::Value> = s
         .reminders
         .iter()
-        .map(|r| serde_json::json!({ "text": nav_router::speak::to_speech_zh(r) }))
+        .map(|r| {
+            let (kind, severity) = match r {
+                nav_router::speak::ReminderEvent::SpeedLimitChange { .. } => {
+                    ("speed_limit_change", 0)
+                }
+                nav_router::speak::ReminderEvent::OverSpeed { .. } => ("overspeed", 1),
+                nav_router::speak::ReminderEvent::RedLight { .. } => ("red_light", 1),
+                nav_router::speak::ReminderEvent::GreenImminent => ("green_imminent", 0),
+                nav_router::speak::ReminderEvent::Glosa { .. } => ("glosa", 0),
+            };
+            serde_json::json!({
+                "kind": kind,
+                "severity": severity,
+                "text": nav_router::speak::to_speech_zh(r),
+            })
+        })
         .collect();
     let (px, _, pz) = s.position.unwrap_or((0.0, 0.0, 0.0));
     serde_json::json!({

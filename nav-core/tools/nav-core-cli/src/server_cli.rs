@@ -15,6 +15,8 @@ pub struct ServerCtx {
     pub spatial: std::sync::Arc<nav_spatial::SpatialIndex>,
     pub dataset_dir: String,
     pub shared: Arc<ServerShared>,
+    /// POI 表（/api/search 用；启动时从 search.db 加载——内存过滤）。
+    pub pois: Vec<nav_dataset::PoiRecord>,
 }
 
 fn content_type(path: &str) -> &'static str {
@@ -161,10 +163,75 @@ fn handle_http(
         );
     }
 
+    // GET /api/search?q=xxx（A2a-M1 §60：POI 搜索——search.db 全量加载后内存过滤）
+    if method == "GET" && qpath == "/api/search" {
+        let q = path
+            .split('?')
+            .nth(1)
+            .unwrap_or("")
+            .trim_start_matches("q=")
+            .to_lowercase();
+        let hits: Vec<serde_json::Value> = if q.is_empty() {
+            Vec::new()
+        } else {
+            ctx.pois
+                .iter()
+                .filter(|p| p.name.to_lowercase().contains(&q))
+                .take(20)
+                .map(|p| {
+                    serde_json::json!({
+                        "name": p.name,
+                        "kind": p.kind,
+                        "x": p.x,
+                        "z": p.z,
+                        "access_node": p.access_node_hex,
+                    })
+                })
+                .collect()
+        };
+        let out = serde_json::json!({ "query": q, "results": hits });
+        return http_reply(
+            stream,
+            "200 OK",
+            "application/json",
+            out.to_string().as_bytes(),
+        );
+    }
+
+    // GET /api/settings（A2a-M1 §60：会话配置只读）
+    if method == "GET" && qpath == "/api/settings" {
+        let cfg = nav_router::session::SessionConfig::default();
+        let out = serde_json::json!({
+            "profile": format!("{:?}", cfg.profile),
+            "matcher": {
+                "w_distance": cfg.matcher.w_distance,
+                "w_heading": cfg.matcher.w_heading,
+                "w_topology": cfg.matcher.w_topology,
+            },
+            "reroute": {
+                "confirm_frames": cfg.reroute.confirm_frames,
+                "confirm_distance_m": cfg.reroute.confirm_distance_m,
+            },
+            "arrive_margin_m": cfg.arrive_margin_m,
+        });
+        return http_reply(
+            stream,
+            "200 OK",
+            "application/json",
+            out.to_string().as_bytes(),
+        );
+    }
+
     http_reply(stream, "404 Not Found", "text/plain", b"not found")
 }
 
-pub fn server_cli(dataset_dir: &str, trace_path: Option<&str>, port: u16, web_root: &str) {
+pub fn server_cli(
+    dataset_dir: &str,
+    trace_path: Option<&str>,
+    port: u16,
+    web_root: &str,
+    fake_signal: bool,
+) {
     let (routing, junctions) = nav_dataset::load_dataset(std::path::Path::new(dataset_dir))
         .unwrap_or_else(|e| {
             eprintln!("加载 dataset 失败: {e}");
@@ -193,6 +260,7 @@ pub fn server_cli(dataset_dir: &str, trace_path: Option<&str>, port: u16, web_ro
     let thread_shared = shared.clone();
     let thread_trace = trace_path.map(|p| p.to_string());
     let turns_src = turns.clone();
+    let thread_fake = fake_signal;
     std::thread::spawn(move || {
         let cfg = nav_router::session::SessionConfig::default();
         // 消费 UI 目的地请求（§60：POST /api/route → 导航启动）——回放/实时共用（A2c-M4）
@@ -211,6 +279,26 @@ pub fn server_cli(dataset_dir: &str, trace_path: Option<&str>, port: u16, web_ro
                     };
                     if session.set_destination(dest).is_ok() {
                         eprintln!("[server] 目的地已设置 ({tx:.0},{tz:.0})");
+                        // A2a-M2：map_state 事件（§60）——路线 polyline 一次推送（UI 绘制地图层）
+                        if let Some(route) = session.route() {
+                            let mut polyline: Vec<[f64; 2]> = Vec::new();
+                            for &eid in &route.edges {
+                                let e = &thread_graph.edges[eid as usize];
+                                let pts = thread_graph.edge_geometry(e);
+                                for pt in pts {
+                                    polyline.push([pt.0, pt.2]);
+                                }
+                            }
+                            let ev = serde_json::json!({
+                                "type": "map_state",
+                                "distance_m": route.distance_m,
+                                "polyline": polyline,
+                                "destination": [tx, tz],
+                            });
+                            let json = ev.to_string();
+                            *thread_shared.latest_json.lock().unwrap() = json.clone();
+                            thread_shared.broadcast(&json);
+                        }
                     }
                 }
             }
@@ -249,8 +337,21 @@ pub fn server_cli(dataset_dir: &str, trace_path: Option<&str>, port: u16, web_ro
                     }
                     last_sim = Some(f.snap.simulation_time);
                     let snap = session.on_frame(&f.snap);
-                    let _ = frame_count;
-                    let json = snapshot_json(&snap);
+                    let mut json = snapshot_json(&snap);
+                    // A2a-M4：--fake-signal 测试钩子——注入合成信号/限速（UI 卡片验证用）
+                    if thread_fake {
+                        if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&json) {
+                            let phase = (frame_count / 30).is_multiple_of(2);
+                            v["upcoming_signal"] = serde_json::json!({
+                                "state": if phase { "Red" } else { "Green" },
+                                "remaining_s": 8.0,
+                                "confidence": "Verified",
+                            });
+                            v["map_limit_kmh"] = serde_json::json!(50);
+                            json = v.to_string();
+                        }
+                    }
+                    frame_count += 1;
                     *thread_shared.latest_json.lock().unwrap() = json.clone();
                     thread_shared.broadcast(&json);
                 }
@@ -290,11 +391,14 @@ pub fn server_cli(dataset_dir: &str, trace_path: Option<&str>, port: u16, web_ro
         eprintln!("绑定端口 {port} 失败: {e}");
         std::process::exit(1);
     });
+    let pois = nav_dataset::load_pois(&std::path::Path::new(dataset_dir).join("search.db"))
+        .unwrap_or_default();
     let ctx = Arc::new(ServerCtx {
         graph,
         spatial,
         dataset_dir: dataset_dir.to_string(),
         shared,
+        pois,
     });
     let web_root = web_root.to_string();
     eprintln!("[server] listening on :{port}（web root: {web_root}）");

@@ -105,6 +105,27 @@ check("WS 帧流 state=navigating", seen["navigating"])
 check("WS 帧流 speed>0", seen["speed>0"])
 check("WS 帧流 remaining 递减", seen["rem_decreasing"], f"last={prev_rem:.0f}m")
 
+# 2.5) 事件类型与提醒结构化（A2a-M2 审计项）
+seen_types = set()
+seen_reminder_kind = None
+for _ in range(40):
+    try:
+        op, payload = recv_frame(ws)
+    except socket.timeout:
+        break
+    if op != 1:
+        continue
+    d = json.loads(payload)
+    seen_types.add(d.get("type", "?"))
+    if d.get("reminders"):
+        seen_reminder_kind = d["reminders"][0].get("kind")
+        break
+check("WS 事件类型含 vehicle", "vehicle" in seen_types)
+if seen_reminder_kind:
+    check("reminders 结构化（kind 字段）", seen_reminder_kind in ("speed_limit_change", "overspeed", "red_light", "green_imminent", "glosa"), f"kind={seen_reminder_kind}")
+else:
+    print("[SKIP] reminders 未触发（无信号场景正常）——kind 结构化由 server 单测/伪造信号路径覆盖")
+
 # 3) 快照轮询通道
 code, body = http_post(PORT, "/api/route", b"{}")  # 400 路径也验证错误处理
 snap_code = None

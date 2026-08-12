@@ -19,8 +19,9 @@ const map = new maplibregl.Map({
   zoom: 10,
 });
 
-// 瓦片层（map.pmtiles 存在时）
-(async () => {
+// 瓦片层（map.pmtiles 存在时；A2c-M5 修复：addSource 必须在 style load 后——
+// 原实现 IIFE 内 await HEAD 后立即 addSource，style 未加载时抛错被 catch 吞掉，瓦片层静默缺失）
+async function loadTiles() {
   try {
     const r = await fetch("map.pmtiles", { method: "HEAD" });
     if (!r.ok) return;
@@ -35,11 +36,12 @@ const map = new maplibregl.Map({
     map.addLayer({ id: "tile-poi", type: "circle", source: "tiles", "source-layer": "poi",
       paint: { "circle-color": "#10b981", "circle-radius": 2.5 } });
   } catch (e) { /* 无瓦片时纯路线渲染 */ }
-})();
+}
 
 // 图层与数据源（style 加载完成后初始化）
 let mapReady = false;
 map.on("load", () => {
+  loadTiles();
   map.addSource("vehicle", { type: "geojson", data: { type: "Point", coordinates: [0, 0] } });
   map.addLayer({ id: "vehicle-dot", type: "circle", source: "vehicle",
     paint: { "circle-radius": 7, "circle-color": "#4cc38a", "circle-stroke-color": "#0b0f14", "circle-stroke-width": 3 } });

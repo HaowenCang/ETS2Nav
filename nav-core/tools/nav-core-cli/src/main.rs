@@ -30,7 +30,8 @@ fn main() {
         ("session", _) if args.len() >= 4 => session_cli(&args[2], &args[3]),
         ("regression", _) if args.len() >= 3 => regression_cli(&args[2]),
         ("server", _) if args.len() >= 3 => {
-            server_cli_run(&args[2], args.get(3), args.get(4), args.get(5))
+            let fake = args.iter().skip(3).any(|a| a == "--fake-signal");
+            server_cli_run(&args[2], args.get(3), args.get(4), args.get(5), fake)
         }
         ("syntrace", _) if args.len() >= 5 => syntrace_cli(&args[2], &args[3], &args[4]),
         ("bench", _) if args.len() >= 3 => bench_cli(&args[2]),
@@ -1294,6 +1295,7 @@ fn server_cli_run(
     replay: Option<&String>,
     port: Option<&String>,
     web: Option<&String>,
+    fake_signal: bool,
 ) {
     let port: u16 = port
         .and_then(|p| p.strip_prefix("--port=").map(|v| v.parse().unwrap_or(8123)))
@@ -1302,7 +1304,7 @@ fn server_cli_run(
         .and_then(|w| w.strip_prefix("--web=").map(|v| v.to_string()))
         .unwrap_or_else(|| "../tools/ets2nav-web".to_string());
     let trace = replay.and_then(|r| r.strip_prefix("--replay=").map(|v| v.to_string()));
-    server_cli::server_cli(dataset_dir, trace.as_deref(), port, &web_root);
+    server_cli::server_cli(dataset_dir, trace.as_deref(), port, &web_root, fake_signal);
 }
 
 /// 合成 trace 生成（P4 UI 回放验证）：路线插值 + 速度曲线 → .navtrace
