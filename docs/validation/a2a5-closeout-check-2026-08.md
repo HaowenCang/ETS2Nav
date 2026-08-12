@@ -82,10 +82,13 @@
 
 注：run-p2 与 run-p1 由 run-p3 链内顺序调用并各自输出 ALL PASS（P2 套件内部设置 ETS2_INSTALL 后调用 run-p1），四个套件的 ALL PASS 行均为本次实跑输出。
 
-## 五、tag v0.5.0 与推送记录
+## 五、tag v0.5.0 与推送记录（2026-08-12）
 
-（待执行后填写：tag 指向、push 结果、工作区状态）
+- tag v0.5.0 指向 `39abcc3a47d77592771366e94e1c7d890bd7ca9f`（= rev-parse 39abcc3，A2~A5 交付完成节点），已推送 origin（`* [new tag] v0.5.0 -> v0.5.0`）
+- main 推送 `39abcc3..1652fb2`（收尾核对记录提交 1652fb2）
+- `git status --porcelain` 为空；`git log origin/main..HEAD` 为空（全部已推送）
 
-## 六、原 goal 关闭记录
+## 六、原 goal 关闭记录（2026-08-12）
 
-（待执行后填写：goal 文件状态、complete_goal 结果）
+- 原 goal 文件 `20260811141815-702rqi.md` 已由 `.pi-glla/goals/` 移入 `.pi-glla/archive/`，Status 更新为 `complete`，Stop reason 记载关门完成（tag v0.5.0 @ 39abcc3 + 收尾核对记录 1652fb2）
+- `.pi-glla/` 已被 gitignore，关闭操作不入库（本地状态变更）
