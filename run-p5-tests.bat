@@ -1,6 +1,7 @@
 @echo off
 rem P5 Regression Suite (PLAN-P3plus.md A3): od-corpus gates + known-routes baseline diff + random OD check
-rem NOTE: independent of nav-core-cli (A2 parallel lane owns it); parent merges later.
+rem A3c-M3 (2026-08-12 audit fix): [1/4] compile failure no longer false-PASS (match error[E);
+rem [3/4][4/4] prefixed by cargo build --release (verify fresh binary, not stale release)
 setlocal
 set DATASET=E:\Projects\Pi\ETS2Nav\data\europe-v4
 set BASELINE=E:\Projects\Pi\ETS2Nav\od-baseline-europe-v4.txt
@@ -8,9 +9,9 @@ set FAIL=0
 
 echo === [1/4] cargo test (od-corpus + deps) ===
 cd nav-core
-cargo test -p od-corpus 2>&1 | findstr /C:"FAILED" >nul
+cargo test -p od-corpus 2>&1 | findstr /C:"FAILED" /C:"error[E" >nul
 if errorlevel 1 (echo CARGO TEST PASS) else (echo CARGO TEST FAIL & set FAIL=1)
-cargo test -p nav-router 2>&1 | findstr /C:"FAILED" >nul
+cargo test -p nav-router 2>&1 | findstr /C:"FAILED" /C:"error[E" >nul
 if errorlevel 1 (echo ROUTER TEST PASS) else (echo ROUTER TEST FAIL & set FAIL=1)
 
 echo === [2/4] fmt/clippy (od-corpus) ===
@@ -19,6 +20,10 @@ if errorlevel 1 set FAIL=1
 if %FAIL%==1 (echo FMT FAIL) else (echo FMT PASS)
 cargo clippy -p od-corpus --all-targets 2>&1 | findstr /C:"warning" /C:"error" >nul
 if errorlevel 1 (echo CLIPPY PASS) else (echo CLIPPY FAIL & set FAIL=1)
+
+echo === [2.5/4] cargo build --release (od-corpus) ===
+cargo build --release -p od-corpus 2>&1 | findstr /C:"error" >nul
+if errorlevel 1 (echo BUILD PASS) else (echo BUILD FAIL & set FAIL=1)
 
 echo === [3/4] known-routes baseline diff ===
 if not exist %BASELINE% (

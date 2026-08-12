@@ -88,7 +88,7 @@ fn od_ctx(dataset_dir: &str) -> OdCtx {
 }
 
 /// 城市全部路由位置（每 City POI 行一个；多行回退——部分 access_node 落在
-/// 断簇/孤立点，A* 不可达——P5 实测 8/36 城市对触发，登记 P2 遗留）。
+/// 断簇/孤立点，A* 不可达——P5 实测 7/36 城市对触发多行回退（审计复算），登记 P2 遗留）。
 fn city_positions(ctx: &OdCtx, name: &str) -> Vec<(f64, f64)> {
     ctx.cities
         .iter()
@@ -405,15 +405,17 @@ fn od_check(dataset_dir: &str, pairs: u32) {
     println!(
         "OD-CHECK pairs={pairs} reachable={reachable} continuity={continuity_ok} jumps={jumps} uturns={uturns} ms={ms:.0}"
     );
-    // PASS：图拓扑连续（jumps 严格 0）；uturn 容忍少量真实图缺陷（登记边号）；
-    // reachable 为主网占比下限（图存在拓扑断簇——P5 发现，登记 P2 遗留排查）。
+    // PASS：图拓扑连续（jumps 严格 0）；uturn 容忍少量真实图缺陷（登记边号）。
+    // 审计 A3c-M1（2026-08-12）：reachable 是**随机节点对可达率**（配对口径）——
+    // 不是主网分量占比（P(对可达)=Σfᵢ²，主网占比上限为 √可达率；欧洲 v4 实测
+    // 最大 WCC 75.8%）。PASS 行如实标注配对口径，分量占比由 P2 遗留排查另行统计。
     if jumps == 0 && uturns <= 3 && reachable as f64 / pairs as f64 >= 0.5 {
         println!(
-            "OD-CHECK PASS（断簇占比 {:.0}%——登记为图属性，非工具缺陷）",
+            "OD-CHECK PASS（不可达对占比 {:.0}%——配对口径，主网分量约 76% 见报告）",
             (1.0 - reachable as f64 / pairs as f64) * 100.0
         );
     } else {
-        println!("OD-CHECK FAIL（jumps>0 或 uturns>3 或主网占比<50%）");
+        println!("OD-CHECK FAIL（jumps>0 或 uturns>3 或随机对可达率<50%）");
         std::process::exit(1);
     }
 }

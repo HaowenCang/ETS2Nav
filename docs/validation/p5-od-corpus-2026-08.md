@@ -59,14 +59,26 @@ OD-CHECK pairs=2000 reachable=1221 continuity=1221 jumps=0 uturns=1 ms=190393
 | 不合理掉头 | 1（边 395371→395373，173m→159m 反向） | 登记为图缺陷待排查 |
 | 可达率 | 61%（1221/2000） | 见"断簇发现" |
 
-**断簇发现（P5 核心价值）**：约 39% 随机节点对不可达——routing.graph 存在大量
-**拓扑断簇**（与主路网断开的连通分量）。P2 的 CSR 校验只验证"边端点索引合法"，
-**从未验证连通性**——本检查首次量化暴露：主网（最大连通分量）占比 ~61%。断簇成因
-待排查（城市内部微网未接入主网 / 编译期节点压缩边引用问题），登记 P2 遗留。
+**断簇发现（P5 核心价值；2026-08-12 审计修正口径）**：约 39% **随机节点对**不可达
+（配对口径：P(随机对可达)=Σfᵢ²，非节点级占比）——routing.graph 存在**拓扑断簇**
+（与主路网断开的连通分量）。P2 的 CSR 校验只验证"边端点索引合法"，**从未验证
+连通性**——本检查首次量化暴露。**主网（最大连通分量）实测约 76%（WCC 273,410/360,804
+活跃节点 = 75.8%；SCC 266,716 = 73.9%——审计独立统计），断簇节点约 22-24%**（断簇
+量级约为 39% 口径的 0.6 倍）。断簇成因待排查（城市内部微网未接入主网 / 编译期节点
+压缩边引用问题），登记 P2 遗留。
 
 **城市接入点断簇**：1135 个 City POI 行中 12 个城市接入点 3 跳 BFS 范围 <8 节点
-（断簇接入点——如 koln/roma 的 access_node 指向断簇，od-baseline 多行 POI 回退解决
-36/36；koln→dresden、roma→palermo 因两端全断簇改用 dortmund→kassel、torino→bari）。
+（审计修正归因：其中 9 城（rennes/gijon/a_coruna/salzburg/kosice/paldiski/oulu/
+panevezys/brasov）首行接入点落断簇但存在主网回退行；**newcastle/sangiovanni/calarasi
+三城全部行断簇**；另有 koln、palermo 全断但不在 12 城名单——3 跳启发式漏检较大断簇。
+od-baseline 多行 POI 回退解决 36/36；koln→dresden、roma→palermo 替换为 dortmund→
+kassel、torino→bari——**dresden 2 行中 1 行可用（dresden→hamburg 实测可达）、roma
+8 行中首行断簇但回退可用**，"两端全断簇"措辞仅 koln/palermo 成立）。
+
+**审计补充发现（UK 孤立 + ferry 悬空——比断簇更具体可修复的主因）**：UK 全境为
+4,438 节点独立连通分量（第 2 大 WCC，含 london/edinburgh 等全部英国城市），与大陆
+主网完全断开；**全部 129 条 transit 边（65 条 ferry）端点均落在 2-9 节点微型分量中，
+ferry 完全未接入路网**——这是 UK 孤立的直接成因，建议 P2 遗留排查优先处理。
 
 ## 四、回归套件（run-p5-tests.bat，ALL PASS 实测）
 
@@ -88,20 +100,24 @@ P5 Regression Suite: ALL PASS
 - cargo test -p od-corpus / -p nav-router 全绿
 - od-baseline：regions=9 pairs=36 missing=0 PASS（含 --write 落盘）
 - od-regress：pairs=36 diff=0 PASS
-- od-check：2000 对 PASS（jumps=0 / uturns=1 登记 / 主网 61%）
+- od-check：2000 对 PASS（jumps=0 / uturns=1 登记 / 不可达对 39%——配对口径，主网分量约 76% 见 §三）
 - run-p5-tests.bat：P5 Regression Suite: ALL PASS
 
 ## 六、已知限制与遗留
 
-1. **路由图拓扑断簇 ~39%**（P2 遗留，首次量化）：连通性未在 P2 校验——建议后续
-   排查（连通分量统计 + 断簇成因：编译期节点压缩/城市微网接入）。
+1. **路由图拓扑断簇**（P2 遗留，首次量化）：随机对不可达 39%（配对口径）、主网
+   WCC 约 76%——连通性未在 P2 校验；**优先排查 UK 孤立（4,438 节点分量）与 ferry
+   悬空（129 transit 边端点落微型分量）**（审计补充主因），其次断簇成因（编译期
+   节点压缩/城市微网接入）。
 2. **uturn 单点**：边 395371→395373（173m→159m Road 反向）——真实图缺陷或匝道
    结构，登记待查。
-3. **POI access_node 断簇接入点**（12 城市）：多行 POI 回退已覆盖已知路线集；dest
-   导航到断簇城市时仍可能失败（P2-15 仅验证解析未验证可达性——P5 补充验证）。
+3. **POI access_node 断簇接入点**（12 城市首行 + koln/palermo 全断）：多行 POI 回退
+   已覆盖已知路线集；dest 导航到全断城市（newcastle/sangiovanni/calarasi/koln/palermo）
+   时仍会失败（P2-15 仅验证解析未验证可达性——P5 补充验证；9 城首行断簇场景实际
+   导航失败风险低于报告初版暗示）。
 4. **od-check 性能**：2000 对约 190s（长距离 A*）；套件冒烟用 500 对。
-5. **A2 并行线**：nav-core-cli 由 A2 独占且当前编译错误——P5 套件独立成门；父会话
-   统一合并后恢复全 workspace 门。
+5. **A2 并行线**：P5 套件独立成门期间 nav-core-cli 由 A2 独占（2026-08-12 修复后
+   workspace 门已恢复——本项为历史状态说明，无残留影响）。
 
 **BLOCKERS: A2 并行线 nav-core-cli 编译错误（server_cli.rs 引用 nav_router::RouteProfile
 /SessionConfig 路径错误）阻塞全 workspace cargo 门——非本任务代码问题；P5 套件已独立成门
