@@ -37,6 +37,7 @@
 | 9 | 回归套件更新 | ✅ | 四套件 `DATASET` → europe-v5；基线路径 → v5；p1/p2 可复现性修复 |
 | 10 | 关门报告 | ✅ | p4 / p5 / p6 closeout 三份 + p5 根因报告 + p5 验证记录 |
 | 11 | 进展文档回写 | ✅ | `PLAN.md` §1/§4/§4.2/§5、`PLAN-P3plus.md` §5、`README.md`；`p5-od-corpus-2026-08.md` §六 历史遗留段加状态更新注 |
+| 12 | 决策记录 | ✅ | `docs/decisions/ADR-008-ferry-terminal-endpoints.md`（Ferry/Train 端点语义） |
 
 ## 三、门验证实跑记录（本次收尾重跑）
 

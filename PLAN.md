@@ -133,6 +133,8 @@
 
 报告：p5-graph-defects-2026-08.md（根因与排除检验）、p5-graph-defects-verification-2026-08.md（验证记录）、p5-closeout-2026-08.md、p4-closeout-2026-08.md、p6-closeout-2026-08.md。
 
+**决策记录**：`docs/decisions/ADR-008-ferry-terminal-endpoints.md`——Ferry/Train 端点语义（`prefab_link_uid` 的 prefab 路网接入节点优先，`node_uid` 仅作降级回退并计数）。
+
 **数据集口径**：规范数据集由 `data/europe-v4`（修复前）改为 **`data/europe-v5`**（修复后）；v4 保留作历史对照。四个回归套件的 `DATASET` 与基线路径已同步更新。数据集受 `.gitignore` 的 `data/` 规则约束不入库，重建命令见 p5-closeout-2026-08.md §6。
 
 **版本归档**：tag **`v0.6.0-p4p5p6`** 指向 `7900bbc`（修复 + 关门报告提交），已推送 `origin`；收尾核对记录见 `docs/validation/p5-fix-closeout-check-2026-08.md`（含各阶段门实跑输出与推送记录）。
