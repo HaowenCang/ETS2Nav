@@ -38,7 +38,7 @@ cd nav-core && cargo fmt --check && cargo clippy --all-targets && cargo test
 dotnet test map-compiler/MapCompiler.sln
 ```
 
-最新复核结果（2026-09-11）：四套件 ALL PASS（`BAT_EXIT=0`）、cargo fmt PASS / clippy 0 告警 / **100 测试通过**、dotnet **80 测试通过**（8 项目）。逐项实跑输出与 GitHub 发布复核见 `docs/validation/p4-p6-hardening-2026-08.md` §9。
+结果记录：四套件于 `00f9a54`（2026-08-12）实跑 ALL PASS（`BAT_EXIT=0`），2026-09-11 未复跑（该日后仅有文档类提交与一处不进入任何门覆盖范围的 `speed-validator` nullable 指令）；cargo 门与 dotnet 门于 2026-09-11 **复跑**：fmt PASS / clippy 0 告警 / **100 测试通过**、dotnet **80 测试通过**（8 项目）。逐项实跑输出、未复跑的依据与 GitHub 发布复核见 `docs/validation/p4-p6-hardening-2026-08.md` §9。
 
 ## 目录结构（P0 精简版，完整版见 v0.2 §72）
 
