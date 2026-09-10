@@ -9,6 +9,8 @@ using ScsSector;
 using ScsDefinitions;
 using ScsMapModel;
 
+#nullable enable annotations   // 仅为允许可空引用类型注解（消除 CS8632）；不启用流分析告警
+
 var cmdArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
 string? Arg(string k) { for (int i = 0; i < cmdArgs.Length - 1; i++) if (cmdArgs[i] == k) return cmdArgs[i + 1]; return null; }
 var installRoot = Arg("--install") ?? @"E:\SteamLibrary\steamapps\common\Euro Truck Simulator 2";

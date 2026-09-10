@@ -241,3 +241,83 @@ mod 集合）。**在其他机器上检查必然报 CHANGED，这是预期行为
 - `README.md`：当前阶段、关门报告入口、B 侧 runbook、数据集 Release 链接
 - `.gitignore`：新增 `ets2nav-dataset-*.zip` / `*.7z`（发布归档不入库）
 - `docs/validation/b-session-runbook-2026-08.md`（新建）
+
+> 上表为本次加固提交（`00f9a54`）的文档变更。2026-09-11 的 GitHub 同步与其文档变更见 §9。
+
+---
+
+## §9 GitHub 同步记录（2026-09-11）
+
+本项目采用「本地仓库为唯一写入源」（PLAN.md §5），故发布动作分两类：代码与文档经 `main` 推送，数据集经 Release 附件分发。本节记录两类发布的最终状态。
+
+### 提交链（`d4d8161` → `19eceb1`）
+
+| 提交 | 内容 |
+|---|---|
+| `7900bbc` | P5 图缺陷根因排查与修复 + P4/P5/P6 关门（tag `v0.6.0-p4p5p6`） |
+| `92cff89` | P5 修复收尾核对记录 + 进展文档 tag/提交号回写 |
+| `0928e47` | ADR-008：Ferry/Train 端点语义决策记录 |
+| `4b5e945` | PLAN.md §5 补 `.gitignore` 注意事项（`bin/` 规则连带忽略 `src/bin/**`） |
+| `00f9a54` | 离线加固四项（§1~§4） |
+| `19eceb1` | 数据集 Release 分发记录 + README 分发入口（tag `dataset-europe-v5`） |
+
+### Tag 与 Release
+
+| 对象 | 指向 | 说明 |
+|---|---|---|
+| `v0.6.0-p4p5p6`（附注） | `7900bbc` | 代码里程碑：P4/P5/P6 关门 |
+| `dataset-europe-v5`（轻量） | `00f9a54` | **数据发布**：GitHub Release 附件，不表示代码里程碑 |
+| Release `dataset-europe-v5` | 附件 `ets2nav-dataset-europe-v5.zip` | 166.4 MB；`gh release list` 标记为 Latest |
+
+**引入两种 tag 的原因**：数据集内容与代码状态是两条独立的演进线——数据集可能在不改动代码的前提下重建（如源数据或编译参数变化），而代码亦可在数据集不变的前提下推进。以单一 tag 体系同时表达二者会导致「tag 指向的数据集与 tag 提交所描述的数据集不一致」的歧义，故数据发布使用独立命名空间 `dataset-*`。
+
+### 发布后复核（本次会话实跑）
+
+| 检查 | 结果 |
+|---|---|
+| `git status --porcelain -uall` | 空（工作区干净） |
+| `git log origin/main..HEAD` | 空（无未推送提交） |
+| `git ls-remote origin HEAD refs/heads/main` | 均为 `19eceb1…`（本地与远程一致） |
+| `git ls-remote --tags origin` | 7 个 tag 全部在远程，含 `dataset-europe-v5` |
+| Release 附件 | `state=uploaded`，166.4 MB |
+| 分发字节一致 | 下载件 SHA-256 `15B03A63…2831BB` == 本地归档（**MATCH**） |
+| 解压内容一致 | `routing.graph` SHA-256 `A20CE044…EBA9B8` == `data/europe-v5/routing.graph`（**MATCH**） |
+
+### 门验证复跑（2026-09-11，确认发布代与验证代一致）
+
+| 门 | 结果 |
+|---|---|
+| `cargo fmt --check` | PASS（exit 0） |
+| `cargo clippy --all-targets` | **0 warnings** |
+| `cargo test` | **100 passed / 0 failed**（9 个 test target） |
+| `dotnet test map-compiler/MapCompiler.sln` | **80 passed / 0 failed**（8 个项目：HashFs 5 / Sii 22 / Sector 8 / Resource 23 / Definitions 5 / Graph 7 / Prefab 4 / Validation 6） |
+
+四套回归套件（`run-p1/p2/p3/p5-tests.bat`）在 `00f9a54` 提交时已实跑 ALL PASS，本次未复跑（工作区自该提交未改动产品代码，`git status` 为空可证；本次仅新增下述工具构建与文档改动）。
+
+### B 侧会话前置条件实测（2026-09-11）
+
+对 runbook §0.1 / §0.3 的前置条件做了实跑核对，避免会话当天才发现工具缺失：
+
+| 检查 | 结果 |
+|---|---|
+| `nav-core-cli.exe`（Release） | ✅ 存在 |
+| `SignalLab.exe` / `SignalLabAnalyze.exe`（Release） | ✅ 存在 |
+| `map-inspector.exe`（Release） | ✅ 存在 |
+| `SpeedValidator.exe` | ⚠️ **原仅有 Debug 产物**，runbook 使用说明指向 Release 路径——本次补建 Release（`BUILD_EXIT=0`） |
+| 插件 DLL（`bin\win_x64\plugins\`） | ✅ `scs-nav-bridge.dll` 139,776 B / `semaphore-bridge.dll` 139,264 B / `ets2la_plugin.dll` 370,176 B |
+| **数据集指纹**（runbook §0.3 命令） | ✅ `FINGERPRINT MATCH`（exit 0）——游戏 v1.60.1.7，115 archives / 105 DLC；`MODS total=91 map_altering=1 unprobeable=1 mode=deep`，`MODS-ALTERING promods-eu-map-v281.scs 1051114366 local` |
+
+指纹 MATCH 的含义需精确理解：它说明**自 Europe v5 构建以来，游戏安装与磁盘 mod 集合均未变化**，故数据集与当前游戏地图数据一致。它**不**说明 ProMods 在游戏内未激活——激活集记录在存档内，本项目不解析（§2 残留限制）。这两件事必须分开判断，runbook §0.2 要求的 `game.log.txt` `[mods] Active` 行核对仍然是必要的。
+
+顺带修复：`SpeedValidator` 补建 Release 时暴露 3 处 `warning CS8632`（可空引用类型注解出现在未启用 nullable 的上下文中），以 `#nullable enable annotations` 消除（仅开放注解语法，不启用流分析告警，避免引入新的既有代码告警）。现为 **0 warnings**。该项目不在 `MapCompiler.sln` 内，故不影响既有 dotnet 门口径。
+
+### 本轮文档同步清单（2026-09-11）
+
+| 文件 | 变更 |
+|---|---|
+| `PLAN.md` | §1 最后更新与摘要（数据集分发、B 侧就绪核对、发布后复核）；§5 tag 表新增 `dataset-europe-v5` 并说明两种 tag 命名空间的分工 |
+| `PLAN-P3plus.md` | §5 末尾新增「B 侧就绪条件」表（手册 / 插件 / 工具 / 数据集 / 阻塞风险） |
+| `README.md` | 当前阶段补同步日期与存量门复核结果；新增「验证与复现入口」节（四套件 + cargo/dotnet 命令 + 数据集获取途径）；目录结构更新（补 `nav-core` / `desktop` / `data` 与测试计数 65 → 80） |
+| `p5-fix-closeout-check-2026-08.md` | §5 追加后续推进注（提交链延伸至 `19eceb1`、新增数据发布 tag） |
+| 本文件 | §9 新建（GitHub 同步记录）；§8 关联文档清单同步 |
+
