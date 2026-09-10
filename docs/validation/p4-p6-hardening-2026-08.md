@@ -250,7 +250,7 @@ mod 集合）。**在其他机器上检查必然报 CHANGED，这是预期行为
 
 本项目采用「本地仓库为唯一写入源」（PLAN.md §5），故发布动作分两类：代码与文档经 `main` 推送，数据集经 Release 附件分发。本节记录两类发布的最终状态。
 
-### 提交链（`d4d8161` → `19eceb1`）
+### 提交链（`d4d8161` → `c5fe3d7`）
 
 | 提交 | 内容 |
 |---|---|
@@ -260,6 +260,7 @@ mod 集合）。**在其他机器上检查必然报 CHANGED，这是预期行为
 | `4b5e945` | PLAN.md §5 补 `.gitignore` 注意事项（`bin/` 规则连带忽略 `src/bin/**`） |
 | `00f9a54` | 离线加固四项（§1~§4） |
 | `19eceb1` | 数据集 Release 分发记录 + README 分发入口（tag `dataset-europe-v5`） |
+| `c5fe3d7` | 本次 GitHub 与进展/计划文档同步（§9 本文；含 `speed-validator` Release 补建） |
 
 ### Tag 与 Release
 
@@ -273,15 +274,18 @@ mod 集合）。**在其他机器上检查必然报 CHANGED，这是预期行为
 
 ### 发布后复核（本次会话实跑）
 
+下表前四项在**数据集 Release 发布时点**（`19eceb1`）实跑；该基线已由本次文档同步提交 `c5fe3d7` 推进，故 `main` 的当前值以最后一行为准。
+
 | 检查 | 结果 |
 |---|---|
 | `git status --porcelain -uall` | 空（工作区干净） |
 | `git log origin/main..HEAD` | 空（无未推送提交） |
-| `git ls-remote origin HEAD refs/heads/main` | 均为 `19eceb1…`（本地与远程一致） |
+| `git ls-remote origin HEAD refs/heads/main` | 发布时点均为 `19eceb1…`（本地与远程一致） |
 | `git ls-remote --tags origin` | 7 个 tag 全部在远程，含 `dataset-europe-v5` |
 | Release 附件 | `state=uploaded`，166.4 MB |
 | 分发字节一致 | 下载件 SHA-256 `15B03A63…2831BB` == 本地归档（**MATCH**） |
 | 解压内容一致 | `routing.graph` SHA-256 `A20CE044…EBA9B8` == `data/europe-v5/routing.graph`（**MATCH**） |
+| `main` 当前值 | `c5fe3d7`，与 `origin/main` 一致，工作区干净 |
 
 ### 门验证复跑（2026-09-11，确认发布代与验证代一致）
 
@@ -292,7 +296,7 @@ mod 集合）。**在其他机器上检查必然报 CHANGED，这是预期行为
 | `cargo test` | **100 passed / 0 failed**（9 个 test target） |
 | `dotnet test map-compiler/MapCompiler.sln` | **80 passed / 0 failed**（8 个项目：HashFs 5 / Sii 22 / Sector 8 / Resource 23 / Definitions 5 / Graph 7 / Prefab 4 / Validation 6） |
 
-四套回归套件（`run-p1/p2/p3/p5-tests.bat`）在 `00f9a54` 提交时已实跑 ALL PASS，本次未复跑（工作区自该提交未改动产品代码，`git status` 为空可证；本次仅新增下述工具构建与文档改动）。
+四套回归套件（`run-p1/p2/p3/p5-tests.bat`）在 `00f9a54` 提交时已实跑 ALL PASS，本次未复跑。依据：本次对产品代码的唯一改动是 `tools/speed-validator/SpeedValidator/Program.cs` 增加一行 `#nullable` 指令（消除 3 处 CS8632 告警，不改变任何运行语义），而 `SpeedValidator` 未包含在 `MapCompiler.sln` 内，亦不被四套件中任何一步调用（已用 `Select-String` 核对 `run-p2/p3-tests.bat` 无 `speed-validator` / `SpeedValidator` 引用）——故该改动不可能影响套件结果。cargo 侧与 dotnet 侧门均已按上表复跑。
 
 ### B 侧会话前置条件实测（2026-09-11）
 
