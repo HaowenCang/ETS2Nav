@@ -21,7 +21,7 @@
 
 **关键指标基线（Europe v5，2026-08-12）**：主分量 286,214 活跃节点（79.35%）、transit 端点孤立 0/522、od-check jumps=0 / uturns=0、可达率 61.2%（理论上界 62.96%）；性能：路线 p99 0.378ms、匹配 p99 0.012ms、内存 328MB、加载 327ms。
 
-**已建立**：执行计划（本文件）、本地 git 仓库、.gitignore、GitHub 仓库（HaowenCang/ETS2Nav private）、tag v0.1.0-p0 ~ v0.5.0。
+**已建立**：执行计划（本文件）、本地 git 仓库、.gitignore、GitHub 仓库（HaowenCang/ETS2Nav private）、tag `v0.1.0-p0` / `v0.2.0-p1` / `v0.3.0-p2` / `v0.4.0-p3` / `v0.5.0` / **`v0.6.0-p4p5p6`**（均以 `git push origin <tag>` 推送）。
 
 **后续计划拆分**：P3–P6 与 P2 实测补测项（T1–T6）见 [PLAN-P3plus.md](./PLAN-P3plus.md)。
 **实机测试决策（2026-08-11）**：用户确认**暂不进行实机测试**——B 侧（B1–B6）整体延后，A 侧连续推进（已完成至 P6 关门）；B 侧集中一次游戏会话统一补齐。
@@ -106,7 +106,7 @@
 | P5 | 全欧洲官方地图测试（automated OD corpus，v0.2 §18、§66） | P1/P4 产物 | 数千 OD 自动检查通过 |
 | P6 | 性能优化（ALT/CH、增量编译等）与正式发布（v0.2 §62–63） | P5 | benchmark 目标达成 |
 
-阶段关门状态：P0 ✅（v0.1.0-p0）/ P1 ✅（v0.2.0-p1）/ P2 ✅（v0.3.0-p2）/ P3 ✅（v0.4.0-p3）/ P4 ✅ / P5 ✅ / P6 ✅（后三者随 v0.5.0 及本次修复提交关门，报告见 §4.2）。
+阶段关门状态：P0 ✅（v0.1.0-p0）/ P1 ✅（v0.2.0-p1）/ P2 ✅（v0.3.0-p2）/ P3 ✅（v0.4.0-p3）/ P4 ✅ / P5 ✅ / P6 ✅（后三者随 **`v0.6.0-p4p5p6`** 关门——含 P5 图缺陷修复，报告见 §4.2）。
 
 ---
 
@@ -133,7 +133,9 @@
 
 报告：p5-graph-defects-2026-08.md（根因与排除检验）、p5-graph-defects-verification-2026-08.md（验证记录）、p5-closeout-2026-08.md、p4-closeout-2026-08.md、p6-closeout-2026-08.md。
 
-**数据集口径**：规范数据集由 `data/europe-v4`（修复前）改为 **`data/europe-v5`**（修复后）；v4 保留作历史对照。四个回归套件的 `DATASET` 与基线路径已同步更新。
+**数据集口径**：规范数据集由 `data/europe-v4`（修复前）改为 **`data/europe-v5`**（修复后）；v4 保留作历史对照。四个回归套件的 `DATASET` 与基线路径已同步更新。数据集受 `.gitignore` 的 `data/` 规则约束不入库，重建命令见 p5-closeout-2026-08.md §6。
+
+**版本归档**：tag **`v0.6.0-p4p5p6`** 指向 `7900bbc`（修复 + 关门报告提交），已推送 `origin`；收尾核对记录见 `docs/validation/p5-fix-closeout-check-2026-08.md`（含各阶段门实跑输出与推送记录）。
 
 ---
 
@@ -178,7 +180,18 @@ P1 Gates（G1~G13）见 P1-map-compiler-plan.md §126–§138；Exit Criteria §
 - **仓库**：GitHub（账号 HaowenCang），本地仓库为唯一写入源。
 - **分支模型**：`main`（可发布基线）+ 功能分支 `feat/<id>-<slug>`（如 `feat/A4-city-parser`）；P0 阶段可直接在 main 上小步提交，进入 P1 后强制分支 + PR。
 - **提交规范**：`<ID>: <动词> <对象>`，如 `A4: 实现 sector 解析`；提交信息含变更要点与验证命令。
-- **Tag**：P0 门通过 → `v0.1.0-p0`；此后按里程碑递增。
+- **Tag**：P0 门通过 → `v0.1.0-p0`；此后按里程碑递增。已建 tag 一览：
+
+  | Tag | 指向 | 内容 |
+  |---|---|---|
+  | `v0.1.0-p0` | `3893fe8` | P0 门评审通过（v0.2 §75 四项全过） |
+  | `v0.2.0-p1` | `01564df` | P1 Map Compiler 关门（p1-closeout 报告 + PLAN/README 状态） |
+  | `v0.3.0-p2` | `69a3e45` | P2 Navigation Core 关门（含 P2-19 审查修复合并） |
+  | `v0.4.0-p3` | `cb66c26` | P3 Driving Assistant 关门（A1；含限速查询热路径微基准） |
+  | `v0.5.0` | `39abcc3` | A2~A5 交付完成（P4 UI / P5 OD corpus / P6 评估 / B7 工具） |
+  | **`v0.6.0-p4p5p6`** | **`7900bbc`** | **P4/P5/P6 关门：P5 图缺陷根因排查与修复（ferry 端点解析）+ 关门报告 + 计划状态回写** |
+
+  `v0.6.0-p4p5p6` 为**附注 tag**（annotated）；`^{}` 解引用指向上述提交。
 - **忽略**：`.pi-subagents/`、`.pi-glla/`、`target/`、`bin/ obj/`、`node_modules/`、提取的游戏资源（`vendor/` 若含大文件）。
 - **文档随代码入库**：需求 v0.1/v0.2、本计划、可行性评估、格式笔记均在仓库内。
 
