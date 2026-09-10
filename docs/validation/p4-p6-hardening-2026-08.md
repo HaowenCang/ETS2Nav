@@ -1,7 +1,7 @@
 # P4/P6 离线加固验证记录（2026-08-12）
 
-**范围**：审计阶段登记为「不强制修复」的遗留项中，四项可离线处理者——UI 链验证不稳定、§9 mods 指纹漏报、§57 自动缩放/自动恢复、UI 事件类型分发。
-**性质**：其中**三项经复核为真实缺陷（含两项规范违背）**，非风格问题；详见各节「性质」标注。
+**范围**：审计阶段登记为「不强制修复」的遗留项中可离线处理者——UI 链验证不稳定、§9 mods 指纹漏报、§57 自动缩放/自动恢复、UI 事件类型分发；外加数据集外部分发与 B 侧会话准备。
+**性质**：前四项中**三项经复核为真实缺陷（含两项规范违背）**，非风格问题；详见各节「性质」标注。
 
 ---
 
@@ -176,13 +176,68 @@ try { onSnapshot(JSON.parse(ev.data)); } catch (e) { /* 忽略坏帧 */ }
 | `cargo clippy --all-targets` | 0 warnings |
 | `cargo test` | **100 passed**（97 + 3 新增 yaw/quat 单测） |
 | `dotnet test`（ScsResource.Tests） | **23 passed**（8 + 15 新增 mod/zip 单测） |
-| `run-p1/p2/p3-tests.bat` | ALL PASS（见 §6 实跑记录） |
-| `run-p5-tests.bat` | ALL PASS |
+| `run-p1/p2/p3-tests.bat` | ALL PASS（`BAT_EXIT=0`；P1 链内 unit 65 + Berlin gate 95.4% + Germany gate 96.4% + determinism + Rust reader + Europe scale `failed_prefabs: 0`） |
+| `run-p5-tests.bat` | ALL PASS（`BAT_EXIT=0`） |
 | verify-ui-chain.py | 8/8 PASS（扩展后 4 项新增断言全过） |
 
-## §6 关联文档更新
+## §6 数据集外部分发（Release 附件）
+
+**动机**：数据集受 `.gitignore` 的 `data/` 规则约束不入库，克隆仓库后须本地重建（约 4 分钟）
+**且需已安装 ETS2**——未拥有游戏者无法运行任何功能。发布为 Release 附件后，无需游戏即可
+运行 Rust 导航核心、UI 联调、CI 与代码审查。
+
+| 项 | 值 |
+|---|---|
+| Release | `dataset-europe-v5`（https://github.com/HaowenCang/ETS2Nav/releases/tag/dataset-europe-v5） |
+| 附件 | `ets2nav-dataset-europe-v5.zip`，166.4 MB（原始 356 MB） |
+| tag | `dataset-europe-v5`（数据发布用，不表示代码里程碑） |
+| 内容 | routing.graph / junction.graph / map.db / search.db / manifest.json / diagnostics.json / README-dataset.txt |
+
+**端到端验证**：
+
+| 检查 | 结果 |
+|---|---|
+| 附件状态 | `gh release view` → `state=uploaded`，166.4 MB |
+| 分发字节一致 | 下载件 SHA-256 `15B03A63…2831BB` == 本地归档 SHA-256（**MATCH**） |
+| 归档可解压 | 7 个条目全部解出，文件名与大小与源一致 |
+| 内容一致 | 解出 `routing.graph` SHA-256 `A20CE044…EBA9B8` == `data/europe-v5/routing.graph`（**MATCH**） |
+
+**归档不入库**：`.gitignore` 新增 `ets2nav-dataset-*.zip` / `*.7z`（166 MB 二进制不进 git 历史）。
+
+**指纹语义（在 Release notes 与归档内 README 中均明确标注）**：`content_fingerprint` 与
+`mods_fingerprint` 是**构建机本地**的变更检测（游戏版本 / archive 名·大小·mtime / DLC 集合 /
+mod 集合）。**在其他机器上检查必然报 CHANGED，这是预期行为而非数据集损坏**——指纹有效
+需在目标机重建。该语义已在 §2 的实现中确立，此处仅确保分发时不产生误导。
+
+---
+
+## §7 B 侧会话准备
+
+`docs/validation/b-session-runbook-2026-08.md`——单次会话（约 1 小时）采集 B1+B2+B3 的操作手册。
+
+**前置条件已核实**：三个插件 DLL 已安装于 `bin\win_x64\plugins\` 且与仓库构建产物 **SHA-256 一致**
+（B1 的复制步骤实际已完成）；`nav-core-cli` / `speed-validator` / `signal-lab` 均已构建。
+
+**新增风险核对（本次排查发现，写入手册 §0.2）**：本机装有 **ProMods 全量 11.2 GB**，其中
+`promods-eu-map-v281.scs`（1.05 GB）**含 `/map`**（即会改写地图）。最近一次游戏日志
+（2026-09-02）显示 `[mods] Active 17 mods (local: 0, workshop: 17)` 且 `promods-*.scs: Unmounted`
+——即当时 **ProMods 未激活**，数据集（base + DLC）与游戏内地图一致。但激活集可能已变，
+故手册要求**会话前复核** `game.log.txt` 的 `[mods] Active` 行与 `local:` 计数。
+
+同时发现 17 个激活 Workshop mod 中含两个灯态相关 mod，手册建议禁用其一：
+`Flashing Green (Traffic Lights)`（绿灯闪烁行为——本项目最高风险功能为红绿灯 ±1 s 倒计时
+与 GLOSA，该 mod 可能污染 T3 与 B3 判定）；`Different lenses of traffic lights`（灯罩外观，
+可保留）。
+
+---
+
+## §8 关联文档更新
 
 - `p4-ui-2026-08.md` §六：三项 MINOR 状态更新（不稳定断言 / §57 / 事件分发）
-- `p4-closeout-2026-08.md` §5：已知限制第 5~8 项销账
-- `p6-performance-eval-2026-08.md` §2.3/§五：§9 覆盖 4/9 → 6/9（mods 集合与 mod 顺序由 mod 指纹覆盖；内容哈希可选）
-- `p6-closeout-2026-08.md` §5：已知限制第 1 项更新
+- `p4-closeout-2026-08.md` §5：已知限制第 6、8 项销账，第 7 项标注依赖 B5，新增第 10 项（合成 trace 终点偏移）
+- `p6-performance-eval-2026-08.md` §2.3：§9 覆盖 4/9 → 6/9 + mods 实现与残留边界
+- `p6-closeout-2026-08.md` §5：已知限制第 1 项更新（mods 覆盖闭合）+ 新增第 7 项（本机 ProMods 风险登记）+ §6 重建命令补 `--deep-mods`
+- `PLAN.md` §1：当前状态补离线加固四项 + B 侧 runbook 指引
+- `README.md`：当前阶段、关门报告入口、B 侧 runbook、数据集 Release 链接
+- `.gitignore`：新增 `ets2nav-dataset-*.zip` / `*.7z`（发布归档不入库）
+- `docs/validation/b-session-runbook-2026-08.md`（新建）

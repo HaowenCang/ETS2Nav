@@ -5,8 +5,10 @@
 - **需求与技术基线**：[Euro Truck Simulator 2 外部智能导航系统-v0.2.md](./Euro%20Truck%20Simulator%202%20外部智能导航系统-v0.2.md)
 - **可行性评估**：[ETS2 外部智能导航系统可行性评估.md](./ETS2%20外部智能导航系统可行性评估.md)
 - **执行计划与进度**：[PLAN.md](./PLAN.md)
-- **当前阶段**：**P0~P6 A 侧全部关门（2026-08-12，tag `v0.6.0-p4p5p6` @ `7900bbc`）**——P3 关门 tag v0.4.0-p3；A2~A5（P4 UI / P5 OD corpus / P6 性能评估 / B7 工具）tag v0.5.0；此后完成 **P5 图缺陷根因排查与修复**（UK 孤立与 ferry 悬空为真实编译器缺陷——主分量 75.78%→79.35%、transit 端点孤立 258→0、od-check uturns 1→0），run-p1/p2/p3/p5 四套件 ALL PASS。规范数据集 `data/europe-v5`；**唯一剩余工作为 B 侧实机测试**（各阶段实机项登记为已知限制）。
-- **关门报告**：P4 / P5 / P6 见 [docs/validation/](./docs/validation/)（`p4-closeout` / `p5-closeout` / `p6-closeout-2026-08.md`）；P5 修复根因与验证见 `p5-graph-defects-2026-08.md` / `p5-graph-defects-verification-2026-08.md`
+- **当前阶段**：**P0~P6 A 侧全部关门（2026-08-12，tag `v0.6.0-p4p5p6` @ `7900bbc`）**——P3 关门 tag v0.4.0-p3；A2~A5（P4 UI / P5 OD corpus / P6 性能评估 / B7 工具）tag v0.5.0；此后完成 **P5 图缺陷根因排查与修复**（UK 孤立与 ferry 悬空为真实编译器缺陷——主分量 75.78%→79.35%、transit 端点孤立 258→0、od-check uturns 1→0）与**离线加固四项**（UI 链断言不稳定、§9 mod 指纹漏报、§57 规范违背、UI 事件分发），run-p1/p2/p3/p5 四套件 ALL PASS。**唯一剩余工作为 B 侧实机测试**（runbook 已就绪）。
+- **关门报告**：P4 / P5 / P6 见 [docs/validation/](./docs/validation/)（`p4-closeout` / `p5-closeout` / `p6-closeout-2026-08.md`）；P5 修复根因与验证见 `p5-graph-defects-2026-08.md` / `p5-graph-defects-verification-2026-08.md`；离线加固见 `p4-p6-hardening-2026-08.md`
+- **B 侧会话操作手册**：[b-session-runbook-2026-08.md](./docs/validation/b-session-runbook-2026-08.md)（含 mod 激活集核对）
+- **数据集**：[Release `dataset-europe-v5`](https://github.com/HaowenCang/ETS2Nav/releases/tag/dataset-europe-v5)（166 MB 归档）——**无需拥有游戏**即可运行导航核心与 UI 联调。本地重建（需游戏，约 4 分钟）见 `docs/validation/p5-closeout-2026-08.md` §6。注意数据集受 `.gitignore` 约束不入库。
 
 ## 架构概览（v0.2 §3）
 
