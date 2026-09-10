@@ -162,14 +162,15 @@ A4 性能优化 ──▶ B6 正式验收 ──▶ P6 出口
 
 **A 侧状态（2026-08-12，2026-09-11 复核）**：A1~A5 全部完成并各自关门（报告见各阶段 closeout）。**剩余工作仅 B 侧（B1~B6）**，依赖一次约 1 小时的游戏会话。
 
-**B 侧就绪条件（2026-09-11 核对）**：
+**B 侧就绪条件（2026-09-11 核对，含命令实跑验证）**：
 
 | 项 | 状态 |
 |---|---|
-| 操作手册 | `docs/validation/b-session-runbook-2026-08.md`（含 §0.2 mod 激活集核对、§四 数据交付清单） |
+| 操作手册 | `docs/validation/b-session-runbook-2026-08.md`（§0.2 mod 激活集核对、§四 数据交付清单、**§六 可直接照抄的命令速查**） |
 | 插件（B1） | `scs-nav-bridge.dll`（139,776 B）/ `semaphore-bridge.dll`（139,264 B）**已安装且与仓库产物 SHA-256 一致**——B1 的复制步骤实际已完成，开游戏即可冒烟 |
-| 采集工具 | `nav-core-cli`（`live` / `replay` / `syntrace`）、`speed-validator`、`signal-lab` + `signal-analyze` 均已构建 |
-| 数据集 | 本地 `data/europe-v5` 已构建；无需游戏者可用 Release 附件（见 PLAN.md §5） |
+| 采集工具 | `nav-core-cli`（`live` / `replay` / `syntrace` / `server`）、`speed-validator`、`signal-lab` + `signal-analyze` 均已构建（`speed-validator` 原仅 Debug，已补 Release） |
+| **采集链缺陷** | **三个缺陷已修复**（编制操作流程时逐条实跑命令发现）：`live` 因参数守卫误判**无法启动**；`live` 无参数时**不录制任何 trace**（单趟采集将零产出）；trace **不含信号灯字段**致 T3 无法离线复核。修复后 `live` 默认必录、并自动写 `<trace>.sem.csv` 信号旁路记录。详见 `p4-p6-hardening-2026-08.md` §9.1 |
+| 数据集 | 本地 `data/europe-v5` 已构建；无需游戏者可用 Release 附件（见 PLAN.md §5）。指纹核对实跑得 `FINGERPRINT MATCH` |
 | 阻塞风险 | 会话前须复核 `game.log.txt` 的 `[mods] Active` 行——本机装有 ProMods 全量 11.2 GB（其地图 mod 含 `/map`）；并建议禁用 `Flashing Green (Traffic Lights)` |
 
 ---

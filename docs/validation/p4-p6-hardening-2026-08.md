@@ -458,7 +458,24 @@ if errorlevel 1 (echo DATASET SMOKE FAIL & set FAIL=1) else (echo DATASET SMOKE 
 
 对照 §9.2 开头的失败输出可见：修复前 6 项 FAIL，修复后 7 项 PASS——其中 6 项从未真正失败过。
 
-### 本轮文档同步清单（2026-09-11）
+### §9.3 GitHub 同步（2026-09-11 第二轮）
+
+§9.1/§9.2 的修复与文档改动经 `bdbd7ea` 推送 `main`。同步后复核：
+
+| 检查 | 结果 |
+|---|---|
+| `git push origin main` | `8ea6fc4..bdbd7ea` |
+| `git rev-parse HEAD` == `origin/main` | 一致 |
+| `git status --porcelain -uall` | 空 |
+| `git log origin/main..HEAD` | 空（无未推送提交） |
+| 远程 tag | 7 个（`v0.1.0-p0` ~ `v0.6.0-p4p5p6` + `dataset-europe-v5`），与本地一致 |
+| Release `dataset-europe-v5` | `state=uploaded`，`draft=False`，标记 Latest（数据集内容不受本轮代码改动影响，无需重发） |
+
+**数据集是否需重发——判定与依据**：本轮改动全部位于 `nav-core/tools/nav-core-cli`（CLI 工具）与批处理脚本，**未触及 map-compiler 的任何代码路径**，故数据集内容不变。已用 `--check-fingerprint` 佐证（§9.1 实测 `FINGERPRINT MATCH`），且 Release 附件的两个 SHA-256（归档 `15B03A63…`、`routing.graph` `A20CE044…`）仍与本地一致。因此不重发 Release，仅推送代码与文档。
+
+### 本轮文档同步清单（2026-09-11，累计两轮）
+
+第一轮（§9，提交 `c5fe3d7` ~ `8ea6fc4`）：
 
 | 文件 | 变更 |
 |---|---|
@@ -466,14 +483,26 @@ if errorlevel 1 (echo DATASET SMOKE FAIL & set FAIL=1) else (echo DATASET SMOKE 
 | `PLAN-P3plus.md` | §5 末尾新增「B 侧就绪条件」表（手册 / 插件 / 工具 / 数据集 / 阻塞风险） |
 | `README.md` | 当前阶段补同步日期与存量门复核结果；新增「验证与复现入口」节（四套件 + cargo/dotnet 命令 + 数据集获取途径）；目录结构更新（补 `nav-core` / `desktop` / `data` 与测试计数 65 → 80） |
 | `p5-fix-closeout-check-2026-08.md` | §5 追加后续推进注（提交链延伸至 `19eceb1`、新增数据发布 tag） |
-| `p2-gameplay-test-checklist-2026-08.md` | 修正 `session` 语义与 T3 采集手段；补 live 默认录制路径 |
-| `b-session-runbook-2026-08.md` | §一 补首行判据与 trace 路径说明；§二 补两终端分工、T3 停车等待、T5 两轮 DLL 装卸、交付项；§四 补各 T 项输入；§五 新增测量条件 6/7；新增 §六 命令速查 |
+| 本文件 | §9 新建（GitHub 同步记录） |
+
+第二轮（§9.1 ~ §9.3，提交 `bdbd7ea`）：
+
+| 文件 | 变更 |
+|---|---|
+| `nav-core/tools/nav-core-cli/src/main.rs` | 采集链缺陷 1/2/3 修复（参数守卫、默认录制、信号旁路记录）+ 4 项新增单测 |
 | `run-p2-tests.bat` / `run-p3-tests.bat` / `run-p5-tests.bat` | 逐步判定与累积 `FAIL` 解耦（§9.2）；`run-p5` `[3/4]` 区分「基线存在」与「生成成功」 |
-| `nav-core/tools/nav-core-cli/src/main.rs` | 缺陷 1/2/3 修复（参数守卫、默认录制、信号旁路记录）+ 7 项单测 |
-| 本文件 | §9 新建（GitHub 同步记录）+ §9.1（B 侧采集链缺陷）+ §9.2（套件粘性 FAIL） |
+| `b-session-runbook-2026-08.md` | §一 补首行判据与 trace 路径说明；§二 补两终端分工、T3 停车等待、T5 两轮 DLL 装卸、交付项；§四 补各 T 项输入；§五 新增测量条件 6/7；新增 §六 命令速查 |
+| `p2-gameplay-test-checklist-2026-08.md` | 修正 `session` 语义（离线回放而非实时快照）与 T3 采集手段；补 live 默认录制路径 |
+| `PLAN.md` | §1 最后更新与摘要补采集链缺陷；测试计数 100 → 104 |
+| `PLAN-P3plus.md` | §5「B 侧就绪条件」表新增「采集链缺陷」行；补命令速查与 `speed-validator` Release 说明 |
+| `p5-closeout-2026-08.md` | §5 第 5 项补记同类第三项验证完整性缺陷（粘性 FAIL） |
+| `README.md` | 「验证与复现入口」补 `ETS2_INSTALL` 前置（`run-p1` 不自设该变量）；结果记录更新为四套件已复跑 ALL PASS + cargo 104 测试 |
+| 本文件 | §9.1（B 侧采集链缺陷）、§9.2（套件粘性 FAIL）、§9.3（本轮 GitHub 同步） |
 
 ### 对既有文档的连带修正
 
 `p2-gameplay-test-checklist-2026-08.md` 与 `b-session-runbook-2026-08.md` 中失实的描述已同步：前者修正 `session` 的语义（离线回放而非实时快照）与 T3 采集手段，后者补齐两个终端的分工、T5 两轮的 DLL 装卸步骤、`*.sem.csv` 交付项与命令速查节。
+
+**未改动项与其理由**：`PLAN.md` §4.2「验证」段的「clippy 0 / 97 测试」与本文 §5 的「cargo test 100 passed」均为**各自时点的历史实跑记录**（分别为 P5 修复时与 2026-08-12 加固时），不是当前值，故不追改——文档记录当时证据，当前值由 §9 各表与本清单承担。
 
 
