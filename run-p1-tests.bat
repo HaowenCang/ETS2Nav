@@ -19,6 +19,11 @@ call dotnet test map-compiler\MapCompiler.sln -v q
 if errorlevel 1 (echo   FAIL unit & set FAIL=1) else (echo   PASS)
 
 echo.
+echo [1b/6] build map-inspector (not in MapCompiler.sln - build explicitly)
+call dotnet build tools\map-inspector\MapInspector\MapInspector.csproj -c Debug -v q
+if errorlevel 1 (echo   FAIL map-inspector build & set FAIL=1) else (echo   PASS)
+
+echo.
 echo [2/6] Berlin gate (semantic corpus + OD)
 call tools\map-inspector\MapInspector\bin\Debug\net9.0\map-inspector.exe --install "%ETS2_INSTALL%" --sectors sec+0002-0002,sec+0002-0003,sec+0003-0002,sec+0003-0003,sec+0002-0001,sec+0002-0004,sec+0003-0001,sec+0003-0004 --gate
 if errorlevel 1 (echo   FAIL berlin-gate & set FAIL=1) else (echo   PASS)

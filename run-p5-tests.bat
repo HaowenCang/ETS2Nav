@@ -2,9 +2,10 @@
 rem P5 Regression Suite (PLAN-P3plus.md A3): od-corpus gates + known-routes baseline diff + random OD check
 rem A3c-M3 (2026-08-12 audit fix): [1/4] compile failure no longer false-PASS (match error[E);
 rem [3/4][4/4] prefixed by cargo build --release (verify fresh binary, not stale release)
+rem 2026-08-12: DATASET -> europe-v5 (P5 ferry-terminal fix generation); baseline -> v5
 setlocal
-set DATASET=E:\Projects\Pi\ETS2Nav\data\europe-v4
-set BASELINE=E:\Projects\Pi\ETS2Nav\od-baseline-europe-v4.txt
+set DATASET=E:\Projects\Pi\ETS2Nav\data\europe-v5
+set BASELINE=E:\Projects\Pi\ETS2Nav\od-baseline-europe-v5.txt
 set FAIL=0
 
 echo === [1/4] cargo test (od-corpus + deps) ===

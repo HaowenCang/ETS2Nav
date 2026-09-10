@@ -2,7 +2,7 @@
 rem P3 Regression Suite (P3-driving-assistant-plan.md P3-07): P2 regression + cargo gates + P3 speed lookahead smoke + camera verdict
 setlocal
 set ETS2_INSTALL=E:\SteamLibrary\steamapps\common\Euro Truck Simulator 2
-set DATASET=E:\Projects\Pi\ETS2Nav\data\europe-v4
+set DATASET=E:\Projects\Pi\ETS2Nav\data\europe-v5
 set FAIL=0
 
 echo === [1/4] P2 Regression Suite ===

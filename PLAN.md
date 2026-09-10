@@ -7,22 +7,24 @@
 
 ## §1 当前状态
 
-**最后更新**：2026-08-11（P3 关门 tag v0.4.0-p3；实机测试延后，A2 起推进）
+**最后更新**：2026-08-12（**P4/P5/P6 关门**；P5 图缺陷根因排查与修复完成；B 侧实机测试仍延后）
 
 - [x] **P0 阶段**（✅ 门评审通过 2026-08-10，tag v0.1.0-p0；A6/A8 工具并入 P1-01）
 - [x] **P1 Map Compiler**（✅ 关门 2026-08-10，tag v0.2.0-p1；15 工作包 P1-00~P1-14 完成 + 4 子代理收官评审修复 + Regression Suite ALL PASS；执行基线 = P1-map-compiler-plan.md）
 - [x] **P2 Navigation Core**（✅ 关门 2026-08-10，tag v0.3.0-p2；19 工作包全部完成 + 4 子代理收官审查（BLOCKER 1/MAJOR 7 修复）+ run-p2-tests.bat 7 步 ALL PASS；性能：路线 p99 0.39ms/匹配 p99 0.010ms/常驻内存 217MB/加载 298ms；G15 完整游戏会话等游戏内实测项列为已知限制，P3 前置）
 - [x] P3 Driving Assistant（✅ 关门 2026-08-11，tag v0.4.0-p3；A1 十工作包完成——限速链/提醒决策/GLOSA/TTS 语义/摄像头 No-Go；90 测试全绿；herdr 独立审计闭环 BLOCKER/MAJOR 修复完成）
-- [ ] P4 正式 UI
-- [ ] P5 全欧洲测试
-- [ ] P6 性能优化与发布
+- [x] **P4 正式 UI**（✅ 关门 2026-08-12；A2 交付——nav-server（HTTP+WS 零依赖）/正式 UI（MapLibre，§56）/自动缩放（§57）/pmtiles 与坐标转换（§59）/API 定稿（§60）/LAN+二维码+PWA（§61）/Desktop（Tauri 2）；批 1 审计 a2-correctness + a2-api-contract 共 MAJOR 11 全部修复、复审 0/0；verify-ui-chain.py 6 项 ALL PASS；**60 FPS 渲染测量与移动端真机登记 B5**；报告 p4-closeout-2026-08.md）
+- [x] **P5 全欧洲测试**（✅ 关门 2026-08-12；A3 交付——od-corpus 四子命令 + 九区域 36 对基准 + 2000 对随机 OD + run-p5-tests.bat；**并完成 A3 登记图缺陷的根因排查与修复**：UK 孤立与 ferry 悬空为真实编译器缺陷已修复（transit 端点孤立 258→0、主分量 75.78%→79.35%、uturns 1→0），残余断簇经五路独立检验判定为源数据拓扑；报告 p5-closeout-2026-08.md + p5-graph-defects-2026-08.md + p5-graph-defects-verification-2026-08.md）
+- [x] **P6 性能优化与发布**（✅ 关门 2026-08-12；A4 交付——ALT/CH 评估登记「目标已达成，不做」（§62 口径裕度 2,600×/5,100×）+ 增量编译指纹（§9 覆盖 4/9）+ §63 方法固化；报告 p6-closeout-2026-08.md；**§63 正式验收待 B6 实机**）
 
-**当前状态**：**P2 关门（tag v0.3.0-p2，2026-08-10）**——19 工作包全部完成；4 子代理收官审查（实现正确性/计划符合性/文档一致性/性能边界）BLOCKER 1 + MAJOR 7 全部修复（quat_yaw 绕 Y/tracker 虚拟段 suffix/manifest §29 全字段/内存口径/run-p2-tests.bat 等）；性能：加载 298ms 冷启动/常驻内存 217MB/路线 p99 0.39ms/匹配 p99 0.010ms——机器可验证指标全部超出 §139-140 目标 1000×+；**已知限制**：G15 完整游戏会话（§178）、UK 环岛方向、Speed Gate、信号 runtime VERIFIED、CPU/FPS（§144/§146）——游戏内实测类，P3 前置。**P1 已关门**（tag v0.2.0-p1）；**P0-D 验收通过**（avg -1.3% / 1%low +0.7%）。
+**当前状态**：**A 侧全部阶段（P0~P6）关门完成**——机器可验证部分全部达标，四个回归套件（run-p1/p2/p3/p5-tests.bat）ALL PASS 且 cargo 门（fmt / clippy 0 / 97 测试）全绿。**唯一剩余工作为 B 侧实机测试**（B1~B6，D6 决策延后），用于闭合各阶段登记的实机类已知限制：P2 G15 完整会话、P3 限速一致率与信号 runtime、P4 60 FPS 与移动端、P6 §63 正式性能验收。
 
-**已建立**：执行计划（本文件）、本地 git 仓库、.gitignore、GitHub 仓库（HaowenCang/ETS2Nav private）。
+**关键指标基线（Europe v5，2026-08-12）**：主分量 286,214 活跃节点（79.35%）、transit 端点孤立 0/522、od-check jumps=0 / uturns=0、可达率 61.2%（理论上界 62.96%）；性能：路线 p99 0.378ms、匹配 p99 0.012ms、内存 328MB、加载 327ms。
 
-**后续计划拆分**：P3–P6 与 P2 实测补测项（T1–T6）已按「独立开发（A1–A5）/ 实机测试配合（B1–B6）」拆分，见 [PLAN-P3plus.md](./PLAN-P3plus.md)。
-**实机测试决策（2026-08-11）**：用户确认**暂不进行实机测试**——B 侧（B1–B6）整体延后，A 侧连续推进：A1（P3 核心逻辑）→ A2（P4 UI，并行）→ A3（P5，可完整关门）→ A4/A5；P3/P4 关门沿用 P2 先例（机器可验证完成即关门 + 实机项登记已知限制，提醒模块默认关闭），B 侧集中一次游戏会话统一补齐。
+**已建立**：执行计划（本文件）、本地 git 仓库、.gitignore、GitHub 仓库（HaowenCang/ETS2Nav private）、tag v0.1.0-p0 ~ v0.5.0。
+
+**后续计划拆分**：P3–P6 与 P2 实测补测项（T1–T6）见 [PLAN-P3plus.md](./PLAN-P3plus.md)。
+**实机测试决策（2026-08-11）**：用户确认**暂不进行实机测试**——B 侧（B1–B6）整体延后，A 侧连续推进（已完成至 P6 关门）；B 侧集中一次游戏会话统一补齐。
 
 ---
 
@@ -103,6 +105,35 @@
 | P4 | 正式 UI（Browser → Desktop → LAN Mobile → Android/iOS，v0.2 §56–61） | P2/P3 | 高德式信息结构 + 60 FPS 目标 |
 | P5 | 全欧洲官方地图测试（automated OD corpus，v0.2 §18、§66） | P1/P4 产物 | 数千 OD 自动检查通过 |
 | P6 | 性能优化（ALT/CH、增量编译等）与正式发布（v0.2 §62–63） | P5 | benchmark 目标达成 |
+
+阶段关门状态：P0 ✅（v0.1.0-p0）/ P1 ✅（v0.2.0-p1）/ P2 ✅（v0.3.0-p2）/ P3 ✅（v0.4.0-p3）/ P4 ✅ / P5 ✅ / P6 ✅（后三者随 v0.5.0 及本次修复提交关门，报告见 §4.2）。
+
+---
+
+## §4.2 P5 图缺陷修复（2026-08-12，A3 遗留闭环）
+
+来源：p5-od-corpus-2026-08.md §六 已知限制第 1~2 项 + a3-correctness / a3-data-integrity 审计补充发现。
+
+| # | 登记缺陷 | 判定 | 修复后指标 |
+|---|---|---|---|
+| ① | 英国全境 4,438 节点独立分量，与欧陆主网断开 | **编译器缺陷（已修复）** | 该分量并入主分量；主分量 273,410 → 286,214 |
+| ② | 129 条 transit 边端点落 2–9 节点微型分量（轮渡未接入路网） | **编译器缺陷（已修复）** | transit 端点孤立 **258 → 0**；transit 边 129 → 261 |
+| ③ | 随机节点对不可达率约 39%（主 WCC 约 76%） | 口径缺陷（已修正）+ 残余为源数据 | 主分量占比 75.78% → **79.35%**；可达率 61.2%（上界 62.96%） |
+| ④ | 掉头图缺陷（边 395371→395373） | 检查样本未复现 | od-check uturns **1 → 0** |
+
+**根因**：`SemanticMapBuilder.BuildFerries` 以 `FerryItem.NodeUid`（item 自身节点，实测 0 出边/0 入边）作航线端点，而非 `PrefabLinkUid` 所指 prefab 的路网接入节点——ferry 边因此不桥接任何路网，英国分量无法经海峡接入大陆。
+
+**修复**：端点改为 linked prefab 中与路网相连的节点（`roadTouched`），保留无 prefab 链接时的降级路径并计数（`terminals_degraded`）。
+
+**残余断簇归因（五路独立检验，全部指向源数据）**：道路丢弃 0、movement 物化矛盾 0、端点映射 99.99% 合理、恢复完备性 under_recovered=0、与 TruckLib 的**数据级 oracle 逐项零差异**（3,632 道路 / 1,015 prefab）。残余 74,503 活跃节点中 67,410（90.5%）无任何跨分量 prefab，判定为 ETS2 源数据拓扑断开。
+
+**连带修正**：`od-check` 锚点池由全量节点改为活跃节点并输出主分量占比（原口径不可解释，违反 Σfᵢ² 上界）；`od_features` 候选选择由「首个可行」改为「最短可行」（原口径使基准值随回退顺序跳变）。
+
+**验证**：run-p1 / run-p2 / run-p3 / run-p5-tests.bat 全部 ALL PASS（BAT_EXIT=0）；cargo fmt PASS / clippy 0 / 97 测试；基线 `od-baseline-europe-v5.txt` 生成确定（SHA-256 前后一致）。
+
+报告：p5-graph-defects-2026-08.md（根因与排除检验）、p5-graph-defects-verification-2026-08.md（验证记录）、p5-closeout-2026-08.md、p4-closeout-2026-08.md、p6-closeout-2026-08.md。
+
+**数据集口径**：规范数据集由 `data/europe-v4`（修复前）改为 **`data/europe-v5`**（修复后）；v4 保留作历史对照。四个回归套件的 `DATASET` 与基线路径已同步更新。
 
 ---
 

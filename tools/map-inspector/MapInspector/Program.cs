@@ -564,7 +564,7 @@ if (cmdArgs.Contains("--dataset"))
         try { fp = ScsResource.GameInstall.Detect(installDir)?.ContentFingerprint; } catch { }
     }
     ScsMapModel.DatasetWriter.WriteManifest(outDir, rgraph, map, secNames, DateTime.UtcNow, gameVersion, fp);
-    ScsMapModel.DatasetWriter.WriteDiagnostics(outDir, map, rgraph, prefabs.FailedPpds, new[] { "P1-11 dataset build" });
+    ScsMapModel.DatasetWriter.WriteDiagnostics(outDir, map, rgraph, prefabs.FailedPpds, new[] { "P1-11 dataset build" }, builder.TerminalCount, builder.TerminalDegraded, builder.RoadsSkippedMissingNode, builder.RoadsSkippedRail);
     // map.db（SQLite：roads/junctions 表）
     using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={Path.Combine(outDir, "map.db")}"))
     {

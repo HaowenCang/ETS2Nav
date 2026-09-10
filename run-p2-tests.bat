@@ -1,9 +1,25 @@
 @echo off
 rem P2 Full Regression (plan 162): P1 regression + cargo gates + dataset smoke + route regression + match replay + signal link + perf smoke
+rem 2026-08-12: DATASET -> europe-v5 (P5 ferry-terminal fix generation); match trace self-generated when absent
+rem             (was an implicit dependency on %TEMP%\real.navtrace - suite failed on a clean machine)
 setlocal
 set ETS2_INSTALL=E:\SteamLibrary\steamapps\common\Euro Truck Simulator 2
-set DATASET=E:\Projects\Pi\ETS2Nav\data\europe-v4
+set DATASET=E:\Projects\Pi\ETS2Nav\data\europe-v5
+set TRACE=%TEMP%\real.navtrace
 set FAIL=0
+
+echo === [0/7] match trace (self-generated if absent) ===
+if not exist "%TRACE%" (
+  cd nav-core
+  cargo build --release -p nav-core-cli >nul 2>&1
+  if errorlevel 1 (echo TRACE BUILD FAIL & set FAIL=1) else (
+    target\release\nav-core-cli.exe syntrace -58456,32832:-52925,36510 %DATASET% "%TRACE%" >nul 2>&1
+    if errorlevel 1 (echo TRACE GEN FAIL & set FAIL=1) else (echo TRACE GEN PASS)
+  )
+  cd ..
+) else (
+  echo TRACE EXISTS
+)
 
 echo === [1/7] P1 Regression Suite ===
 call run-p1-tests.bat
@@ -31,7 +47,7 @@ if errorlevel 1 set FAIL=1
 if %FAIL%==1 (echo ROUTE REGRESSION FAIL) else (echo ROUTE REGRESSION PASS)
 
 echo === [5/7] map-match replay ===
-target\release\nav-core-cli.exe match C:\Users\20659\AppData\Local\Temp\real.navtrace %DATASET% | findstr /C:"HIGH" >nul
+target\release\nav-core-cli.exe match "%TRACE%" %DATASET% | findstr /C:"HIGH" >nul
 if errorlevel 1 set FAIL=1
 if %FAIL%==1 (echo MATCH REPLAY FAIL) else (echo MATCH REPLAY PASS)
 

@@ -5,7 +5,7 @@
 - **需求与技术基线**：[Euro Truck Simulator 2 外部智能导航系统-v0.2.md](./Euro%20Truck%20Simulator%202%20外部智能导航系统-v0.2.md)
 - **可行性评估**：[ETS2 外部智能导航系统可行性评估.md](./ETS2%20外部智能导航系统可行性评估.md)
 - **执行计划与进度**：[PLAN.md](./PLAN.md)
-- **当前阶段**：P2 已关门（**tag v0.3.0-p2**：19 工作包 + 4 子代理审查修复 + run-p2-tests.bat ALL PASS；路线 p99 0.39ms/匹配 p99 0.010ms/常驻内存 217MB）——执行基线：P2-navigation-core-plan.md；P1 关门 v0.2.0-p1；P0 关门 v0.1.0-p0
+- **当前阶段**：**P0~P6 A 侧全部关门（2026-08-12）**——P3 关门 tag v0.4.0-p3；A2~A5（P4 UI / P5 OD corpus / P6 性能评估 / B7 工具）tag v0.5.0；此后完成 **P5 图缺陷根因排查与修复**（UK 孤立与 ferry 悬空为真实编译器缺陷——主分量 75.78%→79.35%、transit 端点孤立 258→0、od-check uturns 1→0），run-p1/p2/p3/p5 四套件 ALL PASS。规范数据集 `data/europe-v5`；**唯一剩余工作为 B 侧实机测试**（各阶段实机项登记为已知限制）。
 
 ## 架构概览（v0.2 §3）
 

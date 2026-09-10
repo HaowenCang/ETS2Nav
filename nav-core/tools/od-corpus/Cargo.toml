@@ -3,6 +3,12 @@ name = "od-corpus"
 version = "0.1.0"
 edition = "2021"
 
+# 诊断工具显式声明路径：源文件不放在 src/bin/ 下——仓库 .gitignore 含 `bin/` 规则
+# （用于忽略构建产物），会把 src/bin/** 一并忽略而无法入库（2026-08-12 实测确认）。
+[[bin]]
+name = "od-components"
+path = "src/diag/od_components.rs"
+
 [dependencies]
 nav-dataset = { path = "../../crates/nav-dataset" }
 nav-graph = { path = "../../crates/nav-graph" }

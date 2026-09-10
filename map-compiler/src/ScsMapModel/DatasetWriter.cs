@@ -210,14 +210,37 @@ public static class DatasetWriter
 
     // —— diagnostics.json ——
     public static void WriteDiagnostics(string dir, SemanticMap map, RoutingGraph g,
-        IReadOnlyList<(string Token, string Error)> failedPrefabs, IReadOnlyList<string> buildNotes)
+        IReadOnlyList<(string Token, string Error)> failedPrefabs, IReadOnlyList<string> buildNotes,
+        int ferryTerminals = 0, int ferryTerminalsDegraded = 0,
+        int roadsSkippedMissingNode = 0, int roadsSkippedRail = 0)
     {
+        // P5 修复验收指标（2026-08-12）：transit 边端点必须落在陆地路网上
+        // （至少有一条非 transit 边）——否则 ferry/train 无法桥接路网。
+        var landNodes = new HashSet<ulong>();
+        var transitNodes = new HashSet<ulong>();
+        for (int e = 0; e < g.EdgeCount; e++)
+        {
+            var (f, t) = g.EdgeEnds(e);
+            var fu = g.NodeUids[f];
+            var tu = g.NodeUids[t];
+            if (g.Edge(e).Kind is RoutingEdgeKind.Ferry or RoutingEdgeKind.Train)
+            {
+                transitNodes.Add(fu);
+                transitNodes.Add(tu);
+            }
+            else
+            {
+                landNodes.Add(fu);
+                landNodes.Add(tu);
+            }
+        }
+        var isolatedTransit = transitNodes.Count(u => !landNodes.Contains(u));
         var diag = new
         {
-            roads = new { total = map.Roads.Count, one_way = map.Roads.Count(r => r.Direction is RoadDirection.ForwardOnly or RoadDirection.BackwardOnly), degraded = map.Roads.Count(r => r.DirectionDegraded) },
+            roads = new { total = map.Roads.Count, one_way = map.Roads.Count(r => r.Direction is RoadDirection.ForwardOnly or RoadDirection.BackwardOnly), degraded = map.Roads.Count(r => r.DirectionDegraded), skipped_missing_node = roadsSkippedMissingNode, skipped_rail = roadsSkippedRail },
             junctions = new { total = map.Junctions.Count, no_movement = map.Junctions.Count(j => j.Movements.Count == 0) },
             movements = new { total = map.Junctions.Sum(j => j.Movements.Count), with_semaphore = map.Junctions.SelectMany(j => j.Movements).Count(m => m.SemaphoreId >= 0), with_geometry = map.Junctions.SelectMany(j => j.Movements).Count(m => m.WorldPolyline.Count >= 2) },
-            ferries = new { total = map.Ferries.Count, one_way = map.Ferries.Count(f => f.AtoB != f.BtoA) },
+            ferries = new { total = map.Ferries.Count, one_way = map.Ferries.Count(f => f.AtoB != f.BtoA), terminals = ferryTerminals, terminals_degraded = ferryTerminalsDegraded, transit_nodes = transitNodes.Count, transit_nodes_isolated = isolatedTransit },
             companies = new { total = map.Companies.Count, no_access = map.Companies.Count(c => c.AccessNodeUid is null) },
             graph = new { nodes = g.NodeCount, edges = g.EdgeCount, transit_edges = g.Edges.Count(e => e.Kind is RoutingEdgeKind.Ferry or RoutingEdgeKind.Train) },
             failed_prefabs = failedPrefabs.Select(f => new { token = f.Token, error = f.Error }).ToList(),

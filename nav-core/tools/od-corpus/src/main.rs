@@ -57,8 +57,6 @@ struct OdCtx {
     cities: Vec<nav_dataset::PoiRecord>,
     /// uid → 路由坐标（全量节点含孤立——POI access_node 可能不在 active 节点）。
     node_pos: HashMap<u64, (f64, f64)>,
-    /// 全量节点坐标（按 routing.nodes 顺序，随机 OD 采样用）。
-    node_xy: Vec<(f64, f64)>,
 }
 
 fn od_ctx(dataset_dir: &str) -> OdCtx {
@@ -68,7 +66,6 @@ fn od_ctx(dataset_dir: &str) -> OdCtx {
             std::process::exit(1);
         });
     let node_pos = routing.nodes.iter().map(|n| (n.uid, (n.x, n.z))).collect();
-    let node_xy = routing.nodes.iter().map(|n| (n.x, n.z)).collect();
     let graph = nav_graph::CompactGraph::build(&routing);
     let spatial = nav_spatial::SpatialIndex::build(&graph, nav_spatial::DEFAULT_CELL_SIZE);
     let router = nav_router::search::Router::new(graph.node_count());
@@ -83,7 +80,6 @@ fn od_ctx(dataset_dir: &str) -> OdCtx {
         router,
         cities,
         node_pos,
-        node_xy,
     }
 }
 
@@ -117,12 +113,19 @@ fn company_near(ctx: &OdCtx, x: f64, z: f64) -> bool {
 }
 
 /// 单 OD 特征：A* Fastest 路线 + 期望特征提取（起终点多候选组合回退）。
+///
+/// 候选选择（2026-08-12 修正）：遍历全部 (起点行 × 终点行) 组合，取**距离最短**的可行
+/// 路线。原实现返回**首个**可行组合——当某城市首行接入点由「不连通」变为「连通」（P5
+/// 轮渡端点修复的直接后果）时，同一城市的基准值会因回退顺序改变而跳变（实证：
+/// newcastle→plymouth 由 47.6km 变为 89.9km，两者分别来自第 2 行与第 1 行接入点），
+/// 与图质量无关。取最短值使基准确定、可复现，且语义为「该城市的最佳道路接入」。
 fn od_features(ctx: &mut OdCtx, from: &str, to: &str) -> Option<OdFeatures> {
     let froms = city_positions(ctx, from);
     let tos = city_positions(ctx, to);
     if froms.is_empty() || tos.is_empty() {
         return None;
     }
+    let mut best: Option<OdFeatures> = None;
     for (pfx, pfz) in &froms {
         for (ptx, ptz) in &tos {
             let Some(s1) =
@@ -152,17 +155,20 @@ fn od_features(ctx: &mut OdCtx, from: &str, to: &str) -> Option<OdFeatures> {
                         )
                     })
                     .count();
-                return Some((
+                let cand = (
                     r.distance_m,
                     r.eta_s,
                     r.edges.len(),
                     transit > 0,
                     company_near(ctx, *ptx, *ptz),
-                ));
+                );
+                if best.map(|b| cand.0 < b.0).unwrap_or(true) {
+                    best = Some(cand);
+                }
             }
         }
     }
-    None
+    best
 }
 
 /// od-baseline：生成九区域基准（打印 + [--write path] 写文本文件）。
@@ -284,14 +290,52 @@ fn od_regress(dataset_dir: &str, baseline: Option<&String>) {
     }
 }
 
+/// 弱连通分量统计（无向，仅活跃节点——CompactGraph 已完成节点压缩）。
+/// 返回 (活跃节点数, 分量数, 最大分量节点数)。
+fn component_stats(g: &nav_graph::CompactGraph) -> (usize, usize, usize) {
+    let n = g.node_count();
+    let mut parent: Vec<u32> = (0..n as u32).collect();
+    fn find(parent: &mut [u32], mut x: u32) -> u32 {
+        while parent[x as usize] != x {
+            parent[x as usize] = parent[parent[x as usize] as usize];
+            x = parent[x as usize];
+        }
+        x
+    }
+    for e in &g.edges {
+        let (ra, rb) = (find(&mut parent, e.from), find(&mut parent, e.to));
+        if ra != rb {
+            parent[ra as usize] = rb;
+        }
+    }
+    let mut sizes: HashMap<u32, usize> = HashMap::new();
+    for i in 0..n as u32 {
+        let r = find(&mut parent, i);
+        *sizes.entry(r).or_insert(0) += 1;
+    }
+    let largest = sizes.values().copied().max().unwrap_or(0);
+    (n, sizes.len(), largest)
+}
+
 /// od-check：全图随机 OD（固定种子 LCG，可复现）——可达性/geometry 连续/
 /// graph jump/不合理掉头。
+///
+/// 锚点口径（2026-08-12 修正）：锚点取自 **CompactGraph 的活跃节点**（被至少一条边
+/// 引用），而非 routing.graph 的全部节点——后者含大量不被任何边引用的 item 节点
+/// （欧洲 v4/v5 约 93.6%），会把「随机点落在无路区域」混入不可达率，使指标失真。
+/// 修正后 `reachable/pairs` 即「随机活跃节点对可达概率」，其上界为 Σfᵢ²
+/// （fᵢ 为各分量占比），主分量占比的平方为其主导项。
 fn od_check(dataset_dir: &str, pairs: u32) {
     let mut ctx = od_ctx(dataset_dir);
-    // 锚点池：全图路由节点直接采样（不依赖 POI 坐标空间——随机 OD 检查图的真实
-    // 连通性）。断簇城市接入点（P2 遗留：部分城市 POI access_node 落在与主路网
-    // 拓扑断开的小簇）另行统计上报。
-    let anchors: Vec<(f64, f64)> = ctx.node_xy.clone();
+    let (active_nodes, comps, main_size) = component_stats(&ctx.graph);
+    let main_ratio = main_size as f64 / active_nodes.max(1) as f64;
+    println!(
+        "OD-CHECK-COMPONENTS active_nodes={active_nodes} components={comps} main_component={main_size} main_ratio={main_ratio:.4} reachable_prob_upper_bound={:.4}",
+        main_ratio * main_ratio
+    );
+
+    // 锚点池：活跃节点（不依赖 POI 坐标空间——随机 OD 检查图的真实连通性）
+    let anchors: Vec<(f64, f64)> = ctx.graph.positions.iter().map(|p| (p.0, p.2)).collect();
     let mut broken = 0u32;
     let mut seen_city = HashSet::new();
     for p in &ctx.cities {
@@ -318,7 +362,7 @@ fn od_check(dataset_dir: &str, pairs: u32) {
         }
     }
     eprintln!(
-        "OD-PRE: 全图节点锚点 {} 断簇城市接入点 {broken}",
+        "OD-PRE: 活跃节点锚点 {} 断簇城市接入点 {broken}",
         anchors.len()
     );
     let mut reachable = 0u32;
@@ -402,20 +446,31 @@ fn od_check(dataset_dir: &str, pairs: u32) {
         }
     }
     let ms = t0.elapsed().as_secs_f64() * 1000.0;
+    let reach_ratio = reachable as f64 / pairs.max(1) as f64;
     println!(
-        "OD-CHECK pairs={pairs} reachable={reachable} continuity={continuity_ok} jumps={jumps} uturns={uturns} ms={ms:.0}"
+        "OD-CHECK pairs={pairs} reachable={reachable} reachable_ratio={reach_ratio:.4} continuity={continuity_ok} jumps={jumps} uturns={uturns} ms={ms:.0}"
     );
-    // PASS：图拓扑连续（jumps 严格 0）；uturn 容忍少量真实图缺陷（登记边号）。
-    // 审计 A3c-M1（2026-08-12）：reachable 是**随机节点对可达率**（配对口径）——
-    // 不是主网分量占比（P(对可达)=Σfᵢ²，主网占比上限为 √可达率；欧洲 v4 实测
-    // 最大 WCC 75.8%）。PASS 行如实标注配对口径，分量占比由 P2 遗留排查另行统计。
-    if jumps == 0 && uturns <= 3 && reachable as f64 / pairs as f64 >= 0.5 {
+    println!(
+        "OD-CHECK-MAIN main_ratio={main_ratio:.4} reachable_ratio={reach_ratio:.4} upper_bound={:.4}",
+        main_ratio * main_ratio
+    );
+    // PASS：图拓扑连续（jumps 严格 0）；uturn 容忍少量真实图缺陷（登记边号）；
+    // 可达率按活跃节点配对口径设门（阈值 0.55 为欧洲 v5 实测值留裕度）。
+    // 口径说明（2026-08-12）：reachable 是随机活跃节点对可达概率（配对口径），
+    // 不是主分量占比；P(对可达)=Σfᵢ²，主分量占比上限为 √可达率。主分量占比由
+    // OD-CHECK-COMPONENTS 行独立给出。
+    if jumps == 0 && uturns <= 3 && reach_ratio >= 0.55 {
         println!(
-            "OD-CHECK PASS（不可达对占比 {:.0}%——配对口径，主网分量约 76% 见报告）",
-            (1.0 - reachable as f64 / pairs as f64) * 100.0
+            "OD-CHECK PASS（可达 {:.1}% / 不可达 {:.1}%——活跃节点配对口径；主分量 {:.1}%）",
+            reach_ratio * 100.0,
+            (1.0 - reach_ratio) * 100.0,
+            main_ratio * 100.0
         );
     } else {
-        println!("OD-CHECK FAIL（jumps>0 或 uturns>3 或随机对可达率<50%）");
+        println!(
+            "OD-CHECK FAIL（jumps>0 或 uturns>3 或活跃节点对可达率<55%；实测 {:.1}%）",
+            reach_ratio * 100.0
+        );
         std::process::exit(1);
     }
 }

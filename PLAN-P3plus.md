@@ -149,16 +149,18 @@ A4 性能优化 ──▶ B6 正式验收 ──▶ P6 出口
 | ID | 内容 | 前置 | 状态 | 验证/产出 |
 |---|---|---|---|---|
 | A1 | P3 提醒模块核心逻辑 | — | ✅（2026-08-11，tag v0.4.0-p3） | speed/reminder/speak 三模块 + 38 测试；camera No-Go；run-p3-tests.bat ALL PASS；启用边界待 B2、实机验收待 B4 |
-| A2 | P4 UI（Browser/Desktop/LAN Mobile） | A1 事件接口（可先以合成事件） | ⏳ | 回放驱动交互验证；60 FPS 帧率；开发完成即 P4 关门（tag），移动端实测待 B5 |
-| A3 | P5 OD corpus 与全欧洲检查 | — | ⏳ | run-p5-tests.bat 全绿即正式关门（唯一可自足出口，无实机依赖） |
-| A4 | P6 性能优化（ALT/CH 评估、增量编译） | — | ⏳ | synthetic benchmark；§63 正式验收待 B6 |
-| A5 | B7 工具准备 | — | ⏳ | signal-lab 扩展就绪；数据采集待 B3 |
+| A2 | P4 UI（Browser/Desktop/LAN Mobile） | A1 事件接口（可先以合成事件） | ✅（2026-08-12） | nav-server（HTTP+WS 零依赖）+ 正式 UI（§56/§57/§59）+ API 定稿（§60）+ LAN/二维码/PWA（§61）+ Desktop（Tauri 2）；批 1 审计 MAJOR 11 修复、复审 0/0；verify-ui-chain.py 6 项 ALL PASS；**P4 关门**（p4-closeout-2026-08.md）；60 FPS 与移动端待 B5 |
+| A3 | P5 OD corpus 与全欧洲检查 | — | ✅（2026-08-12） | od-corpus 四子命令 + 九区域 36 对基准 + 2000 对随机 OD + run-p5-tests.bat ALL PASS；批 1 审计（a3-correctness/a3-data-integrity）MAJOR 5 修复、复审 0/0；**并完成登记图缺陷的根因排查与修复**（UK 孤立/ferry 悬空为编译器缺陷；主分量 75.78%→79.35%、transit 端点孤立 258→0、uturns 1→0；残余断簇判定为源数据）；**P5 关门**（p5-closeout + p5-graph-defects + p5-graph-defects-verification） |
+| A4 | P6 性能优化（ALT/CH 评估、增量编译） | — | ✅（2026-08-12） | ALT/CH 登记「目标已达成，不做」（§62 口径裕度 2,600×/5,100×）；增量指纹 `map-inspector --check-fingerprint`（§9 覆盖 4/9）；批 2 审计（a4-perf-truth/a4-conclusion）MAJOR 7 修复、复审 0/0；**P6 关门**（p6-closeout-2026-08.md）；§63 正式验收待 B6 |
+| A5 | B7 工具准备 | — | ✅（2026-08-12） | signal-lab 扩展（R=疑似重置/快速旅行、P=特殊 profile 标记）+ SignalLabAnalyze（TL-03 warp / TL-04 reset 检测）；批 2 审计（a5-exec BLOCKER 1 / a5-spec MAJOR 4）修复、复审 0/0；数据采集待 B3 |
 | B1 | 插件安装与冒烟 | — | ⏳ 延后（2026-08-11） | nav-core-cli live 输出持续帧 |
 | B2 | 单趟综合驾驶采集（T1–T6） | B1 | ⏳ 延后（2026-08-11） | trace + FPS 记录；关闭 P2 已知限制 |
 | B3 | B7 特殊行为实验 | A5 | ⏳ 延后（2026-08-11） | warp/reset/特殊 profile 行为判定 |
 | B4 | P3 提醒实机验收 | A1、B2 | ⏳ 延后（2026-08-11） | 一致率/误报/播报体验记录 |
 | B5 | P4 移动端实测 | A2 | ⏳ 延后（2026-08-11） | 扫码连接 + 60 FPS + 断线重连 |
 | B6 | §63 正式性能验收 | A2/A4 完成态 | ⏳ 延后（2026-08-11） | PresentMon 对比数据达标 |
+
+**A 侧状态（2026-08-12）**：A1~A5 全部完成并各自关门（报告见各阶段 closeout）。**剩余工作仅 B 侧（B1~B6）**，依赖一次约 1 小时的游戏会话。
 
 ---
 

@@ -39,7 +39,7 @@ public sealed class SemanticMapBuilder
         {
             foreach (var road in sec.Roads)
             {
-                if (!allNodes.Contains(road.Node0) || !allNodes.Contains(road.Node1)) continue;
+                if (!allNodes.Contains(road.Node0) || !allNodes.Contains(road.Node1)) { RoadsSkippedMissingNode++; continue; }
                 // speed_class：优先 road.TrafficRule（实测仅 ~4% 设置）；否则从 road look 的 lanes 推断
                 // （traffic_lane 定义的 speed_class——SCS 限速实际机制）
                 var speedClass = road.RightTrafficRule.Length > 0 ? road.RightTrafficRule : road.LeftTrafficRule;
@@ -51,7 +51,7 @@ public sealed class SemanticMapBuilder
                         speedClass = _defs.GetTrafficLane(laneToken)?.SpeedClass ?? "";
                 }
                 // 铁路/有轨电车不作为普通道路进入路由网络（P1 收官评审 M3：P2 不得规划穿越铁轨）
-                if (speedClass.StartsWith("rail", StringComparison.OrdinalIgnoreCase)) continue;
+                if (speedClass.StartsWith("rail", StringComparison.OrdinalIgnoreCase)) { RoadsSkippedRail++; continue; }
                 var mid = nodePos.TryGetValue(road.Node0, out var p0) ? p0 : (0, 0, 0);
                 var sr = new SemanticRoad
                 {
@@ -203,7 +203,10 @@ public sealed class SemanticMapBuilder
         }
 
         // P2-01 v2（V2-5）：Ferry/Train 航线——ferry_connection 定义 + 码头节点配对
-        BuildFerries(map, secList);
+        // P5 修复（2026-08-12）：码头端点解析改为「linked prefab 的路网接入节点」——
+        // FerryItem.NodeUid 实测为孤立节点（0 出边/0 入边），致 ferry 边两端落同一微型
+        // 分量、完全不桥接路网（英国 4,438 节点分量与欧陆主网断开的直接成因）。
+        BuildFerries(map, secList, roadTouched);
         return map;
     }
 
@@ -272,23 +275,33 @@ public sealed class SemanticMapBuilder
     }
 
     /// <summary>Ferry/Train 航线构建（V2-5）：码头 FerryItem（Port=ferry_data 名）+ connection 文件配对。
-    /// 方向：conn.A.B unit 存在即 A→B 航线；反向由另一文件决定。两端码头都必须在本图内。</summary>
-    private void BuildFerries(SemanticMap map, List<SectorFile> secList)
+    /// 方向：conn.A.B unit 存在即 A→B 航线；反向由另一文件决定。两端码头都必须在本图内。
+    /// P5 修复（2026-08-12）：端点取 linked prefab 的路网接入节点（roadTouched）；
+    /// 无 prefab 链接/未解析/无接入节点时回退 FerryItem.NodeUid（降级，计入 TerminalDegraded）。</summary>
+    private void BuildFerries(SemanticMap map, List<SectorFile> secList, HashSet<ulong> roadTouched)
     {
         if (_provider is null) return;
+        var junctionByUid = new Dictionary<ulong, SemanticJunction>();
+        foreach (var j in map.Junctions) junctionByUid[j.Uid] = j;
+
         // 码头：Port token → 节点集 + IsTrain（同 port 首个 item 的 flags 为准）。
         // 实测 Port 为裸名（"travemunde"）——统一为 ferry_data 全名（"ferry.travemunde"）以便与 connection 匹配
-        var terminals = new Dictionary<string, (List<ulong> Nodes, bool IsTrain)>();
+        var terminals = new Dictionary<string, (List<ulong> Nodes, bool IsTrain, int Degraded)>();
         foreach (var sec in secList)
         {
             foreach (var f in sec.Items.OfType<FerryItem>())
             {
                 string key = f.Port.StartsWith("ferry.") ? f.Port : "ferry." + f.Port;
                 if (!terminals.TryGetValue(key, out var t))
-                    terminals[key] = (new List<ulong>(), f.IsTrain);
-                terminals[key].Nodes.Add(f.NodeUid);
+                    t = (new List<ulong>(), f.IsTrain, 0);
+                var nodes = ResolveTerminalNodes(f, junctionByUid, roadTouched, out bool degraded);
+                t.Nodes.AddRange(nodes);
+                terminals[key] = (t.Nodes, t.IsTrain, t.Degraded + (degraded ? 1 : 0));
             }
         }
+        TerminalDegraded = terminals.Values.Sum(t => t.Degraded);
+        TerminalCount = terminals.Count;
+
         // 航线记录（按端口对合并方向）
         var routes = new Dictionary<string, SemanticFerry>();
         foreach (var path in _provider.Enumerate("/def/ferry/connection").Where(p => p.EndsWith(".sii")))
@@ -309,7 +322,7 @@ public sealed class SemanticMapBuilder
                     string a = "ferry." + rest[..i], b = "ferry." + rest[(i + 1)..];
                     if (terminals.ContainsKey(a) && terminals.ContainsKey(b)) { pa = a; pb = b; break; }
                 }
-                if (pa == null || !terminals.ContainsKey(pa) || !terminals.ContainsKey(pb)) continue;
+                if (pa is null || pb is null || !terminals.ContainsKey(pa) || !terminals.ContainsKey(pb)) continue;
                 double price = NumOf(u, "price"), time = NumOf(u, "time"), dist = NumOf(u, "distance");
                 string key = string.CompareOrdinal(pa, pb) < 0 ? pa + "\x1f" + pb : pb + "\x1f" + pa;
                 bool isTrain = terminals.TryGetValue(pa, out var ta) ? ta.IsTrain
@@ -346,6 +359,35 @@ public sealed class SemanticMapBuilder
         foreach (var v in u.Values(key)) return v.Num;
         return 0;
     }
+
+    /// <summary>码头端点节点集（P5 修复，2026-08-12）：linked prefab 中与路网相连的节点
+    /// （roadTouched = road 端点或有 movement 的 junction 节点）。prefab 未链接/未解析/
+    /// 无接入节点时回退 FerryItem.NodeUid 并置 degraded（该节点实测为孤立点，仅保证不丢端点）。</summary>
+    private static IReadOnlyList<ulong> ResolveTerminalNodes(
+        FerryItem f, Dictionary<ulong, SemanticJunction> junctionByUid,
+        HashSet<ulong> roadTouched, out bool degraded)
+    {
+        degraded = false;
+        if (f.PrefabLinkUid != 0 && junctionByUid.TryGetValue(f.PrefabLinkUid, out var j))
+        {
+            var nodes = j.NodeUids.Where(roadTouched.Contains).Distinct().ToArray();
+            if (nodes.Length > 0) return nodes;
+        }
+        degraded = true;
+        return new[] { f.NodeUid };
+    }
+
+    /// <summary>码头总数（Port 去重）——诊断用。</summary>
+    public int TerminalCount { get; private set; }
+
+    /// <summary>端点降级的码头数（无法解析到路网接入节点）——诊断用。</summary>
+    public int TerminalDegraded { get; private set; }
+
+    /// <summary>因端点节点不在任何已加载 sector 而被丢弃的道路数（P5 排查：&gt;0 意味着 sector 集合不完整）——诊断用。</summary>
+    public int RoadsSkippedMissingNode { get; private set; }
+
+    /// <summary>因 speed_class=rail 被排除的道路数（铁路/有轨电车不入路由网）——诊断用。</summary>
+    public int RoadsSkippedRail { get; private set; }
 
     /// <summary>PPD ControlNode 索引 → prefab NodeUids（ETS2LA 语义：index - Origin 轮转）。</summary>
     private static ulong MapControlNode(byte controlIndex, ushort origin, int nodeCount, ulong[] nodeUids)
