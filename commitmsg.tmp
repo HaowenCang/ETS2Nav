@@ -1,0 +1,10 @@
+提交号口径统一：区分「验证/发布时点」与「当前 head」
+
+- README.md 「验证与复现入口」：`main = bdbd7ea` 改为「验证时点 bdbd7ea」，
+  并注明该 hash 表示验证在哪个代码代上执行、非当前 head（避免读作 head 值，
+  该值在写入时即已过期）
+- PLAN.md §1：Release 发布时点复核句补「不进入门覆盖范围的工具改动」
+- p5-fix-closeout-check §5：后续推进注补全提交链（至 dafabc0）
+
+口径依据见 p4-p6-hardening-2026-08.md §9「关于 main 的 head 值」——记录 head
+数值必然自指失效，故文档只记录「某动作在哪个代码代上发生」这一不变量。
