@@ -194,7 +194,8 @@ P1 Gates（G1~G13）见 P1-map-compiler-plan.md §126–§138；Exit Criteria §
   | **`v0.6.0-p4p5p6`** | **`7900bbc`** | **P4/P5/P6 关门：P5 图缺陷根因排查与修复（ferry 端点解析）+ 关门报告 + 计划状态回写** |
 
   `v0.6.0-p4p5p6` 为**附注 tag**（annotated）；`^{}` 解引用指向上述提交。
-- **忽略**：`.pi-subagents/`、`.pi-glla/`、`target/`、`bin/ obj/`、`node_modules/`、提取的游戏资源（`vendor/` 若含大文件）。
+- **忽略**：`.pi-subagents/`、`.pi-glla/`、`target/`、`bin/ obj/`、`node_modules/`、提取的游戏资源（`vendor/` 若含大文件）、`data/`（数据集——重建命令见 p5-closeout §6）。
+  注意：`bin/` 规则会连带忽略 `src/bin/**`——Rust 诊断工具源文件放 `src/diag/` 并在 `Cargo.toml` 用 `[[bin]]` 显式声明路径（`od-components` 即此模式，2026-08-12 实测确认）。
 - **文档随代码入库**：需求 v0.1/v0.2、本计划、可行性评估、格式笔记均在仓库内。
 
 ---
