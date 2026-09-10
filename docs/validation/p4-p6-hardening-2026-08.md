@@ -250,7 +250,9 @@ mod 集合）。**在其他机器上检查必然报 CHANGED，这是预期行为
 
 本项目采用「本地仓库为唯一写入源」（PLAN.md §5），故发布动作分两类：代码与文档经 `main` 推送，数据集经 Release 附件分发。本节记录两类发布的最终状态。
 
-### 提交链（`d4d8161` → `c5fe3d7`）
+### 提交链（`d4d8161` → 发布代 `19eceb1`）
+
+下表是**截至发布代 `19eceb1` 的时点快照，非穷尽列表**。其后的文档类提交（包括本节自身的回写与修正）不再逐条登记——理由与「`main` head 值」一节所述的自指问题相同：登记「记录该表的提交」会使该表立刻失效。追溯后续历史应用 `git log --oneline`。
 
 | 提交 | 内容 |
 |---|---|
@@ -259,8 +261,7 @@ mod 集合）。**在其他机器上检查必然报 CHANGED，这是预期行为
 | `0928e47` | ADR-008：Ferry/Train 端点语义决策记录 |
 | `4b5e945` | PLAN.md §5 补 `.gitignore` 注意事项（`bin/` 规则连带忽略 `src/bin/**`） |
 | `00f9a54` | 离线加固四项（§1~§4） |
-| `19eceb1` | 数据集 Release 分发记录 + README 分发入口（tag `dataset-europe-v5`） |
-| `c5fe3d7` | 本次 GitHub 与进展/计划文档同步（§9 本文；含 `speed-validator` Release 补建） |
+| `19eceb1` | 数据集 Release 分发记录 + README 分发入口（tag `dataset-europe-v5`）——**发布代** |
 
 ### Tag 与 Release
 
@@ -274,7 +275,7 @@ mod 集合）。**在其他机器上检查必然报 CHANGED，这是预期行为
 
 ### 发布后复核（本次会话实跑）
 
-下表前四项在**数据集 Release 发布时点**（`19eceb1`）实跑；该基线已由本次文档同步提交 `c5fe3d7` 推进，故 `main` 的当前值以最后一行为准。
+下表各项均在**数据集 Release 发布时点**（发布代 `19eceb1`）实跑，是该时点的实际输出而非复述。
 
 | 检查 | 结果 |
 |---|---|
@@ -285,7 +286,8 @@ mod 集合）。**在其他机器上检查必然报 CHANGED，这是预期行为
 | Release 附件 | `state=uploaded`，166.4 MB |
 | 分发字节一致 | 下载件 SHA-256 `15B03A63…2831BB` == 本地归档（**MATCH**） |
 | 解压内容一致 | `routing.graph` SHA-256 `A20CE044…EBA9B8` == `data/europe-v5/routing.graph`（**MATCH**） |
-| `main` 当前值 | `c5fe3d7`，与 `origin/main` 一致，工作区干净 |
+
+**关于 `main` 的 head 值**：本节刻意不记录具体提交号，因为记录该值的提交本身就会使其失效——此类自指在「文档随代码入库」的工作方式下必然产生。可核对的不变量是：发布代之后的提交**仅**改动 Markdown 文档，以及一处不进入任何门覆盖范围的 `speed-validator` nullable 指令（见下），因此上表结论与 `19eceb1` 这一代码代绑定，不随后续文档提交变化。实际 head 以 `git log -1 --format=%H` 为准；`origin/main` 应与之一致，`git status --porcelain` 应为空。
 
 ### 门验证复跑（2026-09-11，确认发布代与验证代一致）
 

@@ -27,7 +27,7 @@
 
 **关键指标基线（Europe v5，2026-08-12）**：主分量 286,214 活跃节点（79.35%）、transit 端点孤立 0/522、od-check jumps=0 / uturns=0、可达率 61.2%（理论上界 62.96%）；性能：路线 p99 0.378ms、匹配 p99 0.012ms、内存 328MB、加载 327ms。
 
-**已建立**：执行计划（本文件）、本地 git 仓库、.gitignore、GitHub 仓库（HaowenCang/ETS2Nav private）、tag `v0.1.0-p0` / `v0.2.0-p1` / `v0.3.0-p2` / `v0.4.0-p3` / `v0.5.0` / **`v0.6.0-p4p5p6`** / **`dataset-europe-v5`**（均以 `git push origin <tag>` 推送；后两者用途不同，见 §5）。数据集 Release 发布时点复核：`main` = `19eceb1`，与 `origin/main` 一致，工作区干净，无未推送提交；随后由本次文档同步推进至 `c5fe3d7`。
+**已建立**：执行计划（本文件）、本地 git 仓库、.gitignore、GitHub 仓库（HaowenCang/ETS2Nav private）、tag `v0.1.0-p0` / `v0.2.0-p1` / `v0.3.0-p2` / `v0.4.0-p3` / `v0.5.0` / **`v0.6.0-p4p5p6`** / **`dataset-europe-v5`**（均以 `git push origin <tag>` 推送；后两者用途不同，见 §5）。数据集 Release 发布时点复核：`main` = `19eceb1`，与 `origin/main` 一致，工作区干净，无未推送提交；此后仅有文档类提交（详见 `p4-p6-hardening-2026-08.md` §9），实际 head 以 `git log -1` 为准。
 
 **文档同步记录**：GitHub 同步动作与发布后复核结果见 `docs/validation/p4-p6-hardening-2026-08.md` §9。
 
