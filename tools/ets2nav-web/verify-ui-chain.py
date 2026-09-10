@@ -79,6 +79,12 @@ route = json.loads(body)
 check("route 有 polyline", len(route.get("polyline", [])) > 100, f"pts={len(route.get('polyline', []))}")
 
 # 2) WS 连接 + 帧流（设目的地后 navigating + 剩余递减）
+# 事件类型统计跨本节与 2.5 节累计——map_state 于设目的地时推送一次，
+# 若只在本节「跳过非 vehicle 帧」，该事件会被消费后丢弃而观测不到。
+KNOWN_TYPES = {"vehicle", "map_state"}
+seen_types = set()
+map_state_polyline_pts = 0
+
 ws = ws_connect(PORT)
 time.sleep(1.0)
 http_post(PORT, "/api/route", json.dumps({"from": [-58456, 32832], "to": [-52925, 36510]}).encode())
@@ -92,7 +98,11 @@ for _ in range(60):  # 最多 3s
     if op != 1:
         continue
     d = json.loads(payload)
-    if d.get("type", "vehicle") != "vehicle":
+    t = d.get("type", "vehicle")
+    seen_types.add(t)
+    if t == "map_state" and isinstance(d.get("polyline"), list):
+        map_state_polyline_pts = max(map_state_polyline_pts, len(d["polyline"]))
+    if t != "vehicle":
         continue  # map_state 等事件无 state 字段（N-M2 复审）
     if d["state"] == "navigating":
         seen["navigating"] = True
@@ -108,9 +118,11 @@ check("WS 帧流 speed>0", seen["speed>0"])
 check("WS 帧流 remaining 递减", seen["rem_decreasing"], f"last={prev_rem:.0f}m")
 
 # 2.5) 事件类型与提醒结构化（A2a-M2 审计项）
-seen_types = set()
+# 2026-08-12 扩展：事件类型白名单断言——UI 曾把非 vehicle 帧交给 onSnapshot 并抛错吞掉，
+# 使约定的 map_state 事件实际从未被处理。此处从协议侧锁定「只出现已约定类型」，
+# 且设目的地后 map_state 必须出现（UI 端 onMapState 的处理路径由 DOM 断言覆盖）。
 seen_reminder_kind = None
-for _ in range(40):
+for _ in range(60):
     try:
         op, payload = recv_frame(ws)
     except socket.timeout:
@@ -118,11 +130,17 @@ for _ in range(40):
     if op != 1:
         continue
     d = json.loads(payload)
-    seen_types.add(d.get("type", "?"))
+    t = d.get("type", "vehicle")
+    seen_types.add(t)
+    if t == "map_state" and isinstance(d.get("polyline"), list):
+        map_state_polyline_pts = max(map_state_polyline_pts, len(d["polyline"]))
     if d.get("reminders"):
         seen_reminder_kind = d["reminders"][0].get("kind")
         break
 check("WS 事件类型含 vehicle", "vehicle" in seen_types)
+check("WS 事件类型全部已约定（无未知类型）", seen_types <= KNOWN_TYPES, f"seen={sorted(seen_types)}")
+check("WS 设目的地后收到 map_state（含 polyline）", map_state_polyline_pts > 0,
+      f"pts={map_state_polyline_pts}")
 if seen_reminder_kind:
     check("reminders 结构化（kind 字段）", seen_reminder_kind in ("speed_limit_change", "overspeed", "red_light", "green_imminent", "glosa"), f"kind={seen_reminder_kind}")
 else:

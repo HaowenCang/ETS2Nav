@@ -173,9 +173,16 @@ public static class DatasetWriter
     }
 
     // —— manifest.json ——
+    /// <param name="contentFingerprint">安装指纹（版本 + archive 元数据 + DLC 集合）。</param>
+    /// <param name="modsFingerprint">mod 指纹（P6 §9 覆盖缺口修复：mod 安装/更新会使地图数据改变
+    /// 但不改安装目录元数据——原实现漏报）。</param>
+    /// <param name="modsMapAltering">地图相关 mod 数量（含 /map 条目者——会使数据集失效）。</param>
+    /// <param name="modsTotal">mod archive 总数。</param>
+    /// <param name="modsDeep">mod 指纹是否为内容哈希模式。</param>
     public static void WriteManifest(string dir, RoutingGraph g, SemanticMap map,
         IReadOnlyList<string> sectors, DateTime generatedAt, string? gameVersion = null,
-        string? contentFingerprint = null)
+        string? contentFingerprint = null, string? modsFingerprint = null,
+        int modsMapAltering = 0, int modsTotal = 0, bool modsDeep = false)
     {
         var manifest = new
         {
@@ -183,6 +190,11 @@ public static class DatasetWriter
             generated_at = generatedAt.ToString("yyyy-MM-ddTHH:mm:ssZ"),
             game_version = gameVersion,                  // P2 §29：manifest 校验（游戏版本）
             content_fingerprint = contentFingerprint,     // A4：P1 §11 安装指纹（DLC/archive 变更检测）
+            // P6 §9 覆盖缺口修复（2026-08-12）：mod 指纹——与安装指纹同层校验
+            mods_fingerprint = modsFingerprint,
+            mods_total = modsTotal,
+            mods_map_altering = modsMapAltering,
+            mods_fingerprint_mode = modsDeep ? "deep" : "meta",
             scope = "europe",
             sectors = sectors,
             stats = new

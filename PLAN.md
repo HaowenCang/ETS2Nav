@@ -7,7 +7,7 @@
 
 ## §1 当前状态
 
-**最后更新**：2026-08-12（**P4/P5/P6 关门**；P5 图缺陷根因排查与修复完成；B 侧实机测试仍延后）
+**最后更新**：2026-08-12（P4/P5/P6 关门 + **离线加固四项**；B 侧实机测试仍延后，runbook 已就绪）
 
 - [x] **P0 阶段**（✅ 门评审通过 2026-08-10，tag v0.1.0-p0；A6/A8 工具并入 P1-01）
 - [x] **P1 Map Compiler**（✅ 关门 2026-08-10，tag v0.2.0-p1；15 工作包 P1-00~P1-14 完成 + 4 子代理收官评审修复 + Regression Suite ALL PASS；执行基线 = P1-map-compiler-plan.md）
@@ -17,7 +17,11 @@
 - [x] **P5 全欧洲测试**（✅ 关门 2026-08-12；A3 交付——od-corpus 四子命令 + 九区域 36 对基准 + 2000 对随机 OD + run-p5-tests.bat；**并完成 A3 登记图缺陷的根因排查与修复**：UK 孤立与 ferry 悬空为真实编译器缺陷已修复（transit 端点孤立 258→0、主分量 75.78%→79.35%、uturns 1→0），残余断簇经五路独立检验判定为源数据拓扑；报告 p5-closeout-2026-08.md + p5-graph-defects-2026-08.md + p5-graph-defects-verification-2026-08.md）
 - [x] **P6 性能优化与发布**（✅ 关门 2026-08-12；A4 交付——ALT/CH 评估登记「目标已达成，不做」（§62 口径裕度 2,600×/5,100×）+ 增量编译指纹（§9 覆盖 4/9）+ §63 方法固化；报告 p6-closeout-2026-08.md；**§63 正式验收待 B6 实机**）
 
-**当前状态**：**A 侧全部阶段（P0~P6）关门完成**——机器可验证部分全部达标，四个回归套件（run-p1/p2/p3/p5-tests.bat）ALL PASS 且 cargo 门（fmt / clippy 0 / 97 测试）全绿。**唯一剩余工作为 B 侧实机测试**（B1~B6，D6 决策延后），用于闭合各阶段登记的实机类已知限制：P2 G15 完整会话、P3 限速一致率与信号 runtime、P4 60 FPS 与移动端、P6 §63 正式性能验收。
+**当前状态**：**A 侧全部阶段（P0~P6）关门完成**——机器可验证部分全部达标，四个回归套件（run-p1/p2/p3/p5-tests.bat）ALL PASS 且 cargo 门（fmt / clippy 0 / 100 测试）全绿。**唯一剩余工作为 B 侧实机测试**（B1~B6，D6 决策延后），用于闭合各阶段登记的实机类已知限制：P2 G15 完整会话、P3 限速一致率与信号 runtime、P4 60 FPS 与移动端、P6 §63 正式性能验收。
+
+**离线加固（2026-08-12 第二轮，四项完成）**：①`verify-ui-chain.py` 断言不稳定——根因确认为 syntrace 以恒等四元数填 heading（yaw 恒 0）致 matcher 巡航段失配，修复后 HIGH 97.3%、断言 8/8 PASS；②§9 mod 指纹漏报路径闭合——新增 `ModScanner` + `ZipfsProbe`（含 ZIP64），实测识别 ProMods 地图 mod（1.05 GB，ZIP 容器），§9 覆盖 4/9 → 6/9；③§57 两处**规范违背**修复（速度项反相、自动恢复缺失）；④UI 事件类型分发——修复前 `map_state` 帧因无 `state` 字段抛错被静默吞掉，即**服务端路线几何推送从未被渲染**。详见 `p4-p6-hardening-2026-08.md`。回归：cargo 100 测试 + dotnet 23 测试 + 四套件 ALL PASS。
+
+**B 侧会话就绪**：runbook 见 `docs/validation/b-session-runbook-2026-08.md`（含 **mod 激活集核对**——本机装有 ProMods 全量 11.2 GB，虽最近日志显示未激活，会话前须复核；另建议禁用 `Flashing Green (Traffic Lights)` 该 Workshop mod）。
 
 **关键指标基线（Europe v5，2026-08-12）**：主分量 286,214 活跃节点（79.35%）、transit 端点孤立 0/522、od-check jumps=0 / uturns=0、可达率 61.2%（理论上界 62.96%）；性能：路线 p99 0.378ms、匹配 p99 0.012ms、内存 328MB、加载 327ms。
 

@@ -56,17 +56,27 @@
   - MATCH 路径仅在 manifest 已含正确指纹时成立（= 重建后的 dataset）——伪造正确指纹
     manifest 实测 MATCH、伪造错误指纹实测 CHANGED（差异值完整输出）——三路均与代码语义一致
 
-### 2.3 边界与 §9 覆盖缺口（审计 M5 登记）
+### 2.3 边界与 §9 覆盖缺口（审计 M5 登记；2026-08-12 更新：mods 覆盖已补齐）
 
 - archive 内容哈希不做（size+mtime 对游戏更新检测足够——Steam 更新会改 mtime）
-- **§9 规范覆盖 4/9 项**：game_version ✓ / archive 集 ✓ / sector 集合（manifest.sectors）✓ /
-  dataset 格式版本 ✓；**未覆盖**：mods/mod order（mod 安装不改安装目录 .scs 元数据——
-  **指纹 MATCH 但地图数据已变——真实漏报路径**，登记 P2 遗留）、sector/definition 内容
-  哈希、parser schema version——DLC/mods 场景建议 B3 后按需扩展
+- **§9 规范覆盖（2026-08-12 更新：4/9 → 6/9）**：game_version ✓ / archive 集 ✓ /
+  sector 集合（manifest.sectors）✓ / dataset 格式版本 ✓；**新增**：mods 集合 ✓、
+  mod 顺序（以 mod 集合的磁盘状态近似——激活顺序记录在存档内，见下）✓；
+  **仍未覆盖**：sector/definition 内容哈希、parser schema version
+- **mods 覆盖实现（`ModScanner.cs` + `ZipfsProbe.cs`）**：原实现只覆盖安装目录，mod 安装/更新
+  不改安装目录元数据——审计所称「指纹 MATCH 但地图数据已变」的**真实漏报路径**。现枚举本地
+  mod 目录与 Steam Workshop 内容目录，并探测**地图相关性**（仅改写 `/map` 的 mod 会使数据集
+  失效）；`deep` 模式对地图相关 mod 追加 SHA-256 内容哈希。
+  **zipfs 支持为必需**：实测 ProMods 地图 mod（1.05 GB）是 ZIP 容器（`game.log` 记
+  `[zipfs] … Created, 40594 entries`），仅 HashFS 探测会漏判——补 ZIP 中央目录枚举后
+  `map_altering` 由 0 修正为 1。
+- **mod 指纹残留边界**：`mods_fingerprint` 描述**磁盘上存在的 mod 集合**（变更检测），
+  **不等于游戏实际激活集**——激活集记录在存档/profile 内，本项目不解析存档；核对手段为
+  `game.log.txt` 的 `[mods] Active N mods` 行。
 - 增量重建（只重建变更 sector）不做：全量重建 ~10 分钟（europe-scale），增量收益低且
   复杂度高（sector 依赖图）——登记为已知限制
-- 检测后处置流程：本工具只检出变更，**重建命令 = map-inspector --all-sectors --dataset**
-  （P1 既有流程）——不挂接任何 bat（初版"挂接 run-p5-tests.bat"声明删除——无实据）
+- 检测后处置流程：本工具只检出变更，**重建命令 = map-inspector --all-sectors --dataset
+  [--deep-mods]**（P1 既有流程）——不挂接任何 bat（初版"挂接 run-p5-tests.bat"声明删除——无实据）
 
 ## 三、验证记录
 

@@ -222,6 +222,31 @@ pub struct TelemetrySnapshot {
     pub job: Option<JobInfo>,
 }
 
+/// 朝向四元数 (x,y,z,w) —— SCS 约定：绕 **Y 轴**的偏航（yaw），非绕 Z。
+/// 构造应使用 [`yaw_to_quat`]，读取应使用 [`quat_yaw`]（二者互逆）。
+pub const IDENTITY_HEADING: [f32; 4] = [0.0, 0.0, 0.0, 1.0];
+
+/// 偏航角（世界弧度，`atan2(dz, dx)` 约定）→ SCS 朝向四元数（绕 Y 轴）。
+///
+/// 纯偏航旋转的四元数为 `(0, sin(θ/2), 0, cos(θ/2))`——x、z 分量为 0。
+/// 与 [`quat_yaw`] 互逆（往返误差见本模块单测）。
+///
+/// 背景（P4 审计 MINOR 修复，2026-08-12）：合成 trace 曾以恒等四元数填充 heading，
+/// 致 matcher 全程按「朝北」打分、巡航段持续失配，使 UI 链验证的「remaining 递减」
+/// 断言在 3 次复跑中出现 1 次失败。修复即由点表逐点 yaw 经本函数生成 heading。
+pub fn yaw_to_quat(yaw: f64) -> [f32; 4] {
+    let half = yaw / 2.0;
+    [0.0, half.sin() as f32, 0.0, half.cos() as f32]
+}
+
+/// SCS 朝向四元数（绕 Y 轴）→ 偏航角（世界弧度）。
+///
+/// `atan2(2(wy - xz), 1 - 2(y² + z²))`；对 [`yaw_to_quat`] 的输出精确还原输入 yaw。
+pub fn quat_yaw(q: [f32; 4]) -> f64 {
+    let (x, y, z, w) = (q[0] as f64, q[1] as f64, q[2] as f64, q[3] as f64);
+    (2.0 * (w * y - x * z)).atan2(1.0 - 2.0 * (y * y + z * z))
+}
+
 #[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct JobInfo {
     pub source_city: String,
@@ -516,5 +541,56 @@ mod tests {
         // 无游戏会话（本测试环境）：read_semaphores 应返回 None 而非 panic
         let r = read_semaphores();
         assert!(r.is_none() || r.is_some(), "无游戏时应 graceful None");
+    }
+
+    /// yaw → quat → yaw 往返（P4 审计 MINOR 修复的回归锁定）。
+    #[test]
+    fn yaw_quat_round_trip() {
+        for yaw in [
+            0.0,
+            std::f64::consts::FRAC_PI_2,
+            -std::f64::consts::FRAC_PI_2,
+            std::f64::consts::PI,
+            0.3,
+            -2.7,
+            1.234,
+        ] {
+            let q = yaw_to_quat(yaw);
+            let back = quat_yaw(q);
+            // 角度差按 ±π 归一（yaw=π 与 -π 等价）
+            let mut d = back - yaw;
+            while d > std::f64::consts::PI {
+                d -= 2.0 * std::f64::consts::PI;
+            }
+            while d < -std::f64::consts::PI {
+                d += 2.0 * std::f64::consts::PI;
+            }
+            assert!(d.abs() < 1e-4, "yaw={yaw} 往返得 {back}（差 {d}）");
+        }
+    }
+
+    /// 纯偏航四元数的 x/z 分量为 0、模长为 1（SCS 绕 Y 轴约定）。
+    #[test]
+    fn yaw_quat_is_unit_y_rotation() {
+        let q = yaw_to_quat(0.9);
+        assert_eq!(q[0], 0.0);
+        assert_eq!(q[2], 0.0);
+        let n = (q[0] * q[0] + q[1] * q[1] + q[2] * q[2] + q[3] * q[3]).sqrt();
+        assert!((n - 1.0).abs() < 1e-6, "模长 {n}");
+        // 恒等：yaw=0 → IDENTITY_HEADING
+        assert_eq!(yaw_to_quat(0.0), IDENTITY_HEADING);
+    }
+
+    /// 约定交叉核对：matcher 以 project_point 的 tangent（atan2(dz,dx)）为参照，
+    /// 故沿 +X 前进（yaw=0）与沿 +Z 前进（yaw=π/2）必须给出对应四元数。
+    #[test]
+    fn yaw_quat_axis_convention() {
+        assert!((quat_yaw(yaw_to_quat(0.0)) - 0.0).abs() < 1e-4, "+X 前进");
+        assert!(
+            (quat_yaw(yaw_to_quat(std::f64::consts::FRAC_PI_2)) - std::f64::consts::FRAC_PI_2)
+                .abs()
+                < 1e-4,
+            "+Z 前进"
+        );
     }
 }

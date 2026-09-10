@@ -45,12 +45,15 @@ PLAN-P3plus.md §2 A4 拆分三项：ALT/CH 评估、增量编译（§9 地图�
 
 ## §5 已知限制（登记）
 
-1. **§9 覆盖 4/9 项**：已覆盖 game_version / archive 集 / sector 集（manifest.sectors）/ dataset 格式版本；**未覆盖** mods 与 mod order（mod 安装不改安装目录 `.scs` 元数据——**指纹 MATCH 但地图数据已变，为真实漏报路径**）、sector/definition 内容哈希、parser schema version。
+1. **§9 覆盖 6/9 项（2026-08-12 更新，原 4/9）**：已覆盖 game_version / archive 集 / sector 集（manifest.sectors）/ dataset 格式版本 + **mods 集合 / mod 顺序（以磁盘 mod 集合近似）**；**未覆盖** sector/definition 内容哈希、parser schema version。
+   **mods 漏报路径已闭合**：原实现只覆盖安装目录，mod 安装/更新不改安装目录元数据（「指纹 MATCH 但地图数据已变」）。现由 `ModScanner` + `ZipfsProbe` 枚举本地 mod 与 Workshop 内容目录，并探测地图相关性（`/map` 条目）——实测本机 ProMods 地图 mod（1.05 GB，ZIP 容器）被正确识别。`--deep-mods` 可对地图相关 mod 追加内容哈希（1.05 GB 端到端 1.9 s）。
+   **残留边界**：`mods_fingerprint` 是**磁盘 mod 集合**的变更检测，**不等于游戏实际激活集**（激活集在存档/profile 内，本项目不解析）；核对手段为 `game.log.txt` 的 `[mods] Active N mods` 行。见 p4-p6-hardening-2026-08.md §2。
 2. **增量重建不做**：只重建变更 sector 需 sector 依赖图，复杂度高；全量重建约 10 分钟（europe-scale），增量收益低。
-3. **指纹由 archive 名/大小/UTC mtime 推导**（SHA-256 摘要），**不哈希文件内容**。
+3. **指纹由 archive 名/大小/UTC mtime 推导**（SHA-256 摘要），默认**不哈希文件内容**；`--deep-mods` 对**地图相关 mod** 例外（内容哈希），安装 archive 仍为元数据口径。
 4. **§63 正式验收未做**：PresentMon 管道（P0-D 方法）已就绪，实机对比（avg FPS 差异 ≤1–2%、1% low 回退 ≤2%）——B6。
 5. **限速查询 0.2 µs 出处**：为 P3-09 报告数（非独立复测），量级一致。
 6. **上游口径历史矛盾**：P2-closeout 曾将 0.39 ms 标为「Europe v4 全量」，实为 Berlin 核心网 19 OD 样本——p6 报告已注明，上游报告保留历史口径。
+7. **本机存在大规模地图 mod（风险登记）**：实测该机器装有 ProMods 全量（11.2 GB，`promods-eu-map-v281.scs` 含 `/map`）。`europe-v5` 数据集由 base+DLC 构建，**不含 ProMods**；`game.log.txt` 显示该次会话 ProMods 未激活（`[mods] Active 17 mods (local: 0, workshop: 17)`），故数据集与当时game内地图一致。**若在 B 侧会话中激活 ProMods，数据集将不再匹配实际地图**——会话前须核对激活集（见实机会话 runbook）。
 
 ## §6 验证命令
 
@@ -60,6 +63,15 @@ cd nav-core && cargo test -p nav-router bench        # 或 nav-core-cli bench <d
 .\tools\map-inspector\MapInspector\bin\Release\net9.0\map-inspector.exe ^
     --check-fingerprint --install "E:\SteamLibrary\steamapps\common\Euro Truck Simulator 2" ^
     --dataset data\europe-v5
+:: 加 --deep 可对地图相关 mod 追加内容哈希（成本：1.05 GB 实测 1.9 s）
+```
+
+重建（含 mod 指纹落盘）：
+
+```
+.\tools\map-inspector\MapInspector\bin\Release\net9.0\map-inspector.exe ^
+    --install "E:\SteamLibrary\steamapps\common\Euro Truck Simulator 2" ^
+    --all-sectors --dataset data\europe-v5 --deep-mods
 ```
 
 ## §7 结论

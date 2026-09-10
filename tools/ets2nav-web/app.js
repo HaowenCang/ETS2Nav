@@ -52,16 +52,36 @@ map.on("load", () => {
 });
 
 // §57 自动缩放：Z = f(v, D_maneuver, complexity)
-// v km/h → 速度越快视野越大；D 越小越近；复杂路口放大
+// 规范语义（v0.2 §57）：高速→显示较远范围（zoom 值更小）；城市→显示附近道路
+// （zoom 更大）；复杂路口→进入 Junction View（再放大一档）。
+// 2026-08-12 修复：速度项原为 +log2(v/40)，与「高速显示较远范围」相反（速度越高越
+// 放大），现改为负号使 zoom 随速度单调下降。
 function autoZoom(snap) {
   const v = Math.max(snap.speed_kmh || 0, 10);
   const d = snap.next_maneuver ? Math.max(snap.next_maneuver.distance_m, 30) : 500;
   const complex = snap.next_maneuver && snap.next_maneuver.roundabout_exit != null ? 1.2 : 1.0;
-  const z = 13 + Math.log2(Math.max(10, d)) * -0.55 + Math.log2(v / 40) * 0.5;
+  const z = 13 + Math.log2(Math.max(10, d)) * -0.55 - Math.log2(v / 40) * 0.5;
   return Math.max(9, Math.min(16.5, z * complex));
 }
 
 let following = true;
+// §57「手动拖动后临时暂停 follow，随后自动恢复」——恢复条件：停顿 ≥ RESUME_MS 且车辆在行驶。
+const FOLLOW_RESUME_MS = 8000;
+const FOLLOW_RESUME_MIN_KMH = 5;
+let followPausedAt = 0;
+
+function pauseFollow() {
+  if (!following) return;
+  following = false;
+  followPausedAt = Date.now();
+  $("follow-hint").classList.remove("hidden");
+}
+
+function resumeFollow() {
+  following = true;
+  followPausedAt = 0;
+  $("follow-hint").classList.add("hidden");
+}
 let lastPos = null;
 let lastReminderKey = "";
 
@@ -70,6 +90,13 @@ function onSnapshot(snap) {
   const chip = $("state-chip");
   chip.textContent = snap.state.toUpperCase();
   chip.className = snap.state === "navigating" ? "navigating" : snap.state === "rerouting" ? "rerouting" : "";
+
+  // §57 自动恢复：手动拖动/滚轮暂停 follow 后，停顿足够久且车辆在行驶则自动恢复
+  if (!following && followPausedAt
+      && Date.now() - followPausedAt >= FOLLOW_RESUME_MS
+      && (snap.speed_kmh || 0) >= FOLLOW_RESUME_MIN_KMH) {
+    resumeFollow();
+  }
 
   // 速度/限速
   $("speed-val").textContent = Math.round(snap.speed_kmh);
@@ -133,6 +160,34 @@ function onSnapshot(snap) {
   }
 }
 
+// WS 消息分发（§60 契约：单一全量 vehicle 快照 + map_state 独立事件）
+// 2026-08-12 修复：原实现把全部帧无条件交给 onSnapshot，map_state 帧无 state 字段
+// 而抛错，被外层 try/catch 静默吞掉——即已约定的 map_state 事件实际从未被处理。
+// 现按 type 分发：vehicle → onSnapshot；map_state → 路线几何更新；未知类型计数上报。
+let unknownEventCount = 0;
+function dispatchMessage(raw) {
+  let d;
+  try {
+    d = JSON.parse(raw);
+  } catch (e) {
+    return;   // 坏帧：仅丢弃解析失败的报文
+  }
+  const type = d.type || "vehicle";
+  if (type === "vehicle") { onSnapshot(d); return; }
+  if (type === "map_state") { onMapState(d); return; }
+  unknownEventCount++;
+  console.warn("[ets2nav] 未知事件类型:", type, d);
+}
+
+// map_state：设目的地后服务端推送路线几何（polyline）一次
+function onMapState(d) {
+  if (!Array.isArray(d.polyline) || !mapReady) return;
+  map.getSource("route-line").setData({
+    type: "LineString",
+    coordinates: d.polyline.map(toLngLat),
+  });
+}
+
 // WS 连接
 let ws = null;
 function connect() {
@@ -155,7 +210,7 @@ function connect() {
     } catch (e) { /* 非浏览器环境跳过 */ }
   };
   ws.onmessage = (ev) => {
-    try { onSnapshot(JSON.parse(ev.data)); } catch (e) { /* 忽略坏帧 */ }
+    try { dispatchMessage(ev.data); } catch (e) { console.error("[ets2nav] 帧处理异常:", e); }
   };
   ws.onclose = () => { $("conn-status").textContent = "已断开"; $("conn-status").className = ""; };
   ws.onerror = () => { $("conn-status").textContent = "连接错误"; $("conn-status").className = ""; };
@@ -190,9 +245,9 @@ $("btn-reset").onclick = () => {
   if (mapReady) map.getSource("route-line").setData({ type: "LineString", coordinates: [] });
   $("dest-x").value = ""; $("dest-z").value = "";
 };
-$("btn-follow").onclick = () => { following = true; $("follow-hint").classList.add("hidden"); };
-map.on("dragstart", () => { if (following) { following = false; $("follow-hint").classList.remove("hidden"); } });
-map.on("wheel", () => { if (following) { following = false; $("follow-hint").classList.remove("hidden"); } });
+$("btn-follow").onclick = () => resumeFollow();
+map.on("dragstart", pauseFollow);
+map.on("wheel", pauseFollow);
 
 // 自动连接
 connect();

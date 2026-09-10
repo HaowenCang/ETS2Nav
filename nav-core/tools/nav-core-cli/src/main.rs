@@ -1401,7 +1401,7 @@ fn syntrace_cli(xz: &str, dataset_dir: &str, out: &str) {
         } else {
             cruise
         };
-        let (x, y, z, _yaw) = route_pts[idx];
+        let (x, y, z, yaw) = route_pts[idx];
         let snap = nav_telemetry::TelemetrySnapshot {
             sequence: seq,
             layout_version: 1,
@@ -1414,7 +1414,10 @@ fn syntrace_cli(xz: &str, dataset_dir: &str, out: &str) {
             local_scale: 1.0,
             rest_stop_minutes: 0,
             position: [x, y, z],
-            heading: [0.0, 0.0, 0.0, 1.0],
+            // P4 审计 MINOR 修复（2026-08-12）：由点表逐点 yaw 生成朝向四元数。
+            // 原为恒等四元数（heading 恒 0）——matcher 全程按「朝北」打分，巡航段
+            // 持续失配，使 verify-ui-chain.py 的 remaining 递减断言不稳定。
+            heading: nav_telemetry::yaw_to_quat(yaw),
             speed,
             speed_limit: 0.0,
             fuel_amount: 1.0,

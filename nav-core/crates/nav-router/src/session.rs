@@ -457,12 +457,10 @@ impl NavigationSession {
     }
 }
 
-/// 四元数 → yaw（世界弧度；SCS quat (x,y,z,w) 绕 Y 轴——与 signal::light_yaw 一致，
-/// 审查修复：原绕 Z 公式对纯 yaw quat 输出 0/180°）。
-fn quat_yaw(q: [f32; 4]) -> f64 {
-    let (x, y, z, w) = (q[0] as f64, q[1] as f64, q[2] as f64, q[3] as f64);
-    (2.0 * (w * y - x * z)).atan2(1.0 - 2.0 * (y * y + z * z))
-}
+/// 四元数 → yaw（世界弧度）。实现已上移至 `nav_telemetry::quat_yaw`（2026-08-12：
+/// 消除重复定义——该转换连同其逆函数 `yaw_to_quat` 属遥测层约定，合成 trace 与
+/// 实时遥测须共用同一约定，否则 matcher 参照系不一致）。
+use nav_telemetry::quat_yaw;
 
 #[cfg(test)]
 mod tests {

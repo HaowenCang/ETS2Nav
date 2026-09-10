@@ -29,6 +29,7 @@ var secNames = (Arg(args, "--sectors") ?? "")
 if (cmdArgs.Contains("--check-fingerprint"))
 {
     // A4（§9）：当前安装指纹 vs dataset manifest——DLC/archive 变更检测
+    // P6 §9 覆盖缺口修复（2026-08-12）：并校验 mod 指纹（mod 安装/更新不改安装目录元数据）
     var installDir2 = Arg(args, "--install");
     var dsDir2 = Arg(args, "--dataset");
     if (installDir2 == null || dsDir2 == null)
@@ -38,6 +39,7 @@ if (cmdArgs.Contains("--check-fingerprint"))
     }
     try
     {
+        bool deepModsCheck = cmdArgs.Contains("--deep");
         var inst = ScsResource.GameInstall.Detect(installDir2);
         var manifestPath = Path.Combine(dsDir2, "manifest.json");
         if (!File.Exists(manifestPath))
@@ -48,12 +50,34 @@ if (cmdArgs.Contains("--check-fingerprint"))
         var m = System.Text.Json.JsonSerializer.Deserialize<System.Text.Json.JsonElement>(
             File.ReadAllText(manifestPath));
         var stored = m.TryGetProperty("content_fingerprint", out var v) ? v.GetString() : null;
-        if (stored == inst.ContentFingerprint)
+        var mode = m.TryGetProperty("mods_fingerprint_mode", out var mv) ? mv.GetString() : null;
+        // mod 指纹必须用与落盘时相同的模式重算，否则模式差异会被误报为数据变更
+        bool deepForCompare = string.Equals(mode, "deep", StringComparison.OrdinalIgnoreCase) || deepModsCheck;
+        var scan = ScsResource.ModScanner.Scan(installDir2, null, deepForCompare);
+        var storedMods = m.TryGetProperty("mods_fingerprint", out var mfv) ? mfv.GetString() : null;
+        int storedAltering = 0;
+        if (m.TryGetProperty("mods_map_altering", out var ma) && ma.ValueKind == System.Text.Json.JsonValueKind.Number)
+            storedAltering = ma.GetInt32();
+
+        Console.WriteLine($"MODS total={scan.Mods.Count} map_altering={scan.MapRelevant} unprobeable={scan.Unprobeable} mode={(deepForCompare ? "deep" : "meta")}");
+        foreach (var mm in ScsResource.ModScanner.MapAltering(scan.Mods))
+            Console.WriteLine($"MODS-ALTERING {mm.Name} {mm.Size} {mm.Source}");
+
+        bool installOk = stored == inst.ContentFingerprint;
+        bool modsOk = storedMods != null && storedMods == scan.Fingerprint;
+
+        if (installOk && modsOk)
         {
             Console.WriteLine("FINGERPRINT MATCH");
             return 0;
         }
-        Console.WriteLine("FINGERPRINT CHANGED stored=" + (stored ?? "none") + " cur=" + inst.ContentFingerprint);
+        if (!installOk)
+            Console.WriteLine("FINGERPRINT CHANGED stored=" + (stored ?? "none") + " cur=" + inst.ContentFingerprint);
+        if (storedMods == null)
+            Console.WriteLine($"MODS-FINGERPRINT ABSENT cur={scan.Fingerprint}（该数据集构建于 mod 指纹引入前——重建后落盘）");
+        else if (!modsOk)
+            Console.WriteLine($"MODS-FINGERPRINT CHANGED stored={storedMods} cur={scan.Fingerprint} " +
+                              $"map_altering={scan.MapRelevant}(stored {storedAltering}) mode={(deepForCompare ? "deep" : "meta")}");
         return 1;
     }
     catch (Exception ex)
@@ -563,7 +587,28 @@ if (cmdArgs.Contains("--dataset"))
     {
         try { fp = ScsResource.GameInstall.Detect(installDir)?.ContentFingerprint; } catch { }
     }
-    ScsMapModel.DatasetWriter.WriteManifest(outDir, rgraph, map, secNames, DateTime.UtcNow, gameVersion, fp);
+    // P6 §9 覆盖缺口修复（2026-08-12）：mod 指纹落盘（mod 安装/更新不改安装目录元数据，
+    // 原实现会漏报「指纹 MATCH 但地图数据已变」）。--deep-mods 追加地图相关 mod 的内容哈希。
+    string? modsFp = null;
+    int modsMapAltering = 0, modsTotal = 0;
+    bool deepMods = cmdArgs.Contains("--deep-mods");
+    try
+    {
+        var scan = ScsResource.ModScanner.Scan(installDir, null, deepMods);
+        modsFp = scan.Fingerprint;
+        modsMapAltering = scan.MapRelevant;
+        modsTotal = scan.Mods.Count;
+        Console.WriteLine(
+            $"mods: {modsTotal} 个（地图相关 {modsMapAltering}，不可探测 {scan.Unprobeable}）指纹模式={(deepMods ? "deep" : "meta")}");
+        foreach (var m in ScsResource.ModScanner.MapAltering(scan.Mods))
+            Console.WriteLine($"  地图相关 mod: {m.Name} ({m.Size / 1048576.0:F1} MB, {m.Source})");
+    }
+    catch (Exception ex)
+    {
+        Console.Error.WriteLine($"mods 扫描失败（已跳过）：{ex.Message}");
+    }
+    ScsMapModel.DatasetWriter.WriteManifest(outDir, rgraph, map, secNames, DateTime.UtcNow, gameVersion, fp,
+        modsFp, modsMapAltering, modsTotal, deepMods);
     ScsMapModel.DatasetWriter.WriteDiagnostics(outDir, map, rgraph, prefabs.FailedPpds, new[] { "P1-11 dataset build" }, builder.TerminalCount, builder.TerminalDegraded, builder.RoadsSkippedMissingNode, builder.RoadsSkippedRail);
     // map.db（SQLite：roads/junctions 表）
     using (var conn = new Microsoft.Data.Sqlite.SqliteConnection($"Data Source={Path.Combine(outDir, "map.db")}"))
