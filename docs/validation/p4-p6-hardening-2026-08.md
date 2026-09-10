@@ -295,8 +295,18 @@ mod 集合）。**在其他机器上检查必然报 CHANGED，这是预期行为
 |---|---|
 | `cargo fmt --check` | PASS（exit 0） |
 | `cargo clippy --all-targets` | **0 warnings** |
-| `cargo test` | **100 passed / 0 failed**（9 个 test target） |
+| `cargo test` | **104 passed / 0 failed**（§9.1 新增 `utc_parts` 3 项 + `SemRecorder` 1 项；§9.2 修正后复跑） |
 | `dotnet test map-compiler/MapCompiler.sln` | **80 passed / 0 failed**（8 个项目：HashFs 5 / Sii 22 / Sector 8 / Resource 23 / Definitions 5 / Graph 7 / Prefab 4 / Validation 6） |
+| 四套回归套件（修正 §9.2 脚本缺陷后复跑） | `run-p1` / `run-p2` / `run-p3` / `run-p5` **全部 ALL PASS** |
+
+`run-p2` 的逐步输出（§9.2 修复后首次干净通过，可作为「无粘性误报」的对照样本）：
+
+```
+[1/7] P1 REGRESSION PASS   [2/7] FMT PASS / CLIPPY PASS / CARGO TEST PASS
+[3/7] DATASET SMOKE PASS   [4/7] ROUTE REGRESSION PASS   [5/7] MATCH REPLAY PASS
+[6/7] SIGNAL LINK PASS     [7/7] PERF SMOKE PASS
+P2 Regression Suite: ALL PASS
+```
 
 四套回归套件（`run-p1/p2/p3/p5-tests.bat`）在 `00f9a54` 提交时已实跑 ALL PASS，本次未复跑。依据：本次对产品代码的唯一改动是 `tools/speed-validator/SpeedValidator/Program.cs` 增加一行 `#nullable` 指令（消除 3 处 CS8632 告警，不改变任何运行语义），而 `SpeedValidator` 未包含在 `MapCompiler.sln` 内，亦不被四套件中任何一步调用（已用 `Select-String` 核对 `run-p2/p3-tests.bat` 无 `speed-validator` / `SpeedValidator` 引用）——故该改动不可能影响套件结果。cargo 侧与 dotnet 侧门均已按上表复跑。
 
@@ -317,6 +327,137 @@ mod 集合）。**在其他机器上检查必然报 CHANGED，这是预期行为
 
 顺带修复：`SpeedValidator` 补建 Release 时暴露 3 处 `warning CS8632`（可空引用类型注解出现在未启用 nullable 的上下文中），以 `#nullable enable annotations` 消除（仅开放注解语法，不启用流分析告警，避免引入新的既有代码告警）。现为 **0 warnings**。该项目不在 `MapCompiler.sln` 内，故不影响既有 dotnet 门口径。
 
+### §9.1 B 侧采集链缺陷（2026-09-11，编制操作流程时发现并修复）
+
+为上一条「B 侧就绪」编制可照抄的操作流程时，对 runbook 中的命令逐条实跑，发现**三个会使 B2 采集产出为零或不可分析的缺陷**。三者均属「文档承诺的行为与实现不符」，且前两项在纸面复核中不会暴露——只有实际执行 `nav-core-cli live` 才会显现。
+
+#### 缺陷 1：`nav-core-cli live` 无法启动（参数守卫误判）
+
+`main` 开头的守卫为 `if args.len() < 3 { usage; exit(2) }`，而 `live` 的 trace 路径是**可选**参数——`nav-core-cli live` 只有 2 个 argv，被误判为「参数不足」直接 `exit(2)` 并打印 `dataset info` 的用法。即 runbook（及 `p2-gameplay-test-checklist`）中给出的这条命令**根本无法运行**：
+
+```
+$ nav-core-cli live
+用法: nav-core-cli <dataset|info> <dataset-dir>     ← exit 2，未进入遥测
+```
+
+**修复**：守卫放宽为 `args.len() < 2`（仅要求存在子命令），并抽出统一的 `usage()` 供前置守卫与未知子命令共用，消除两处文案漂移。其余子命令各自保留 `args.len()` 守卫，参数不足时落到 `_` 分支打印完整用法——行为不变。另加一条：第二参数以 `--` 开头时不当作路径（避免 `live --help` 生成名为 `--help` 的文件）。
+
+#### 缺陷 2：`live` 无参数时不录制任何 trace
+
+`live(trace_path: Option<&str>)` 原实现用 `trace_path.map(...).transpose()`——不传参即 `rec = None`，**一帧都不写**，且不打印任何路径。而文档称「live 模式同时录制 trace，录制路径在启动时打印」（该描述在 `p2-gameplay-test-checklist` 与 runbook 中各出现一次）。
+
+后果的量级：B2 是单趟 20–30 分钟的实机采集，用户按文档执行 `nav-core-cli live`，会话结束时**没有 trace 文件**，T1/T2/T3/T4/T6 全部无法分析——整场会话作废。
+
+**修复**：改为默认必录。省略路径时录到 `%TEMP%\ets2nav-live-<UTC 时间戳>.navtrace`（新增 `default_trace_path()`，含 `utc_parts()` 零依赖 UTC 转换），启动时打印实际路径，并每 60 秒输出 `[rec] 已录制 N 帧 → <路径>` 以便长时驾驶中确认录制在推进。时间戳取到秒，使 T5 的两轮采集产出文件互不覆盖且可区分先后。
+
+关于中断安全性的核实：`TraceRecorder` 写 `File`（`Box<dyn Write>`，无 `BufWriter`），每帧 `write_all` 直达内核，故 `Ctrl+C` 强杀不会丢失已写入的帧——不需要「正常退出」操作。这一性质决定了无需引入信号处理依赖。
+
+#### 缺陷 3：trace 不含信号灯字段，T3 无法离线复核
+
+`TelemetrySnapshot` 的字段为 sequence/running/paused/simulation_time/render_time/game_time/local_scale/rest_stop/position/heading/speed/speed_limit/fuel/job——**没有任何信号灯字段**。而 `next_signal()` 在运行时调 `read_semaphores()` 读取 `Local\ETS2NavSemaphore`；这意味着：
+
+- 实时（`server` + UI）：读到的是**当前**灯态，关联结果正确；
+- 离线（`session <trace> <dataset>` 回放）：`read_semaphores()` 读到的是**回放当下**的共享内存（游戏通常已退出 → `None` → 空灯集），**无法重建录制时的信号关联**。
+
+因此 checklist 中「`nav-core-cli session` 输出 upcoming_signal」作为 T3 采集手段是不成立的（`session` 自身确实打印 upcoming_signal，但那是回放环境的值，不是采集时的值）。
+
+**修复**：`live` 增加信号灯**旁路记录**——每 20 Hz 采样 `read_semaphores()`，写入与 trace 同名的 `<trace>.sem.csv`（长表：`wall_ms,slot,id,kind,state,time_remaining,x,y,z,qx,qy,qz,qw`，每次采样每灯一行）。设计取舍：
+
+| 决策 | 理由 |
+|---|---|
+| 旁路文件而非扩展 trace 格式 | 扩 `TelemetrySnapshot` 会牵动 dataset/replay/match/session 全链路兼容性；T3 只需旁路证据 |
+| 仅在确实读到共享内存后才创建文件 | 无桥接器/无信号灯时不产出空文件，避免把「未采到」误读成「采到了但无灯」 |
+| 20 Hz 采样 | 灯态与倒计时以秒为尺度变化，20 Hz 远高于必要精度 |
+| 写 `File` 而非 `BufWriter` | 与 trace 同策略：`Ctrl+C` 不丢数据 |
+| 长表而非宽表 | 灯数随路口变化（槽位上限 64），长表可直接按 `id`/时间窗切片 |
+
+#### 验证
+
+| 项 | 结果 |
+|---|---|
+| 参数路径实跑（6 项） | `live` 无参 → 启动+录制+打印路径；`live <路径>` → 录到指定文件；无参整体 → 用法+exit 2；`replay` 参数不足 → 用法+exit 2；未知子命令 → 用法+exit 2；`live --help` → 走默认路径且**未**生成名为 `--help` 的文件 |
+| **信号通路端到端**（合成共享内存） | 用 .NET `MemoryMappedFile` 构造 `Local\ETS2NavSemaphore`（header 16B + 2 个 48B 灯槽，写入 id=42/kind=1/state=2/time=12.250/pos=(1.5,2.5,3.5)/quat y=w=sin45°，以及 id=7/kind=0/state=0/time=3.500/pos=(-4,0,8)），在**无游戏、无遥测**条件下运行 `live`：文件被创建、路径被打印、7 次采样 × 2 灯 = 14 数据行，逐字段与写入值一致（`12.250`、`1.500`、`0.70711` 等） |
+| 阴性对照 | 无桥接器环境下运行 `live` → trace 文件创建（0 字节，无遥测帧），`*.sem.csv` **数量为 0**（符合「未采到不产空文件」的设计） |
+| `utc_parts` 单测 | 4 组基准值交叉核对（`0`→1970-01-01、`1767225600`→2026-01-01、`1789058002`→2026-09-10T16:33:22Z、闰日 `1709251199`→2024-02-29T23:59:59Z、年末 `1735689599`→2024-12-31T23:59:59Z） |
+| `SemRecorder` 单测 | 表头与列数（13）、`slot` 序号、`id`、`time_remaining`/坐标/四元数小数位、派生路径 `x.navtrace` → `x.sem.csv` |
+
+其中端到端一项的意义在于：它不依赖游戏，直接验证「共享内存存在 → 文件产出 → 内容正确」这条完整通路，因此把 T3 的可分析性从「依赖实机才能确认」变为「已在离线环境证明」。样本量说明：该次 4 秒内仅 7 次采样，原因是无遥测时 `Disconnected` 分支有 500 ms 退避、循环随之降频；实际游戏中遥测正常（~60 Hz 轮询），20 Hz 采样成立。
+
+**一处设计修正（实跑中发现）**：信号采样最初写在 `Fresh(snap)` 分支内，意味着遥测一旦进入 `Stale`/`Disconnected`，信号记录也随之停止。但遥测桥与信号桥是两个独立插件，信号证据不应依赖遥测状态——已将该采样移至 `match` 之外，使其独立于遥测状态。上述端到端测试正是在**完全无遥测**的条件下通过，可直接证明该解耦生效。
+
+> 记一次自查失误：`utc_parts` 首版单测我把 `16:33:22` 的秒位误写为 `2`，测试失败后先怀疑算法。手工验算（`rem=59602 → 16h33m22s`）确认算法正确、期望值笔误，修正后通过。若当时直接改算法去迁就错误期望，会引入真实缺陷。
+
+### §9.2 回归套件「粘性 FAIL」缺陷（2026-09-11，由一次误判排查暴露）
+
+#### 现象
+
+修完上节三项缺陷后重跑四套件，`run-p2-tests.bat` 报出 6 项失败：
+
+```
+=== [2/7] cargo fmt/clippy/test ===
+FMT PASS
+CLIPPY FAIL
+CARGO TEST PASS
+=== [3/7] dataset v2 smoke ===
+DATASET SMOKE FAIL
+=== [4/7] route regression ===
+ROUTE REGRESSION FAIL
+...（[5/7]~[7/7] 同为 FAIL）
+```
+
+表面看是「clippy 一挂、全链崩塌」。第一反应是**并发干扰**——我当时正在同一 `nav-core` 目录跑 `cargo build --release`，与套件的 cargo 操作争 `target` 锁。
+
+#### 实际是两个独立问题叠加
+
+**其一，`CLIPPY FAIL` 是真的，且是我的代码引起。** 排除并发后单独复跑，clippy 报：
+
+```
+error: approximate value of `f{32, 64}::consts::FRAC_1_SQRT_2` found
+error: could not compile `nav-core-cli` (bin "nav-core-cli" test) due to 2 previous errors
+```
+
+根因是新写的 `SemRecorder` 单测里用了字面量 `0.7071`（作为 90° 偏航四元数的 y/w 分量），触发 `clippy::approx_constant`。**该 lint 正是为这类「近似常数」而存在**，属于应当修正的写法。改法不是压制告警，而是直接用 `std::f32::consts::FRAC_1_SQRT_2`——它同时更准确地表达了「sin45°」这一语义。
+
+顺带暴露我流程上的疏漏：新增测试代码后我按 `cargo test` 验证通过即继续，**未重跑 clippy**（`--all-targets` 才覆盖 test target）。`cargo test` 通过不代表 clippy 通过。
+
+**其二，`[3/7]`~`[7/7]` 的 FAIL 全是误报，属脚本缺陷。** 三个套件（`run-p2`/`run-p3`/`run-p5`）的每步结论写成：
+
+```bat
+if errorlevel 1 set FAIL=1
+if %FAIL%==1 (echo DATASET SMOKE FAIL) else (echo DATASET SMOKE PASS)
+```
+
+判断条件是**累积标志** `FAIL` 而非该步自身的 `errorlevel`——第一步失败后，`FAIL` 永久为 1，后续每步都打印 FAIL，**无论其命令是否真的成功**。于是单个 clippy 错误被放大成「六项失败」，把真实故障面掩盖成一片。
+
+这与此前修过的两处套件可复现性缺陷（`run-p2` 对 `%TEMP%\real.navtrace` 的隐式依赖、`run-p1` 依赖未纳入解决方案的 Debug 二进制）同属**验证完整性缺陷**：套件本身给出误导性结论，而非产品缺陷。
+
+#### 修复
+
+三套件统一改为每步独立判定，`FAIL` 仅用于最终退出码：
+
+```bat
+if errorlevel 1 (echo DATASET SMOKE FAIL & set FAIL=1) else (echo DATASET SMOKE PASS)
+```
+
+`run-p1-tests.bat` 原本即为该写法（0 处粘性判断），未改动。另修 `run-p5` 的 `[3/4]`：原逻辑在基线存在时也打印 `BASELINE GEN PASS`（同样基于累积标志），现改为基线存在时输出 `BASELINE EXISTS`、缺失时才生成并报告——使「跳过」与「生成成功」可区分。
+
+> **对历史记录的影响**：`p5-fix-closeout-check-2026-08.md` §三记录的 `[3/4] BASELINE GEN PASS` 是该次实跑（基线已删除后重生成）的真实输出，属历史证据，不作改动；但此后基线存在时该行输出为 `BASELINE EXISTS`，与此前不同，属预期变化。
+
+#### 方法论教训
+
+两个问题叠加时，「第一个失败 + 后续全挂」的形态很容易被归因为单一原因（此处是并发）。若当时接受「并发干扰」这一解释并直接重跑，`approx_constant` 会被下一次套件运行重新捕获（因为代码未改），但**若并发恰好不再发生、且 clippy 因增量缓存未重跑，则可能长期潜伏**。区分二者的关键动作是：在排除干扰的条件下单独复跑失败项，并读取其**原始输出**（而非套件的汇总标签）。
+
+#### 修复后复跑
+
+| 套件 | 结果 | 逐步输出 |
+|---|---|---|
+| `run-p1-tests.bat` | **ALL PASS** | 6 步全 PASS（unit 80 / map-inspector build / Berlin gate 95.4% / Germany gate 96.4% / determinism / Rust reader / Europe scale `failed_prefabs: 0`） |
+| `run-p2-tests.bat` | **ALL PASS** | 7 步全 PASS（P1 链 + FMT/CLIPPY/CARGO TEST + DATASET SMOKE + ROUTE REGRESSION + MATCH REPLAY + SIGNAL LINK + PERF SMOKE） |
+| `run-p3-tests.bat` | **ALL PASS** | 4 步全 PASS（P2 链 + FMT/CLIPPY/CARGO TEST + SPEED LOOKAHEAD + CAMERA VERDICT） |
+| `run-p5-tests.bat` | **ALL PASS** | 4 步全 PASS（CARGO TEST / ROUTER TEST / FMT / CLIPPY / BUILD / `BASELINE EXISTS` / OD REGRESS / OD CHECK） |
+
+对照 §9.2 开头的失败输出可见：修复前 6 项 FAIL，修复后 7 项 PASS——其中 6 项从未真正失败过。
+
 ### 本轮文档同步清单（2026-09-11）
 
 | 文件 | 变更 |
@@ -325,5 +466,14 @@ mod 集合）。**在其他机器上检查必然报 CHANGED，这是预期行为
 | `PLAN-P3plus.md` | §5 末尾新增「B 侧就绪条件」表（手册 / 插件 / 工具 / 数据集 / 阻塞风险） |
 | `README.md` | 当前阶段补同步日期与存量门复核结果；新增「验证与复现入口」节（四套件 + cargo/dotnet 命令 + 数据集获取途径）；目录结构更新（补 `nav-core` / `desktop` / `data` 与测试计数 65 → 80） |
 | `p5-fix-closeout-check-2026-08.md` | §5 追加后续推进注（提交链延伸至 `19eceb1`、新增数据发布 tag） |
-| 本文件 | §9 新建（GitHub 同步记录）；§8 关联文档清单同步 |
+| `p2-gameplay-test-checklist-2026-08.md` | 修正 `session` 语义与 T3 采集手段；补 live 默认录制路径 |
+| `b-session-runbook-2026-08.md` | §一 补首行判据与 trace 路径说明；§二 补两终端分工、T3 停车等待、T5 两轮 DLL 装卸、交付项；§四 补各 T 项输入；§五 新增测量条件 6/7；新增 §六 命令速查 |
+| `run-p2-tests.bat` / `run-p3-tests.bat` / `run-p5-tests.bat` | 逐步判定与累积 `FAIL` 解耦（§9.2）；`run-p5` `[3/4]` 区分「基线存在」与「生成成功」 |
+| `nav-core/tools/nav-core-cli/src/main.rs` | 缺陷 1/2/3 修复（参数守卫、默认录制、信号旁路记录）+ 7 项单测 |
+| 本文件 | §9 新建（GitHub 同步记录）+ §9.1（B 侧采集链缺陷）+ §9.2（套件粘性 FAIL） |
+
+### 对既有文档的连带修正
+
+`p2-gameplay-test-checklist-2026-08.md` 与 `b-session-runbook-2026-08.md` 中失实的描述已同步：前者修正 `session` 的语义（离线回放而非实时快照）与 T3 采集手段，后者补齐两个终端的分工、T5 两轮的 DLL 装卸步骤、`*.sem.csv` 交付项与命令速查节。
+
 

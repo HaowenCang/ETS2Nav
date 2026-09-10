@@ -1,22 +1,36 @@
 // nav-core-cli：Navigation Core 开发命令行（P2 计划 §122-127）。
 // 当前实现 dataset info（加载时间/内存/统计）；route/match/replay/live/bench 后续工作包加入。
+use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
 
 mod server;
 mod server_cli;
 
+/// 统一用法输出（`use` 前置与未知子命令共用，避免两处文案漂移）。
+fn usage() {
+    eprintln!("用法:");
+    eprintln!("  nav-core-cli dataset info <dataset-dir>");
+    eprintln!("  nav-core-cli live [trace.navtrace]        —— 实时遥测并录制 trace（省略路径则用 %TEMP% 默认名）");
+    eprintln!("  nav-core-cli replay <trace.navtrace>      —— 回放 trace");
+    eprintln!("  nav-core-cli match <trace> <dataset-dir>   —— trace 回放 Map Matching");
+    eprintln!("  nav-core-cli snap <x,z> <dataset-dir>       —— 目的地吸附（最近可路由 edge）");
+}
+
 fn main() {
     let args: Vec<String> = std::env::args().collect();
-    if args.len() < 3 {
-        eprintln!("用法: nav-core-cli <dataset|info> <dataset-dir>");
-        eprintln!("  nav-core-cli dataset info <dir>   —— 显示 dataset 统计与加载基准");
+    // 仅要求存在子命令：`live [trace]` 的路径为可选参数，若在此处要求 args.len() >= 3，
+    // 则 `nav-core-cli live` 会被误判为参数不足而拒绝执行（实测 exit 2）。
+    // 其余子命令各自带 args.len() 守卫，参数不足时落到下方 `_` 分支打印用法。
+    if args.len() < 2 {
+        usage();
         std::process::exit(2);
     }
     match (args[1].as_str(), args.get(2).map(|s| s.as_str())) {
         ("dataset", Some("info")) if args.len() >= 4 => dataset_info(&args[3]),
         ("info", _) if args.len() >= 3 => dataset_info(&args[2]),
-        ("live", Some(path)) => live(Some(path)),
+        // 第二参数以 `--` 开头时不当作 trace 路径（如 `live --help` 走默认路径而非生成名为 "--help" 的文件）
+        ("live", Some(path)) if !path.starts_with("--") => live(Some(path)),
         ("live", _) => live(None),
         ("replay", _) if args.len() >= 3 => replay_trace(&args[2]),
         ("match", _) if args.len() >= 4 => match_trace(&args[2], &args[3]),
@@ -36,37 +50,139 @@ fn main() {
         ("syntrace", _) if args.len() >= 5 => syntrace_cli(&args[2], &args[3], &args[4]),
         ("bench", _) if args.len() >= 3 => bench_cli(&args[2]),
         _ => {
-            eprintln!("用法:");
-            eprintln!("  nav-core-cli dataset info <dataset-dir>");
-            eprintln!("  nav-core-cli live [trace.navtrace]        —— 实时遥测（可选同时录制）");
-            eprintln!("  nav-core-cli replay <trace.navtrace>      —— 回放 trace");
-            eprintln!("  nav-core-cli match <trace> <dataset-dir>   —— trace 回放 Map Matching");
-            eprintln!(
-                "  nav-core-cli snap <x,z> <dataset-dir>       —— 目的地吸附（最近可路由 edge）"
-            );
+            usage();
             std::process::exit(2);
         }
     }
 }
 
-/// 实时遥测：连接共享内存，持续输出帧摘要；可选录制 trace。
+/// 默认 trace 路径：`%TEMP%\ets2nav-live-<UTC 时间戳>.navtrace`。
+/// 时间戳使多轮采集（如 T5 的两轮 FPS 对照）产出文件互不覆盖且可区分先后。
+fn default_trace_path() -> std::path::PathBuf {
+    let secs = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let (y, mo, d, h, mi, s) = utc_parts(secs);
+    std::env::temp_dir().join(format!(
+        "ets2nav-live-{y:04}{mo:02}{d:02}-{h:02}{mi:02}{s:02}.navtrace"
+    ))
+}
+
+/// UNIX 秒 → UTC 年月日时分秒（Howard Hinnant `civil_from_days` 算法，零依赖）。
+fn utc_parts(secs: u64) -> (i64, u32, u32, u32, u32, u32) {
+    let days = (secs / 86_400) as i64;
+    let rem = (secs % 86_400) as u32;
+    let z = days + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let doe = (z - era * 146_097) as u64; // [0, 146096]
+    let yoe = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365; // [0, 399]
+    let y = yoe as i64 + era * 400;
+    let doy = doe - (365 * yoe + yoe / 4 - yoe / 100); // [0, 365]
+    let mp = (5 * doy + 2) / 153; // [0, 11]
+    let d = (doy - (153 * mp + 2) / 5 + 1) as u32; // [1, 31]
+    let m = if mp < 10 { mp + 3 } else { mp - 9 } as u32; // [1, 12]
+    let y = if m <= 2 { y + 1 } else { y };
+    (y, m, d, rem / 3600, (rem % 3600) / 60, rem % 60)
+}
+
+/// 信号灯旁路记录器（T3 离线判定用）：与 trace 同名的 `<trace>.sem.csv`。
+///
+/// 存在的理由：`TelemetrySnapshot` 不含信号灯字段，故 trace 无法用于离线复核信号关联；
+/// 且 `nav-core-cli session` 回放时读到的是**当下**共享内存而非录制时的灯态
+/// （见 `nav-router/src/session.rs` 的 `next_signal`，其 `read_semaphores()` 在回放时执行）。
+/// 因此信号证据必须与 trace 并行落盘，否则一场实机采集的信号数据不可复现。
+///
+/// 格式为长表（每次采样每灯一行），便于按灯 `id` 或时间窗切片；20 Hz 采样足够，因为灯态
+/// 与倒计时以秒为尺度变化。写 `File` 而非 `BufWriter`：逐行即时落盘，Ctrl+C 不丢数据。
+struct SemRecorder {
+    w: Box<dyn Write>,
+    path: std::path::PathBuf,
+    start: std::time::Instant,
+    rows: usize,
+}
+
+impl SemRecorder {
+    /// 由 trace 路径派生：`x.navtrace` → `x.sem.csv`。
+    fn create(trace_path: &Path) -> std::io::Result<Self> {
+        let path = trace_path.with_extension("sem.csv");
+        let mut w = Box::new(std::fs::File::create(&path)?) as Box<dyn Write>;
+        w.write_all(b"wall_ms,slot,id,kind,state,time_remaining,x,y,z,qx,qy,qz,qw\n")?;
+        Ok(SemRecorder {
+            w,
+            path,
+            start: std::time::Instant::now(),
+            rows: 0,
+        })
+    }
+
+    fn record(&mut self, slots: &[nav_telemetry::SemaphoreSlot]) -> std::io::Result<()> {
+        let wall = self.start.elapsed().as_millis();
+        for (i, s) in slots.iter().enumerate() {
+            writeln!(
+                self.w,
+                "{wall},{i},{},{},{},{:.3},{:.3},{:.3},{:.3},{:.5},{:.5},{:.5},{:.5}",
+                s.id,
+                s.kind,
+                s.state,
+                s.time_remaining,
+                s.position.0,
+                s.position.1,
+                s.position.2,
+                s.quat[0],
+                s.quat[1],
+                s.quat[2],
+                s.quat[3]
+            )?;
+            self.rows += 1;
+        }
+        Ok(())
+    }
+
+    fn rows(&self) -> usize {
+        self.rows
+    }
+
+    fn path(&self) -> &Path {
+        &self.path
+    }
+}
+
+/// 实时遥测：连接共享内存，持续输出帧摘要并录制 trace。
+/// 用法：`nav-core-cli live [trace.navtrace]`——省略路径时录制到默认路径（见 `default_trace_path`）。
+///
+/// 默认录制而非可选录制的原因：本命令是 B2 实机采集的唯一数据源，单趟采集耗时 20–30 分钟，
+/// 遗漏录制会使整场数据无产出。TraceRecorder 直接写 File（无用户态缓冲），故逐帧即时落盘，
+/// Ctrl+C 中断不会丢失已写入的帧。
 fn live(trace_path: Option<&str>) {
+    let path = match trace_path {
+        Some(p) => std::path::PathBuf::from(p),
+        None => default_trace_path(),
+    };
     let mut src = nav_telemetry::TelemetrySource::new(std::time::Duration::from_secs(2));
-    let mut rec = trace_path
-        .map(|p| nav_telemetry::TraceRecorder::create(std::path::Path::new(p)))
-        .transpose()
-        .unwrap_or_else(|e| {
-            eprintln!("无法创建 trace: {e}");
-            std::process::exit(1);
-        });
+    let mut rec = nav_telemetry::TraceRecorder::create(&path).unwrap_or_else(|e| {
+        eprintln!("无法创建 trace {}: {e}", path.display());
+        std::process::exit(1);
+    });
     let mut det = nav_telemetry::EventDetector::new(50.0);
     let mut last_shown = std::time::Instant::now();
+    let mut last_report = std::time::Instant::now();
+    let mut sem: Option<SemRecorder> = None;
+    let mut last_sem = std::time::Instant::now();
+    println!("录制 trace: {}", path.display());
+    println!("（Ctrl+C 停止；逐帧即时落盘，中断不丢已写入帧）");
     println!("等待遥测桥（Local\\ETS2NavTelemetry）……");
     loop {
         match src.poll() {
             nav_telemetry::TelemetryState::Fresh(snap) => {
-                if let Some(r) = rec.as_mut() {
-                    let _ = r.record(&snap);
+                let _ = rec.record(&snap);
+                // 每 60 秒报一次采集进度：长时间驾驶时据此确认录制仍在推进
+                if last_report.elapsed().as_secs() >= 60 {
+                    println!("[rec] 已录制 {} 帧 → {}", rec.count(), path.display());
+                    if let Some(r) = sem.as_ref() {
+                        println!("[rec] 信号灯 {} 行 → {}", r.rows(), r.path().display());
+                    }
+                    last_report = std::time::Instant::now();
                 }
                 for ev in det.feed(&snap) {
                     println!("EVENT: {ev:?}");
@@ -89,6 +205,26 @@ fn live(trace_path: Option<&str>) {
             nav_telemetry::TelemetryState::Disconnected => {
                 std::thread::sleep(std::time::Duration::from_millis(500));
                 src.reconnect();
+            }
+        }
+        // 信号灯旁路记录（20 Hz）独立于遥测状态：遥测桥与信号桥是两个插件，信号证据不应
+        // 因遥测波动（Stale/Disconnected）而中断。仅在确实读到共享内存时创建文件——无桥接器
+        // 时不产出空文件，以免把「没采到」误读成「采到了但无灯」。
+        if last_sem.elapsed().as_millis() >= 50 {
+            last_sem = std::time::Instant::now();
+            if let Some(slots) = nav_telemetry::read_semaphores() {
+                if sem.is_none() {
+                    match SemRecorder::create(&path) {
+                        Ok(r) => {
+                            println!("信号灯旁路记录: {}", r.path().display());
+                            sem = Some(r);
+                        }
+                        Err(e) => eprintln!("信号灯记录文件创建失败（不影响 trace）: {e}"),
+                    }
+                }
+                if let Some(r) = sem.as_mut() {
+                    let _ = r.record(&slots);
+                }
             }
         }
         std::thread::sleep(std::time::Duration::from_millis(16)); // ~60 Hz 轮询上限
@@ -1461,4 +1597,91 @@ fn syntrace_cli(xz: &str, dataset_dir: &str, out: &str) {
         route.distance_m,
         out
     );
+}
+
+#[cfg(test)]
+mod tests {
+    use super::{default_trace_path, utc_parts};
+
+    #[test]
+    fn utc_parts_matches_known_timestamps() {
+        assert_eq!(utc_parts(0), (1970, 1, 1, 0, 0, 0));
+        assert_eq!(utc_parts(1_767_225_600), (2026, 1, 1, 0, 0, 0));
+        assert_eq!(utc_parts(1_789_058_002), (2026, 9, 10, 16, 33, 22));
+    }
+
+    #[test]
+    fn utc_parts_handles_leap_day_and_year_end() {
+        // 闰年 2 月末：覆盖 m<=2 的年份回退分支
+        assert_eq!(utc_parts(1_709_251_199), (2024, 2, 29, 23, 59, 59));
+        // 12 月末：覆盖 mp>=10 的月份换算分支
+        assert_eq!(utc_parts(1_735_689_599), (2024, 12, 31, 23, 59, 59));
+    }
+
+    #[test]
+    fn default_trace_path_lands_in_temp_with_timestamped_name() {
+        let p = default_trace_path();
+        assert!(p.starts_with(std::env::temp_dir()), "应位于临时目录: {p:?}");
+        assert_eq!(p.extension().and_then(|s| s.to_str()), Some("navtrace"));
+        let name = p.file_name().unwrap().to_string_lossy().to_string();
+        // 形如 ets2nav-live-YYYYMMDD-HHMMSS.navtrace（长度固定，便于多轮采集区分）
+        assert_eq!(name.len(), "ets2nav-live-YYYYMMDD-HHMMSS.navtrace".len());
+        assert!(name.starts_with("ets2nav-live-"), "{name}");
+    }
+
+    #[test]
+    fn sem_recorder_writes_long_table_with_header() {
+        let dir = std::env::temp_dir();
+        let trace = dir.join("ets2nav-sem-test.navtrace");
+        let mut r = super::SemRecorder::create(&trace).unwrap();
+        // 派生路径：trace 扩展名被替换，stem 保留
+        assert_eq!(r.path().file_name().unwrap(), "ets2nav-sem-test.sem.csv");
+        let slots = [
+            nav_telemetry::SemaphoreSlot {
+                position: (1.5, 2.5, 3.5),
+                // 90° 偏航四元数：y=w=sin(45°)=cos(45°)。用常量而非字面量 0.7071——
+                // 后者会触发 clippy::approx_constant（该 lint 正是为这类近似常数而设）。
+                quat: [
+                    0.0,
+                    std::f32::consts::FRAC_1_SQRT_2,
+                    0.0,
+                    std::f32::consts::FRAC_1_SQRT_2,
+                ],
+                kind: 1,
+                time_remaining: 12.25,
+                state: 2,
+                id: 42,
+            },
+            nav_telemetry::SemaphoreSlot {
+                position: (-4.0, 0.0, 8.0),
+                quat: [0.0, 0.0, 0.0, 1.0],
+                kind: 0,
+                time_remaining: 0.0,
+                state: 0,
+                id: 7,
+            },
+        ];
+        r.record(&slots).unwrap();
+        assert_eq!(r.rows(), 2, "两灯应写两行");
+
+        let text = std::fs::read_to_string(r.path()).unwrap();
+        drop(r);
+        let _ = std::fs::remove_file(&trace);
+        let _ = std::fs::remove_file(dir.join("ets2nav-sem-test.sem.csv"));
+        let lines: Vec<&str> = text.lines().collect();
+        assert_eq!(lines.len(), 3, "表头 + 2 数据行");
+        assert_eq!(
+            lines[0],
+            "wall_ms,slot,id,kind,state,time_remaining,x,y,z,qx,qy,qz,qw"
+        );
+        let f: Vec<&str> = lines[1].split(',').collect();
+        assert_eq!(f.len(), 13, "每行列数固定");
+        assert_eq!(f[1], "0", "slot 序号");
+        assert_eq!(f[2], "42", "id");
+        assert_eq!(f[5], "12.250", "time_remaining 保留 3 位");
+        assert_eq!(f[6], "1.500", "x");
+        assert_eq!(f[8], "3.500", "z");
+        assert_eq!(f[10], "0.70711", "quat y 保留 5 位");
+        assert_eq!(lines[2].split(',').nth(1), Some("1"), "第二灯 slot 序号");
+    }
 }

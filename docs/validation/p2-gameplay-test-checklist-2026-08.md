@@ -18,6 +18,8 @@
   2. telemetry-plugin\semaphore-bridge\semaphore-bridge.dll  （信号灯读取，P2-16 runtime 数据源）
 ```
 
+**本机当前状态（2026-09-11 核对）**：三个 DLL 均已就位且与仓库构建产物 SHA-256 一致（另含 `ets2la_plugin.dll`，semaphore 数组激活依赖）。
+
 验证就绪：启动游戏后运行
 
 ```
@@ -25,16 +27,21 @@ nav-core-cli live
 ```
 
 输出持续遥测帧（非"无法连接"）即为就绪。live 模式同时录制 trace（.navtrace），
-录制文件路径在启动时打印。
+录制文件路径在启动时打印（省略路径时录到 `%TEMP%\ets2nav-live-<时间戳>.navtrace`）。
 
 ## 二、测试项清单
+
+> **命令口径修正（2026-09-11 实测核对）**：本清单早期版本称 `nav-core-cli session` 提供"实时快照"，
+> 与实现不符——`session` 的签名为 `session <trace.navtrace> <dataset-dir>`，是**离线回放**分析，
+> 且因 trace 不含信号灯字段，其 `upcoming_signal` 在回放时读到的是**当下**共享内存而非录制时状态。
+> T3/T4 的实时观察应经 P4 UI（`server` 子命令），离线复核走 trace/旁路记录，详见各测试项"采集"行。
 
 ### T1 Speed Gate 限速采集（§40-41）
 | 项 | 内容 |
 |---|---|
 | 目的 | 验证导航限速模型（speed_limit/fallback/cap）与游戏实际限速一致 |
 | 操作 | 依次驾驶：①城市道路（30-50km/h 区）②国道（70-90）③高速公路（不限速段）④德国不限速高速 |
-| 采集 | speed-validator 工具（C#，`tools/speed-validator`）+ live trace（含 speed_limit 通道） |
+| 采集 | live trace（含 speed_limit 通道） |
 | 验收 | 各路段导航限速与游戏 HUD 限速一致；未知限速（-1）路段 fallback 值合理 |
 | 产出 | 限速对照表 + 报告 `docs/validation/p3-speed-gate-2026-08.md`（或 P3 包内） |
 
@@ -51,8 +58,8 @@ nav-core-cli live
 | 项 | 内容 |
 |---|---|
 | 目的 | 验证 Signal Linker 的 runtime 关联达到 VERIFIED（位置+方向+id 匹配） |
-| 操作 | 驾驶经过 1-2 个红绿灯路口（优先选有导航路线的），在路口附近停留/通行 |
-| 采集 | live trace + semaphore 共享内存（`nav-core-cli session` 输出 upcoming_signal） |
+| 操作 | 驾驶经过 1-2 个红绿灯路口（优先选有导航路线的），在路口附近停留/通行；**在路口停车等待一整个周期**（观察倒计时推进） |
+| 采集 | **信号灯旁路记录 `live` 运行时与 trace 同目录生成的 `*.sem.csv`**（每帧每灯的 id/kind/state/time_remaining/位姿，20 Hz）；实时观察经 UI 的 signal/GLOSA 卡片 |
 | 验收 | 受控 movement 的灯组关联置信度 VERIFIED（S≥0.8 且 id 匹配），state/倒计时正确 |
 | 产出 | 信号关联验证记录（补充 p2-16 报告） |
 
@@ -61,7 +68,7 @@ nav-core-cli live
 |---|---|
 | 目的 | 完整导航会话在真实游戏输入下的端到端闭环（P2-17 目前为合成帧验证） |
 | 操作 | ①设置目的地（POI/坐标）②沿导航驾驶 3-5 分钟 ③故意偏航一次 ④观察重规划 ⑤到达 |
-| 采集 | live trace + `nav-core-cli session` 实时快照（状态机/进度/maneuver/信号） |
+| 采集 | live trace（离线用 `session <trace> <dataset-dir>` 复核状态机全程）+ UI 实时观察状态 chip |
 | 验收 | 状态机全程合理：Navigating 为主、偏航后 Suspected→Rerouting→Navigating（≈1s）、到达 Arrived；无 Error |
 | 产出 | G15 验证报告（关闭 P2 最大遗留） |
 
@@ -79,18 +86,19 @@ nav-core-cli live
 |---|---|
 | 目的 | 用真实 quat 航向 trace 校准匹配权重/阈值（当前为默认值） |
 | 操作 | 任意 10 分钟城市+高速驾驶（T1/T4 的 trace 可复用） |
-| 采集 | trace 回放 `nav-core-cli match`——统计 HIGH/MEDIUM 占比与 lateral 分布 |
-| 验收 | HIGH+MEDIUM ≥90%（当前 2Hz 占位 quat 口径 86.3%） |
+| 采集 | trace 回放 `nav-core-cli match <trace> <dataset-dir>`——统计 HIGH/MEDIUM 占比与 lateral 分布 |
+| 验收 | HIGH+MEDIUM ≥90%（当前合成 trace 修复后 HIGH 97.3%） |
 | 产出 | 权重冻结建议（供 P3 前校准） |
 
 ## 三、操作流程（单次驾驶可覆盖多项）
 
 1. 安装插件（见第一节），启动游戏
-2. `nav-core-cli live` 开始录制（或自动录制）
-3. 路线建议：**城市出发（T1 城市段 + T3 路口）→ 高速（T1 高速段 + T5 FPS）→
+2. `nav-core-cli server <dataset-dir>` 启动 UI（浏览器打开 `http://127.0.0.1:8123`）
+3. 另开终端 `nav-core-cli live` 开始录制（路径在启动时打印；同时生成 `*.sem.csv` 信号旁路记录）
+4. 路线建议：**城市出发（T1 城市段 + T3 路口）→ 高速（T1 高速段 + T5 FPS）→
    英国（T2 环岛）→ 回程偏航一次（T4）**——单趟覆盖 T1-T5
-4. 停止录制，交付 trace 文件路径（默认 Temp 目录，可指定）
-5. 分析侧执行：match / session / speed 校验，产出各测试报告
+5. 停止录制（Ctrl+C 即可，逐帧落盘不会丢数据），交付 trace 与 `*.sem.csv` 路径
+6. 分析侧执行：match / session / speed 校验，产出各测试报告
 
 ## 四、验收汇总表（完成后更新）
 
