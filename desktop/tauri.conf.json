@@ -4,7 +4,7 @@
   "version": "0.1.0",
   "identifier": "dev.ets2nav.desktop",
   "build": {
-    "frontendDist": "../tools/ets2nav-web"
+    "frontendDist": "../tools/ets2nav-web/dist"
   },
   "app": {
     "windows": [

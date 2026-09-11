@@ -3,8 +3,8 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 
 use crate::server::{
-    http_reply, read_http_head, snapshot_json, ws_accept_key, ws_recv_frame, ws_send_frame,
-    ServerShared,
+    http_reply, http_reply_static, parse_range, read_http_head, snapshot_json, ws_accept_key,
+    ws_recv_frame, ws_send_frame, ServerShared,
 };
 use nav_router::maneuver::TurnLookup;
 
@@ -487,7 +487,15 @@ fn handle_conn(
         }
     }
     match std::fs::read(&full) {
-        Ok(body) => http_reply(stream, "200 OK", content_type(rel), &body),
+        Ok(body) => {
+            // P4R-02：PMTiles 客户端依赖 Byte Serving（Range/206）读取档案头与目录。
+            let range = headers
+                .iter()
+                .find(|(k, _)| k == "range")
+                .and_then(|(_, v)| parse_range(v, body.len() as u64));
+            let head_only = req_line.starts_with("HEAD ");
+            http_reply_static(stream, content_type(rel), &body, range, head_only)
+        }
         Err(_) => http_reply(stream, "404 Not Found", "text/plain", b"not found"),
     }
 }

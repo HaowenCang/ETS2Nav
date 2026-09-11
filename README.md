@@ -42,6 +42,20 @@ cd nav-core && cargo fmt --check && cargo clippy --all-targets && cargo test
 dotnet test map-compiler/MapCompiler.sln
 ```
 
+### Web UI（正式前端）
+
+`tools/ets2nav-web/` 的静态产物不入库，须由锁定版本的依赖构建；clean clone 同样按以下步骤恢复，无需人工复制任何文件：
+
+```bat
+cd tools\ets2nav-web
+npm ci                 :: 依 package-lock.json 恢复确定版本依赖（maplibre-gl / pmtiles / qrcode）
+npm run build          :: 生成 dist\（vendor 库 + 页面 + build-manifest.json）
+```
+
+产物为 `tools/ets2nav-web/dist/`，即 nav-server 的默认 web root（可用 `--web=` 覆盖）与 Desktop 的 `frontendDist`。
+`map.pmtiles` 与 `fonts/` 属运行期可选资源：缺失时前端进入无底图模式（或跳过 city 文字层），并在 console 输出 INFO/WARN，不静默失败。
+依赖版本、来源与产物 SHA-256 记录于 `dist/build-manifest.json`。
+
 结果记录（2026-09-11，**验证时点** `bdbd7ea`；该 hash 说明验证在哪个代码代上执行，非当前 head）：四套件全部 ALL PASS（`BAT_EXIT=0` 复核）——`run-p1` 6 步、`run-p2` 7 步、`run-p3` 4 步、`run-p5` 4 步逐步 PASS；cargo fmt PASS / clippy **0 告警** / **104 测试通过**；dotnet **80 测试通过**（8 项目）。逐项实跑输出、GitHub 发布复核与本次修复的三项采集链缺陷见 `docs/validation/p4-p6-hardening-2026-08.md` §9/§9.1/§9.2。
 
 ## 目录结构（P0 精简版，完整版见 v0.2 §72）

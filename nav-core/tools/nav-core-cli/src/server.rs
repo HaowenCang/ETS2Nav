@@ -259,6 +259,82 @@ pub(crate) fn http_reply(
     w.flush()
 }
 
+/// 解析单区间 `Range` 头：`bytes=start-end` / `bytes=start-` / `bytes=-suffix`。
+///
+/// 多区间、语法非法、区间起点越界等情形一律返回 `None`，由调用方按「无 Range」
+/// 处理（RFC 9110 允许服务器忽略 Range）。返回值为闭区间 `(start, end)`。
+pub(crate) fn parse_range(value: &str, total: u64) -> Option<(u64, u64)> {
+    let spec = value.trim().strip_prefix("bytes=")?;
+    if spec.contains(',') {
+        return None; // 多区间不支持
+    }
+    let (a, b) = spec.trim().split_once('-')?;
+    let (a, b) = (a.trim(), b.trim());
+    if a.is_empty() {
+        // 后缀区间：最后 N 字节
+        let n: u64 = b.parse().ok()?;
+        if n == 0 || total == 0 {
+            return None;
+        }
+        return Some((total.saturating_sub(n), total - 1));
+    }
+    let start: u64 = a.parse().ok()?;
+    let end: u64 = if b.is_empty() {
+        total.saturating_sub(1)
+    } else {
+        b.parse().ok()?
+    };
+    if start > end || start >= total {
+        return None;
+    }
+    Some((start, end))
+}
+
+/// 静态文件响应（P4R-02）：PMTiles 客户端依赖 HTTP Byte Serving 读取档案头与目录，
+/// 因此静态路径必须支持 Range → 206 Partial Content 并声明 Accept-Ranges。
+/// 无 Range 时返回 200 全量；HEAD 返回与 GET 一致的头部但不带 body。
+pub(crate) fn http_reply_static(
+    w: &mut dyn Write,
+    content_type: &str,
+    body: &[u8],
+    range: Option<(u64, u64)>,
+    head_only: bool,
+) -> std::io::Result<()> {
+    let total = body.len() as u64;
+    let (status, len, slice, extra) = match range {
+        Some((s, e)) if s < total => {
+            let e = e.min(total - 1);
+            let slice: Option<(usize, usize)> = Some((s as usize, e as usize));
+            (
+                "206 Partial Content",
+                e - s + 1,
+                slice,
+                format!("Content-Range: bytes {s}-{e}/{total}\r\n"),
+            )
+        }
+        // 起点越界：416 并给出当前表示长度（RFC 9110 §15.5.17）
+        Some((_, _)) => (
+            "416 Range Not Satisfiable",
+            0,
+            None,
+            format!("Content-Range: bytes */{total}\r\n"),
+        ),
+        None => ("200 OK", total, None, String::new()),
+    };
+    let head = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {len}\r\nAccept-Ranges: bytes\r\n{extra}Connection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n"
+    );
+    w.write_all(head.as_bytes())?;
+    if !head_only {
+        match slice {
+            Some((s, e)) => w.write_all(&body[s..=e])?,
+            None if status.starts_with("200") => w.write_all(body)?,
+            None => {}
+        }
+    }
+    w.flush()
+}
+
 /// 解析请求行与 headers（body 长度由 Content-Length 给出）。
 /// 返回 (请求行, headers, content-length, 已读入的 body 剩余字节)——head 与 body
 /// 同包到达时 body 不得丢失（否则 read_exact 阻塞至超时）。
@@ -349,5 +425,74 @@ mod tests {
                 .map(|(_, v)| v.as_str()),
             Some("43")
         );
+    }
+
+    // ── P4R-02：静态文件 Byte Serving（PMTiles 接入前提）────────────────────
+
+    #[test]
+    fn parse_range_forms() {
+        assert_eq!(parse_range("bytes=0-99", 1000), Some((0, 99)));
+        assert_eq!(parse_range("bytes=100-", 1000), Some((100, 999)));
+        assert_eq!(parse_range("bytes=-200", 1000), Some((800, 999)));
+        // 端点超出表示长度：由 http_reply_static 截断，解析层保留原值
+        assert_eq!(parse_range("bytes=0-99999", 1000), Some((0, 99999)));
+        // 非法/不支持：按无 Range 处理
+        assert_eq!(parse_range("bytes=0-10,20-30", 1000), None);
+        assert_eq!(parse_range("items=0-10", 1000), None);
+        assert_eq!(parse_range("bytes=500-100", 1000), None);
+        assert_eq!(parse_range("bytes=1000-", 1000), None);
+        assert_eq!(parse_range("bytes=abc-def", 1000), None);
+    }
+
+    #[test]
+    fn http_reply_static_range_semantics() {
+        let body: Vec<u8> = (0u8..=255).collect();
+
+        let mut out = Vec::new();
+        http_reply_static(
+            &mut out,
+            "application/octet-stream",
+            &body,
+            Some((10, 19)),
+            false,
+        )
+        .unwrap();
+        let text = String::from_utf8_lossy(&out).to_string();
+        assert!(text.starts_with("HTTP/1.1 206 Partial Content\r\n"));
+        assert!(text.contains("Content-Range: bytes 10-19/256\r\n"));
+        assert!(text.contains("Content-Length: 10\r\n"));
+        assert!(text.contains("Accept-Ranges: bytes\r\n"));
+        // 206 只回请求区间，不得回全量（比较尾部字节；不可按 \n 切分——payload 含 0x0A）
+        assert_eq!(
+            &out[out.len() - 10..],
+            &body[10..=19],
+            "206 必须只回请求区间，不得回全量"
+        );
+        assert!(out.len() < body.len(), "206 响应不得包含全量表示");
+
+        // 无 Range：200 全量
+        let mut out = Vec::new();
+        http_reply_static(&mut out, "text/plain", b"abc", None, false).unwrap();
+        let text = String::from_utf8_lossy(&out).to_string();
+        assert!(text.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(text.contains("Content-Length: 3\r\n"));
+
+        // HEAD：与 GET 相同头部但不带 body
+        let mut out = Vec::new();
+        http_reply_static(&mut out, "text/plain", b"abc", None, true).unwrap();
+        let text = String::from_utf8_lossy(&out).to_string();
+        assert!(text.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(text.contains("Content-Length: 3\r\n"));
+        assert!(
+            out.ends_with(b"\r\n\r\n"),
+            "HEAD 响应必须在头部结束后终止，不得写 body"
+        );
+
+        // 起点越界：416
+        let mut out = Vec::new();
+        http_reply_static(&mut out, "text/plain", &body, Some((999, 1000)), false).unwrap();
+        let text = String::from_utf8_lossy(&out).to_string();
+        assert!(text.starts_with("HTTP/1.1 416 Range Not Satisfiable\r\n"));
+        assert!(text.contains("Content-Range: bytes */256\r\n"));
     }
 }

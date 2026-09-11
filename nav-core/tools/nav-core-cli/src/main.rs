@@ -1438,7 +1438,7 @@ fn server_cli_run(
         .unwrap_or(8123);
     let web_root = web
         .and_then(|w| w.strip_prefix("--web=").map(|v| v.to_string()))
-        .unwrap_or_else(|| "../tools/ets2nav-web".to_string());
+        .unwrap_or_else(|| "../tools/ets2nav-web/dist".to_string());
     let trace = replay.and_then(|r| r.strip_prefix("--replay=").map(|v| v.to_string()));
     server_cli::server_cli(dataset_dir, trace.as_deref(), port, &web_root, fake_signal);
 }

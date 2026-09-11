@@ -13,29 +13,107 @@ const map = new maplibregl.Map({
     layers: [
       { id: "bg", type: "background", paint: { "background-color": "#10141a" } },
     ],
-    glyphs: "https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf",
+    // 离线约束（P4R-01）：glyphs 只能指向同源本地路径，不得指向运行时公共 CDN。
+    // 本地字体缺失时仅跳过 city 文字层，分级处理见 loadTiles。
+    glyphs: "vendor/fonts/{fontstack}/{range}.pbf",
   },
   center: toLngLat([-58400, 33000]),
   zoom: 10,
 });
 
-// 瓦片层（map.pmtiles 存在时；A2c-M5 修复：addSource 必须在 style load 后——
-// 原实现 IIFE 内 await HEAD 后立即 addSource，style 未加载时抛错被 catch 吞掉，瓦片层静默缺失）
+// ─── 诊断输出（P4R §2.2：禁止静默吞错，失败必须可观测）───────────────────────
+const logInfo = (msg, detail) => console.info(`[ets2nav] ${msg}`, detail ?? "");
+const logWarn = (msg, detail) => console.warn(`[ets2nav] ${msg}`, detail ?? "");
+const logError = (msg, detail) => console.error(`[ets2nav] ${msg}`, detail ?? "");
+
+async function headOk(url) {
+  const r = await fetch(url, { method: "HEAD" });
+  return r.ok;
+}
+
+const TILE_FONT_STACK = "Open Sans Regular";
+
+// 瓦片层（P4R-02）：标准 PMTiles protocol 流程——
+//   new pmtiles.Protocol() → maplibregl.addProtocol("pmtiles", protocol.tile)
+//   → vector source 使用 pmtiles:// URL。
+// MapLibre GL JS 4.7.1 没有内置 "pmtiles" source 类型（原实现直接写
+// `{type:"pmtiles"}`，必然抛错后被 catch 吞掉，瓦片层在任何情况下都不会出现）。
+// addSource 仍须在 style load 之后（A2c-M5）。
+//
+// 错误分级（两类情况不得混同）：
+//   情况 A  map.pmtiles 不存在      → INFO，降级为无底图模式，route/vehicle 照常
+//   情况 B  资源存在但接入/解析失败  → ERROR，显式报告，不得静默 fallback
 async function loadTiles() {
+  // ── 情况 A：资源不存在，允许降级
+  let hasTiles;
   try {
-    const r = await fetch("map.pmtiles", { method: "HEAD" });
-    if (!r.ok) return;
-    map.addSource("tiles", { type: "pmtiles", url: "map.pmtiles" });
-    map.addLayer({ id: "tile-road", type: "line", source: "tiles", "source-layer": "road",
-      paint: { "line-color": "#3b82f6", "line-width": 1.2, "line-opacity": 0.75 } });
-    map.addLayer({ id: "tile-junction", type: "circle", source: "tiles", "source-layer": "junction",
-      paint: { "circle-color": "#f59e0b", "circle-radius": 2 } });
+    hasTiles = await headOk("map.pmtiles");
+  } catch (e) {
+    logWarn("map.pmtiles 探测请求失败——进入无底图模式", e);
+    return;
+  }
+  if (!hasTiles) {
+    logInfo("未提供 map.pmtiles——无底图模式（route/vehicle 正常渲染）");
+    return;
+  }
+
+  // ── 资源存在：此后任何失败都属于情况 B，必须报告
+  if (typeof pmtiles === "undefined" || typeof pmtiles.Protocol !== "function") {
+    logError("pmtiles 库未加载：vendor/pmtiles.js 缺失或前端未构建（npm run build）");
+    return;
+  }
+  let protocol;
+  try {
+    protocol = new pmtiles.Protocol();
+    maplibregl.addProtocol("pmtiles", protocol.tile);
+  } catch (e) {
+    logError("PMTiles protocol 注册失败", e);
+    return;
+  }
+
+  try {
+    map.addSource("tiles", { type: "vector", url: "pmtiles://map.pmtiles" });
+  } catch (e) {
+    logError("PMTiles vector source 创建失败", e);
+    return;
+  }
+
+  const geometryLayers = [
+    { id: "tile-road", type: "line", source: "tiles", "source-layer": "road",
+      paint: { "line-color": "#3b82f6", "line-width": 1.2, "line-opacity": 0.75 } },
+    { id: "tile-junction", type: "circle", source: "tiles", "source-layer": "junction",
+      paint: { "circle-color": "#f59e0b", "circle-radius": 2 } },
+    { id: "tile-poi", type: "circle", source: "tiles", "source-layer": "poi",
+      paint: { "circle-color": "#10b981", "circle-radius": 2.5 } },
+  ];
+  for (const layer of geometryLayers) {
+    try {
+      map.addLayer(layer);
+    } catch (e) {
+      logError(`矢量图层添加失败: ${layer.id}`, e);
+    }
+  }
+
+  // city 文字层依赖 glyphs。本地字体缺失属「资源不存在」，可降级（跳过该层），
+  // 与 PMTiles 接入错误不同级，因此只 WARN 不 ERROR。
+  const glyphProbe = `vendor/fonts/${encodeURIComponent(TILE_FONT_STACK)}/0-255.pbf`;
+  let hasGlyphs = false;
+  try {
+    hasGlyphs = await headOk(glyphProbe);
+  } catch (e) {
+    logWarn("本地 glyphs 探测请求失败", e);
+  }
+  if (!hasGlyphs) {
+    logWarn(`本地字体缺失（${glyphProbe}）——跳过 city 文字层，几何图层照常`);
+    return;
+  }
+  try {
     map.addLayer({ id: "tile-city", type: "symbol", source: "tiles", "source-layer": "city",
-      layout: { "text-field": ["get", "name"], "text-size": 11, "text-font": ["Open Sans Regular"] },
+      layout: { "text-field": ["get", "name"], "text-size": 11, "text-font": [TILE_FONT_STACK] },
       paint: { "text-color": "#fff" } });
-    map.addLayer({ id: "tile-poi", type: "circle", source: "tiles", "source-layer": "poi",
-      paint: { "circle-color": "#10b981", "circle-radius": 2.5 } });
-  } catch (e) { /* 无瓦片时纯路线渲染 */ }
+  } catch (e) {
+    logError("city 文字图层添加失败", e);
+  }
 }
 
 // 图层与数据源（style 加载完成后初始化）
@@ -203,11 +281,15 @@ function connect() {
       const httpBase = url.replace(/^ws:\/\//, "http://").replace(/\/ws$/, "");
       const displayUrl = "http://" + location.hostname + ":" + new URL(httpBase).port + "/";
       $("qr-url").textContent = displayUrl;
-      const qr = $("qr");
-      qr.innerHTML = "";
-      new QRCode(qr, { text: displayUrl, width: 140, height: 140 });
-      $("qr-box").classList.remove("hidden");
-    } catch (e) { /* 非浏览器环境跳过 */ }
+      // qrcode@1.5.4（官方维护，MIT）：API 为 toCanvas(canvas, text, options, cb)，
+      // 取代此前未版本化 vendor 的 new QRCode(el, {...})。
+      QRCode.toCanvas($("qr"), displayUrl, { width: 140, margin: 1 }, (err) => {
+        if (err) { logError("二维码生成失败", err); return; }
+        $("qr-box").classList.remove("hidden");
+      });
+    } catch (e) {
+      logError("二维码地址构造失败", e);
+    }
   };
   ws.onmessage = (ev) => {
     try { dispatchMessage(ev.data); } catch (e) { console.error("[ets2nav] 帧处理异常:", e); }
