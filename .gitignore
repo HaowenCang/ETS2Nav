@@ -6,6 +6,14 @@ node_modules/
 dist/
 build/
 
+# Playwright（P4R Batch 2）：测试产物与失败快照不入库。
+# dist/ 已在上方忽略——前端构建输出（vendor bundle + 可选 map.pmtiles）由
+# `npm run build` 现场生成，不入库。
+test-results/
+playwright-report/
+blob-report/
+.playwright/
+
 # 提取的游戏资源（大文件不入库）
 vendor/
 *.scs

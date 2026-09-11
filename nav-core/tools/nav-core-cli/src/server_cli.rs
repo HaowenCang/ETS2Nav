@@ -261,9 +261,13 @@ pub fn server_cli(
     let thread_shared = shared.clone();
     let thread_trace = trace_path.map(|p| p.to_string());
     let turns_src = turns.clone();
-    let thread_fake = fake_signal;
     std::thread::spawn(move || {
-        let cfg = nav_router::session::SessionConfig::default();
+        // A2a-M4 / P4R Batch 2：`--fake-signal` 由 session 层注入合成灯态剧本，
+        // 使 reminders 与结构化 glosa 都经真实 §36/§37/§38 计算，而非事后改写 JSON。
+        let cfg = nav_router::session::SessionConfig {
+            fake_signal,
+            ..nav_router::session::SessionConfig::default()
+        };
         // 消费 UI 目的地请求（§60：POST /api/route → 导航启动）——回放/实时共用（A2c-M4）
         let consume_dest = |session: &mut nav_router::session::NavigationSession| {
             let pending = *thread_shared.pending_dest.lock().unwrap();
@@ -325,7 +329,7 @@ pub fn server_cli(
             // A2c-M3：每轮重建 session（Arrived 分支为 no-op——不重置则首轮到达后永久卡死）。
             loop {
                 let mut last_sim: Option<u64> = None;
-                for (frame_count, f) in frames.iter().enumerate() {
+                for f in frames.iter() {
                     consume_dest(&mut session);
                     if let Some(ls) = last_sim {
                         let dt = f.snap.simulation_time.saturating_sub(ls);
@@ -335,20 +339,7 @@ pub fn server_cli(
                     }
                     last_sim = Some(f.snap.simulation_time);
                     let snap = session.on_frame(&f.snap);
-                    let mut json = snapshot_json(&snap);
-                    // A2a-M4：--fake-signal 测试钩子——注入合成信号/限速（UI 卡片验证用）
-                    if thread_fake {
-                        if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&json) {
-                            let phase = (frame_count / 30).is_multiple_of(2);
-                            v["upcoming_signal"] = serde_json::json!({
-                                "state": if phase { "Red" } else { "Green" },
-                                "remaining_s": 8.0,
-                                "confidence": "Verified",
-                            });
-                            v["map_limit_kmh"] = serde_json::json!(50);
-                            json = v.to_string();
-                        }
-                    }
+                    let json = snapshot_json(&snap);
                     *thread_shared.latest_json.lock().unwrap() = json.clone();
                     thread_shared.broadcast(&json);
                 }

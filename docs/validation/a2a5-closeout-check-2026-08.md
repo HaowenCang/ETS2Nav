@@ -24,7 +24,7 @@
 
 | 项 | 内容 | 提交 |
 |---|---|---|
-| A2 | P4 UI：nav-server（HTTP+WS 零依赖）、web 正式 UI（MapLibre）、Desktop（Tauri 2）、syntrace、verify-ui-chain.py | 31474f6 / d144e5f |
+| A2 | P4 UI：nav-server（HTTP+WS 零依赖）、web 正式 UI（MapLibre）、Desktop（Tauri 2）、syntrace、verify-server-protocol.py | 31474f6 / d144e5f |
 | A3 | P5 OD corpus：od-baseline（36 对）/ od-regress / od-check（2000 随机对）/ od-diag + run-p5-tests.bat | 903cb58 |
 | A4 | P6 性能评估（ALT/CH 登记"目标已达成不做"）+ 增量指纹 `map-inspector --check-fingerprint` | 0edcb2b |
 | A5 | B7 实验工具：SignalLab R/P 键扩展（RST/PROF 标记）+ SignalLabAnalyze（TL-03 warp / TL-04 reset 检测） | 2e92508 + 文档 cb1434f |
@@ -61,7 +61,7 @@
 
 | # | 契约项 | 状态 | 证据 |
 |---|---|---|---|
-| 1 | A2 交付物存在且可验证 | ✅ 已核对 | `tools/ets2nav-web/`（app.js/index.html/style.css/vendor/manifest.json/map.pmtiles/verify-ui-chain.py）；`desktop/`（tauri.conf.json 等）；`docs/validation/p4-ui-2026-08.md` |
+| 1 | A2 交付物存在且可验证 | ✅ 已核对 | `tools/ets2nav-web/`（app.js/index.html/style.css/vendor/manifest.json/map.pmtiles/verify-server-protocol.py）；`desktop/`（tauri.conf.json 等）；`docs/validation/p4-ui-2026-08.md` |
 | 2 | A3 交付物存在且可验证 | ✅ 已核对 | `nav-core/tools/od-corpus/`；`run-p5-tests.bat`；`docs/validation/p5-od-corpus-2026-08.md` |
 | 3 | A4 交付物存在 | ✅ 已核对 | `docs/validation/p6-performance-eval-2026-08.md`；fingerprint 实现于 `tools/map-inspector/MapInspector/Program.cs`（check-fingerprint/content_fingerprint） |
 | 4 | A5 交付物存在 | ✅ 已核对 | `tools/signal-lab/`（SignalLab/SignalLabAnalyze/tests-fixture）；`docs/validation/a5-b7-tools-2026-08.md` |

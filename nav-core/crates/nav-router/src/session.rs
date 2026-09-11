@@ -60,6 +60,11 @@ pub struct NavigationSnapshot {
     pub progress: Option<f64>,
     pub next_maneuver: Option<Maneuver>,
     pub upcoming_signal: Option<UpcomingSignal>,
+    /// §38 GLOSA 结构化建议（P4R Batch 2）。与 reminders 中的 Glosa 事件同源同帧，
+    /// 但**不受 ReminderGate 播报间隔门限**：门限是 §48 防 TTS 轰炸的语音约束，
+    /// 而 UI 卡片需要连续显示当前建议区间（旧实现把结构化值只塞进 reminders，
+    /// 导致建议被 30s 播报间隔吞掉、UI 无从取值）。
+    pub glosa: Option<crate::reminder::GlosaAdvice>,
     /// P3 提醒事件流（§39/§41/§36/§37/§38 决策接入；每帧当前触发状态）。
     pub reminders: Vec<crate::speak::ReminderEvent>,
     /// P4 UI（§56 速度/限速卡片）：本帧车辆速度与地图限速（km/h；-1=未知）。
@@ -79,6 +84,9 @@ pub struct SessionConfig {
     pub arrive_margin_m: f64,
     /// 暂停判定：连续低速度帧数（§118 Paused）。
     pub pause_frames: u32,
+    /// 开发/测试钩子（`--fake-signal`）：以确定性剧本替代真实灯态关联。
+    /// false（默认）= 生产行为，只使用 SignalLinker 的 runtime 关联结果。
+    pub fake_signal: bool,
 }
 
 impl Default for SessionConfig {
@@ -89,7 +97,85 @@ impl Default for SessionConfig {
             reroute: RerouteConfig::default(),
             arrive_margin_m: 30.0,
             pause_frames: 600, // ~30s @ 20Hz
+            fake_signal: false,
         }
+    }
+}
+
+/// `--fake-signal` 剧本中每个灯态阶段持续的帧数（回放约 20 Hz ⇒ 约 2 s）。
+pub const FAKE_SIGNAL_FRAMES_PER_PHASE: u64 = 40;
+
+/// 合成信号阶段（`--fake-signal` 开发/测试钩子）。
+#[derive(Debug, Clone, Copy)]
+pub struct FakeSignalPhase {
+    /// 灯态；None = 本阶段无信号（用于验证 UI 的信号/GLOSA 清理路径）。
+    pub state: Option<crate::signal::LightState>,
+    /// 剩余时间（s）：红灯为到绿灯开始，绿灯为绿灯剩余。
+    pub remaining_s: f64,
+    /// 车辆到停止线的距离（m）——替代 tracker 距离，使 GLOSA 有确定输入。
+    pub distance_m: f32,
+    /// 地图限速（km/h；-1 = 未知）。
+    pub limit_kmh: i16,
+}
+
+/// `--fake-signal` 确定性剧本（按帧号索引，回放模式下帧号可复现）。
+///
+/// 设计目的：离线回放没有实机灯态（`read_semaphores()` 在游戏未运行时返回 None），
+/// 因此 §36/§37/§38 全部不可达，UI 的信号与 GLOSA 卡片无法验证。剧本注入点在
+/// **session 内部**，故 reminders（TTS 语义）与结构化 `glosa` 都由真实的
+/// `glosa_advice` 算出，而不是事后改写 JSON——注入的只是"灯态与距离"这一层输入。
+///
+/// 各阶段必须对应**会话真正可达**的输出，而不是 `glosa_advice` 纯函数的能力上界：
+/// 会话中 §38 的调用嵌套在 `state == Red` 分支内（P3 遗留「绿灯窗口未接入」），
+/// 因此绿灯阶段不产生 GLOSA。阶段 4 正是用来固定这一已知缺口的。
+///
+/// 六个阶段依次为：红灯区间、红灯无限速宽区间、黄灯不可行、无信号、绿灯（已知缺口）、
+/// 红灯窄区间（限速 cap 生效）。数值经 `glosa_advice` 反算确定，见 session 单测。
+pub fn fake_signal_phase(frame: u64) -> FakeSignalPhase {
+    use crate::signal::LightState::*;
+    match (frame / FAKE_SIGNAL_FRAMES_PER_PHASE) % 6 {
+        // 红灯 12 s / 120 m / 限速 50 → 区间
+        0 => FakeSignalPhase {
+            state: Some(Red),
+            remaining_s: 12.0,
+            distance_m: 120.0,
+            limit_kmh: 50,
+        },
+        // 红灯 5.6 s / 100 m / 限速未知 → 宽区间
+        1 => FakeSignalPhase {
+            state: Some(Red),
+            remaining_s: 5.6,
+            distance_m: 100.0,
+            limit_kmh: -1,
+        },
+        // 黄灯 → 信号在、GLOSA 不可行
+        2 => FakeSignalPhase {
+            state: Some(Yellow),
+            remaining_s: 6.0,
+            distance_m: 120.0,
+            limit_kmh: 50,
+        },
+        // 无信号 → 清理路径
+        3 => FakeSignalPhase {
+            state: None,
+            remaining_s: 0.0,
+            distance_m: 0.0,
+            limit_kmh: 50,
+        },
+        // 绿灯 → 已知缺口：§38 当前仅红灯接入，绿灯窗口不产生 GLOSA
+        4 => FakeSignalPhase {
+            state: Some(Green),
+            remaining_s: 8.0,
+            distance_m: 100.0,
+            limit_kmh: 50,
+        },
+        // 红灯 18 s / 60 m / 限速 30 → 窄区间（上限由限速 cap 决定）
+        _ => FakeSignalPhase {
+            state: Some(Red),
+            remaining_s: 18.0,
+            distance_m: 60.0,
+            limit_kmh: 30,
+        },
     }
 }
 
@@ -286,7 +372,34 @@ impl NavigationSession {
         let remaining_m = self.tracker.as_ref().map(|t| t.edge_remaining(&self.graph));
         let remaining_s = self.tracker.as_ref().map(|t| t.time_remaining(&self.graph));
         let next_maneuver = self.next_maneuver();
-        let upcoming_signal = self.next_signal();
+        // 信号输入：真实关联结果，或 `--fake-signal` 的确定性剧本。
+        // 剧本提供距离（tracker 距离对合成信号无意义——其 route_edge_index 不指向真实路线边），
+        // 其余（§36/§37/§38 判定、reminders、结构化 glosa）全部走真实计算路径。
+        let (upcoming_signal, signal_distance_m, fake_limit) = if self.cfg.fake_signal {
+            let ph = fake_signal_phase(self.frames);
+            let up = ph.state.map(|st| crate::signal::UpcomingSignal {
+                route_edge_index: 0,
+                movement_edge_id: u32::MAX,
+                junction_uid: 0,
+                semaphore_group: 0,
+                runtime: None,
+                state: Some(st),
+                remaining_time: Some(ph.remaining_s),
+                confidence: crate::signal::SignalConfidence::Verified,
+            });
+            (up, ph.distance_m, Some(ph.limit_kmh))
+        } else {
+            let up = self.next_signal();
+            let d = up
+                .as_ref()
+                .and_then(|u| {
+                    self.tracker
+                        .as_ref()
+                        .and_then(|t| t.distance_to_edge(&self.graph, u.route_edge_index))
+                })
+                .unwrap_or(f64::INFINITY) as f32;
+            (up, d, None)
+        };
         // —— P3 提醒事件流（§37/§40/§41/§36/§38 决策接入；§39 对照进 diagnostics）——
         // 审计修复（687ab14 复审轮）：①now_s 单位 µs→s（§48 防轰炸）；②GLOSA cap 用当前
         // 匹配边限速（原以节点 id 索引边数组——越界 panic/错误 cap）；③§40 断点偏移减
@@ -294,6 +407,9 @@ impl NavigationSession {
         // distance_to_edge（原双重计数）；⑤§37 green_imminent 接入。
         let mut reminders: Vec<crate::speak::ReminderEvent> = Vec::new();
         let mut matched_limit: i16 = -1;
+        // §38 GLOSA 结构化输出（UI-facing projection；与 reminders 同一计算结果，
+        // 单次计算两个消费者，不构成第二套算法）
+        let mut glosa_out: Option<crate::reminder::GlosaAdvice> = None;
         if self.state == SessionState::Navigating {
             let now_s = snap.simulation_time as f64 / 1e6; // µs → s
             let speak_cfg = crate::speak::SpeakConfig::default();
@@ -343,11 +459,9 @@ impl NavigationSession {
             // §36/§37/§38 信号提醒（upcoming_signal 已关联时；审计 B3 修正距离）
             if let Some(up) = &upcoming_signal {
                 if let (Some(state), Some(rem)) = (up.state, up.remaining_time) {
-                    let d = self
-                        .tracker
-                        .as_ref()
-                        .and_then(|t| t.distance_to_edge(&self.graph, up.route_edge_index))
-                        .unwrap_or(f64::INFINITY) as f32;
+                    let d = signal_distance_m;
+                    // 合成剧本自带限速（-1 = 未知下限速 cap 不生效）
+                    let limit_for_glosa = fake_limit.unwrap_or(matched_limit);
                     if state == crate::signal::LightState::Red
                         && up.confidence == crate::signal::SignalConfidence::Verified
                     {
@@ -379,14 +493,19 @@ impl NavigationSession {
                             up.confidence,
                             rem,
                             snap.speed,
-                            matched_limit,
+                            limit_for_glosa,
                             &cfg38,
                         );
-                        if adv.feasible && self.reminder_gate.allow("glosa", now_s, &speak_cfg) {
-                            reminders.push(crate::speak::ReminderEvent::Glosa {
-                                v_min_kmh: adv.v_min_kmh,
-                                v_max_kmh: adv.v_max_kmh,
-                            });
+                        // 结构化建议先落地（UI 投影不受播报间隔门限约束）；
+                        // reminders 中的语音事件仍按 §48 门限节流。两者同源同帧。
+                        if adv.feasible {
+                            glosa_out = Some(adv);
+                            if self.reminder_gate.allow("glosa", now_s, &speak_cfg) {
+                                reminders.push(crate::speak::ReminderEvent::Glosa {
+                                    v_min_kmh: adv.v_min_kmh,
+                                    v_max_kmh: adv.v_max_kmh,
+                                });
+                            }
                         }
                     }
                 }
@@ -403,9 +522,10 @@ impl NavigationSession {
             progress,
             next_maneuver,
             upcoming_signal,
+            glosa: glosa_out,
             reminders,
             speed_kmh: snap.speed * 3.6,
-            map_limit_kmh: matched_limit,
+            map_limit_kmh: fake_limit.unwrap_or(matched_limit),
             destination: self.destination.as_ref().map(|d| d.name.clone()),
             diagnostics: diag,
         }
@@ -648,6 +768,83 @@ mod tests {
             SessionState::Navigating,
             "重规划后回到 Navigating"
         );
+    }
+
+    #[test]
+    fn fake_signal_script_matches_documented_glosa_values() {
+        // P4R Batch 2：Playwright E2E-06/E2E-07 直接断言该剧本产生的 UI 文本，
+        // 因此剧本到 GLOSA 区间的映射必须在此锁定——脚本被改动而 E2E 未同步时，
+        // 这里先失败，而不是让浏览器测试给出难以定位的失败。
+        //
+        // 关键：断言的是**会话可达**的输出。会话中 §38 的调用嵌套在 `state == Red`
+        // 分支内（P3 遗留「绿灯窗口未接入」），所以绿灯阶段即便 glosa_advice 本身
+        // 能算出区间，也不会进入 snapshot。此处用 glosa_reachable() 复刻该门槛，
+        // 避免出现「纯函数能算 ≠ UI 能显示」的假信心（这正是本批要防的错误）。
+        let cfg = crate::reminder::GlosaConfig::default();
+        let v_now = 13.89f32;
+        let glosa_reachable = |ph: FakeSignalPhase| -> Option<(i16, i16)> {
+            let st = ph.state?;
+            // 会话门槛 1：只有红灯进入 §38 分支
+            if st != crate::signal::LightState::Red {
+                return None;
+            }
+            let a = crate::reminder::glosa_advice(
+                ph.distance_m,
+                st,
+                crate::signal::SignalConfidence::Verified,
+                ph.remaining_s,
+                v_now,
+                ph.limit_kmh,
+                &cfg,
+            );
+            a.feasible.then_some((a.v_min_kmh, a.v_max_kmh))
+        };
+        let at = |n: u64| fake_signal_phase(n * FAKE_SIGNAL_FRAMES_PER_PHASE);
+
+        // 阶段 0：红灯 12 s / 120 m / 限速 50 → 区间
+        assert_eq!(glosa_reachable(at(0)), Some((15, 40)));
+        // 阶段 1：红灯 5.6 s / 100 m / 限速未知 → 宽区间（P3-04 文档示例 15–65）
+        assert_eq!(glosa_reachable(at(1)), Some((15, 65)));
+        // 阶段 2：黄灯 → 不可行（信号在、GLOSA 无）
+        assert_eq!(glosa_reachable(at(2)), None);
+        assert_eq!(at(2).state, Some(crate::signal::LightState::Yellow));
+        // 阶段 3：无信号
+        assert!(at(3).state.is_none());
+        assert_eq!(glosa_reachable(at(3)), None);
+        // 阶段 4：绿灯 → 已知缺口，不产生 GLOSA（即便纯函数能算）
+        assert_eq!(at(4).state, Some(crate::signal::LightState::Green));
+        assert_eq!(glosa_reachable(at(4)), None);
+        assert!(
+            crate::reminder::glosa_advice(
+                100.0,
+                crate::signal::LightState::Green,
+                crate::signal::SignalConfidence::Verified,
+                8.0,
+                v_now,
+                50,
+                &cfg
+            )
+            .feasible,
+            "纯函数对绿灯可行——会话不接入才是缺口所在，缺口消失时本断言会失败"
+        );
+        // 阶段 5：红灯 18 s / 60 m / 限速 30 → 窄区间
+        assert_eq!(glosa_reachable(at(5)), Some((5, 15)));
+        // 周期为 6 个阶段，第 7 阶段回到阶段 0
+        assert_eq!(glosa_reachable(at(6)), Some((15, 40)));
+    }
+
+    #[test]
+    fn fake_signal_off_by_default_and_phase_dwell_is_stable() {
+        // 生产默认必须关闭剧本；且同一阶段内每帧取值一致（E2E 轮询需要稳定驻留）
+        assert!(!SessionConfig::default().fake_signal);
+        let a = fake_signal_phase(0);
+        for f in 0..FAKE_SIGNAL_FRAMES_PER_PHASE {
+            let b = fake_signal_phase(f);
+            assert_eq!(b.state, a.state);
+            assert_eq!(b.remaining_s, a.remaining_s);
+            assert_eq!(b.distance_m, a.distance_m);
+            assert_eq!(b.limit_kmh, a.limit_kmh);
+        }
     }
 
     #[test]

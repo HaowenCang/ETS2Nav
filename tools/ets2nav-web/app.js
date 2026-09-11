@@ -163,6 +163,33 @@ function resumeFollow() {
 let lastPos = null;
 let lastReminderKey = "";
 
+// §38 GLOSA 显示（P4R Batch 2）：只消费服务端结构化字段 snap.glosa。
+// 明确禁止从 reminder.text 反推速度、正则解析中文 TTS、或从显示字符串反算区间——
+// 那会形成第二套算法，且与 §38 的低精度量化语义脱钩。
+// 契约（server.rs snapshot_json）：
+//   glosa 为 null            → 无建议
+//   glosa = {min_kmh,max_kmh} → 区间（i16，5 km/h 量化，min ≤ max）
+// 非法值（非数值/非有限/负数/min>max）一律拒绝显示并 WARN，
+// 不由 UI 修正后端数学错误。
+function formatGlosa(g) {
+  if (g == null) return "";
+  if (typeof g !== "object") {
+    logWarn("glosa 字段类型非法（期望对象或 null）", g);
+    return "";
+  }
+  const lo = g.min_kmh, hi = g.max_kmh;
+  if (!Number.isFinite(lo) || !Number.isFinite(hi)) {
+    logWarn("glosa 数值非有限，已拒绝显示", g);
+    return "";
+  }
+  if (lo < 0 || hi < 0 || lo > hi) {
+    logWarn(`glosa 区间非法（${lo}–${hi}），已拒绝显示`, g);
+    return "";
+  }
+  const a = Math.round(lo), b = Math.round(hi);
+  return a === b ? `建议 ${a} km/h` : `建议 ${a}–${b} km/h`;
+}
+
 function onSnapshot(snap) {
   // 状态
   const chip = $("state-chip");
@@ -194,18 +221,25 @@ function onSnapshot(snap) {
   }
 
   // 信号 + GLOSA
+  // 信号消失时必须同时清理 signal state / remaining / GLOSA——卡片隐藏后残留文本
+  // 会在下次显示时短暂闪回上一帧的值（P4R Batch 2 §5）。GLOSA 与信号独立判定：
+  // 信号在但区间不可行（glosa=null）同样必须清空，不得保留上一帧建议。
   const sc = $("signal-card");
-  if (snap.upcoming_signal && snap.upcoming_signal.state) {
+  const sig = snap.upcoming_signal;
+  if (sig && sig.state) {
     sc.classList.remove("hidden");
-    const st = snap.upcoming_signal.state.replace(/^LightState::/, "");
+    const st = sig.state.replace(/^LightState::/, "");
     $("signal-state").textContent = st;
     $("signal-state").className = st.toLowerCase();
-    $("signal-remaining").textContent = snap.upcoming_signal.remaining_s != null
-      ? "剩余 " + snap.upcoming_signal.remaining_s.toFixed(1) + "s" : "";
+    $("signal-remaining").textContent = sig.remaining_s != null
+      ? "剩余 " + sig.remaining_s.toFixed(1) + "s" : "";
   } else {
     sc.classList.add("hidden");
-    $("glosa").textContent = "";
+    $("signal-state").textContent = "";
+    $("signal-state").className = "";
+    $("signal-remaining").textContent = "";
   }
+  $("glosa").textContent = formatGlosa(snap.glosa);
 
   // 提醒播报（变化时显示 3s）
   if (snap.reminders && snap.reminders.length) {
@@ -267,13 +301,57 @@ function onMapState(d) {
 }
 
 // WS 连接
+// §61 断线重连（P4R Batch 2）：PLAN-P3plus B5 的验收项「断线重连行为」在原实现中
+// 并不存在——onclose 只把文案改成「已断开」，没有任何重连路径。此处补最小实现：
+// 有界指数退避（上限 RECONNECT_MAX_MS）+ 手动「连接」按钮随时可用 + 不产生重复
+// socket（每次 connect 先作废旧 socket，旧 socket 的事件按 isCurrent 丢弃）。
+const RECONNECT_BASE_MS = 1000;
+const RECONNECT_MAX_MS = 15000;
 let ws = null;
+let reconnectAttempts = 0;
+let reconnectTimer = null;
+
+function scheduleReconnect() {
+  if (reconnectTimer !== null) return; // 已有排程，不重复
+  const delay = Math.min(RECONNECT_BASE_MS * 2 ** reconnectAttempts, RECONNECT_MAX_MS);
+  reconnectAttempts++;
+  const secs = Math.round(delay / 1000);
+  $("conn-status").textContent = `已断开（${secs}s 后重连）`;
+  $("conn-status").className = "";
+  logWarn(`WS 已断开，${secs}s 后重连（第 ${reconnectAttempts} 次）`);
+  reconnectTimer = setTimeout(() => {
+    reconnectTimer = null;
+    connect();
+  }, delay);
+}
+
 function connect() {
+  if (reconnectTimer !== null) {
+    clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
   const url = $("server-url").value.trim();
+  const prev = ws;
+  let sock;
+  try {
+    sock = new WebSocket(url);
+  } catch (e) {
+    // URL 非法等构造期异常：不得以未捕获异常终止页面脚本
+    logError(`WebSocket 构造失败（地址：${url}）`, e);
+    $("conn-status").textContent = "连接错误";
+    $("conn-status").className = "";
+    return;
+  }
+  ws = sock; // 先接管：旧 socket 之后触发的所有事件都不再是「当前连接」
+  if (prev && prev !== sock) {
+    try { prev.close(); } catch (e) { /* 旧连接作废失败不影响新连接 */ }
+  }
+  const isCurrent = () => ws === sock;
   $("conn-status").textContent = "连接中…";
   $("conn-status").className = "";
-  ws = new WebSocket(url);
-  ws.onopen = () => {
+  sock.onopen = () => {
+    if (!isCurrent()) return;
+    reconnectAttempts = 0; // 连上即重置退避
     $("conn-status").textContent = "已连接 " + url;
     $("conn-status").className = "on";
     // §61：展示同网移动端可用地址（server 监听 0.0.0.0——用当前 host 换协议）
@@ -291,11 +369,22 @@ function connect() {
       logError("二维码地址构造失败", e);
     }
   };
-  ws.onmessage = (ev) => {
+  sock.onmessage = (ev) => {
+    if (!isCurrent()) return;
     try { dispatchMessage(ev.data); } catch (e) { console.error("[ets2nav] 帧处理异常:", e); }
   };
-  ws.onclose = () => { $("conn-status").textContent = "已断开"; $("conn-status").className = ""; };
-  ws.onerror = () => { $("conn-status").textContent = "连接错误"; $("conn-status").className = ""; };
+  sock.onclose = () => {
+    if (!isCurrent()) return; // 已被新连接取代：不报状态、不排重连
+    $("conn-status").textContent = "已断开";
+    $("conn-status").className = "";
+    scheduleReconnect();
+  };
+  sock.onerror = () => {
+    if (!isCurrent()) return;
+    // onerror 之后必然触发 onclose，重连排程统一由 onclose 负责，避免双份排程
+    $("conn-status").textContent = "连接错误";
+    $("conn-status").className = "";
+  };
 }
 
 // 路由
@@ -330,6 +419,21 @@ $("btn-reset").onclick = () => {
 $("btn-follow").onclick = () => resumeFollow();
 map.on("dragstart", pauseFollow);
 map.on("wheel", pauseFollow);
+
+// 同源默认连接地址（P4R Batch 2）：index.html 中的默认值硬编码 127.0.0.1:8123，
+// 因此当 nav-server 监听其他端口时，由该 server 自己提供的页面仍会去连 8123——
+// 页面与服务端端口脱节。此处只在页面确实由本机回环 HTTP 提供时把默认值改写为
+// 同源 WS 地址；file:// 打开与桌面端（Tauri 的 tauri.localhost 等非回环主机）
+// 保持原默认值不变，避免破坏既有部署方式。
+function sameOriginWsUrl() {
+  const { protocol, hostname, host } = location;
+  if (protocol !== "http:" && protocol !== "https:") return null;
+  const loopback = hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]";
+  if (!loopback) return null;
+  return (protocol === "https:" ? "wss://" : "ws://") + host + "/ws";
+}
+const derivedWs = sameOriginWsUrl();
+if (derivedWs) $("server-url").value = derivedWs;
 
 // 自动连接
 connect();

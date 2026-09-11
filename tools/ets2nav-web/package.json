@@ -5,7 +5,9 @@
   "description": "ETS2Nav 正式 Web UI（§56-61）——离线/局域网可运行，依赖经 npm 锁定后构建为静态产物",
   "type": "module",
   "scripts": {
-    "build": "node scripts/build.mjs"
+    "build": "node scripts/build.mjs",
+    "test:e2e": "playwright test",
+    "test:protocol": "node scripts/run-protocol-test.mjs"
   },
   "dependencies": {
     "maplibre-gl": "4.7.1",
@@ -13,6 +15,7 @@
     "qrcode": "1.5.4"
   },
   "devDependencies": {
+    "@playwright/test": "1.63.0",
     "esbuild": "0.28.2"
   },
   "license": "GPL-3.0-only"

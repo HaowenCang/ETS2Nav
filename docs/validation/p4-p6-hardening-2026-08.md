@@ -1,11 +1,19 @@
 # P4/P6 离线加固验证记录（2026-08-12）
 
+> **2026-09-11 补记（P4R Batch 2）**：本文中的 `verify-ui-chain.py` 已重命名为
+> `verify-server-protocol.py`（全文引用同步）。该脚本不启动浏览器、不执行 app.js、
+> 不触碰 DOM，准确定位是 **nav-server 协议集成测试**。§1 关于「remaining 递减」断言
+> 的根因结论（syntrace heading）在当时成立，但 Batch 2 复跑发现该断言还有第二个
+> 脆弱点——固定 60 帧观测窗口会落在 tracker 与 matcher 的启动对齐相位内，得到
+> best_run=1 的假失败；现已改为「观测到证据为止 + 有界预算」，并为 wrap 判定补了
+> 10 项确定性回归用例（`--selftest`）。详见 `docs/validation/p4r-batch2-2026-09.md`。
+
 **范围**：审计阶段登记为「不强制修复」的遗留项中可离线处理者——UI 链验证不稳定、§9 mods 指纹漏报、§57 自动缩放/自动恢复、UI 事件类型分发；外加数据集外部分发与 B 侧会话准备。
 **性质**：前四项中**三项经复核为真实缺陷（含两项规范违背）**，非风格问题；详见各节「性质」标注。
 
 ---
 
-## §1 verify-ui-chain.py「remaining 递减」断言不稳定
+## §1 verify-server-protocol.py「remaining 递减」断言不稳定
 
 **性质**：真实缺陷（合成 trace 与实时遥测的朝向约定不一致）。
 
@@ -157,7 +165,7 @@ try { onSnapshot(JSON.parse(ev.data)); } catch (e) { /* 忽略坏帧 */ }
 
 ### 验证（协议侧 + 断言扩展）
 
-扩展 `verify-ui-chain.py`：事件类型白名单断言（只允许 `vehicle`/`map_state`）+
+扩展 `verify-server-protocol.py`：事件类型白名单断言（只允许 `vehicle`/`map_state`）+
 「设目的地后必须收到含 polyline 的 map_state」。
 
 实测：`seen=['map_state', 'vehicle']`，`map_state` polyline **1263 点**，UI CHAIN PASS。
@@ -178,7 +186,7 @@ try { onSnapshot(JSON.parse(ev.data)); } catch (e) { /* 忽略坏帧 */ }
 | `dotnet test`（ScsResource.Tests） | **23 passed**（8 + 15 新增 mod/zip 单测） |
 | `run-p1/p2/p3-tests.bat` | ALL PASS（`BAT_EXIT=0`；P1 链内 unit 65 + Berlin gate 95.4% + Germany gate 96.4% + determinism + Rust reader + Europe scale `failed_prefabs: 0`） |
 | `run-p5-tests.bat` | ALL PASS（`BAT_EXIT=0`） |
-| verify-ui-chain.py | 8/8 PASS（扩展后 4 项新增断言全过） |
+| verify-server-protocol.py | 8/8 PASS（扩展后 4 项新增断言全过） |
 
 ## §6 数据集外部分发（Release 附件）
 

@@ -1,5 +1,11 @@
 # P4 关门报告（2026-08-12）
 
+> **2026-09-11 补记（P4R Batch 2）**：本文中的 `verify-ui-chain.py` 已重命名为
+> `verify-server-protocol.py`（全文引用同步）。该脚本不启动浏览器、不执行 app.js、
+> 不触碰 DOM，准确定位是 **nav-server 协议集成测试**；本文与 PLAN 中过去使用的
+> 「交互链验证」在语义上仅指协议层，浏览器层的真实断言由 P4R Batch 2 的 Playwright
+> 套件承担（`tools/ets2nav-web/tests/e2e/`）。本文其余内容为当时实测记录，保持原样。
+
 **阶段**：P4 正式 UI（v0.2 §56–61；PLAN-P3plus.md §2 A2）
 **关门口径**：沿用 P2/P3 先例——机器可验证部分完成即关门（tag），实机项登记已知限制（D6 决策：实机测试延后）。
 **交付主线**：`31474f6`（nav-server 第一块）、`d144e5f`（正式 UI + Desktop + 交互链验证）+ 审计修复链 `0ab13d8` / `c28e362` / `933c187`。
@@ -22,7 +28,7 @@ PLAN-P3plus.md §2 A2 拆分六项：正式布局、Desktop（Tauri）、自动�
 | 5 | §60 HTTP + WebSocket API 定稿 | ✅ | HTTP：`/api/metadata` `/api/route` `/api/snapshot` `/api/search` `/api/settings`；WS：单一全量 `vehicle` 快照（7 类事件折叠映射）+ `map_state` 事件；20 Hz 广播 |
 | 6 | §61 LAN 监听 + 二维码 + PWA | ✅（真机验收延后） | server 监听 `0.0.0.0`；qrcodejs 本地化生成二维码；PWA manifest（standalone/theme-color） |
 | 7 | Desktop（Tauri 2） | ✅（构建冒烟） | `desktop/` release 4.2 MB exe，WebView2 加载内嵌前端，启动 6 s 进程存活 |
-| 8 | 交互链验证 | ✅ | `verify-ui-chain.py` 6 项 ALL PASS（route 200 / polyline 1500 pts / WS navigating / speed>0 / remaining 递减 / snapshot 200）；另补 session 级 off-route→rerouting 全链路断言 |
+| 8 | 交互链验证 | ✅ | `verify-server-protocol.py` 6 项 ALL PASS（route 200 / polyline 1500 pts / WS navigating / speed>0 / remaining 递减 / snapshot 200）；另补 session 级 off-route→rerouting 全链路断言 |
 | 9 | 60 FPS 渲染目标 | ⚠️ 未测（登记） | headless 无法测真实渲染帧率；数据链路（20 Hz 帧 → DOM）已验证。**登记 B5 实机** |
 | 10 | 移动端真机（扫码/渲染/断线重连） | ⚠️ 未测（登记） | 登记 B5（D6） |
 
@@ -32,7 +38,7 @@ PLAN-P3plus.md §2 A2 拆分六项：正式布局、Desktop（Tauri）、自动�
 |---|---|
 | nav-server | `nav-core/tools/nav-core-cli/src/server.rs` / `server_cli.rs`（HTTP + WS，零第三方依赖：RFC3174 SHA-1 手写、RFC6455 帧处理、掩码解码、ping/pong） |
 | 正式 UI | `tools/ets2nav-web/`（index.html / app.js / style.css / vendor/ / manifest.json / map.pmtiles） |
-| 交互链验证 | `tools/ets2nav-web/verify-ui-chain.py` |
+| 交互链验证 | `tools/ets2nav-web/verify-server-protocol.py` |
 | Desktop | `desktop/`（Tauri 2 最小壳 + 图标生成脚本） |
 | 合成 trace | `nav-core-cli syntrace` 子命令（路线插值 5 m + 速度曲线） |
 | 验证记录 | `docs/validation/p4-ui-2026-08.md` |
@@ -73,7 +79,7 @@ PLAN-P3plus.md §2 A2 拆分六项：正式布局、Desktop（Tauri）、自动�
 cd E:\Projects\Pi\ETS2Nav
 run-p3-tests.bat                 # 链内 P1 -> P2 -> P3 全部 ALL PASS（含 server 模块编译门）
 cd nav-core && cargo fmt --check && cargo clippy --all-targets && cargo test
-python tools\ets2nav-web\verify-ui-chain.py    # 需先启动 nav-core-cli server --replay
+python tools\ets2nav-web\verify-server-protocol.py    # 需先启动 nav-core-cli server --replay
 ```
 
 ## §7 结论

@@ -48,13 +48,32 @@ dotnet test map-compiler/MapCompiler.sln
 
 ```bat
 cd tools\ets2nav-web
-npm ci                 :: 依 package-lock.json 恢复确定版本依赖（maplibre-gl / pmtiles / qrcode）
+npm ci                 :: 依 package-lock.json 恢复确定版本依赖（maplibre-gl / pmtiles / qrcode / @playwright/test）
 npm run build          :: 生成 dist\（vendor 库 + 页面 + build-manifest.json）
 ```
 
 产物为 `tools/ets2nav-web/dist/`，即 nav-server 的默认 web root（可用 `--web=` 覆盖）与 Desktop 的 `frontendDist`。
 `map.pmtiles` 与 `fonts/` 属运行期可选资源：缺失时前端进入无底图模式（或跳过 city 文字层），并在 console 输出 INFO/WARN，不静默失败。
 依赖版本、来源与产物 SHA-256 记录于 `dist/build-manifest.json`。
+
+### 测试入口（P4R Batch 2 起）
+
+两层测试职责分离，二者不可互相替代：
+
+```bat
+cd tools\ets2nav-web
+npm run test:protocol  :: nav-server 协议集成测试（HTTP 路由 / WS 帧 / 快照通道 / 事件类型白名单）
+npm run test:protocol -- --selftest   :: 仅跑 remaining 推进判定的确定性回归用例（不需要服务器）
+npx playwright install chromium        :: 首次：下载本仓库锁定版本对应的 Chromium
+npm run test:e2e       :: Browser E2E：真实 Chromium 加载 index.html + app.js + MapLibre
+                       :: + pmtiles protocol + QRCode + HTTP + WS，断言 DOM / source-layer / console
+```
+
+`verify-server-protocol.py` **不是** browser E2E——它以原始 socket 驱动 HTTP 与 WebSocket，
+不启动浏览器、不执行 app.js、不触碰 DOM；其定位是协议集成测试（历史上曾被称作
+「UI 链验证」，该表述已更正）。真实浏览器断言一律由 Playwright 套件承担。
+E2E 使用隔离环境（临时 web root + 由正式 `PmtilesWriter` 现场生成的合法 PMTiles + 动态端口
++ 确定性合成 trace），不读取源码目录中的运行期 `map.pmtiles`。
 
 结果记录（2026-09-11，**验证时点** `bdbd7ea`；该 hash 说明验证在哪个代码代上执行，非当前 head）：四套件全部 ALL PASS（`BAT_EXIT=0` 复核）——`run-p1` 6 步、`run-p2` 7 步、`run-p3` 4 步、`run-p5` 4 步逐步 PASS；cargo fmt PASS / clippy **0 告警** / **104 测试通过**；dotnet **80 测试通过**（8 项目）。逐项实跑输出、GitHub 发布复核与本次修复的三项采集链缺陷见 `docs/validation/p4-p6-hardening-2026-08.md` §9/§9.1/§9.2。
 

@@ -15,6 +15,7 @@ fn usage() {
     eprintln!("  nav-core-cli replay <trace.navtrace>      —— 回放 trace");
     eprintln!("  nav-core-cli match <trace> <dataset-dir>   —— trace 回放 Map Matching");
     eprintln!("  nav-core-cli snap <x,z> <dataset-dir>       —— 目的地吸附（最近可路由 edge）");
+    eprintln!("  nav-core-cli server <dataset-dir> [--replay=<trace>] [--port=<N>] [--web=<dir>] [--fake-signal]");
 }
 
 fn main() {
@@ -45,7 +46,7 @@ fn main() {
         ("regression", _) if args.len() >= 3 => regression_cli(&args[2]),
         ("server", _) if args.len() >= 3 => {
             let fake = args.iter().skip(3).any(|a| a == "--fake-signal");
-            server_cli_run(&args[2], args.get(3), args.get(4), args.get(5), fake)
+            server_cli_run(&args, fake)
         }
         ("syntrace", _) if args.len() >= 5 => syntrace_cli(&args[2], &args[3], &args[4]),
         ("bench", _) if args.len() >= 3 => bench_cli(&args[2]),
@@ -1425,22 +1426,37 @@ fn dataset_info(dir: &str) {
     }
 }
 
-/// P4 nav-server（§60/§61）：nav-core-cli server <dataset-dir> [--replay trace] [--port N] [--web dir]
-fn server_cli_run(
-    dataset_dir: &str,
-    replay: Option<&String>,
-    port: Option<&String>,
-    web: Option<&String>,
-    fake_signal: bool,
-) {
-    let port: u16 = port
-        .and_then(|p| p.strip_prefix("--port=").map(|v| v.parse().unwrap_or(8123)))
+/// P4 nav-server（§60/§61）：nav-core-cli server <dataset-dir> [--replay=trace] [--port=N] [--web=dir]
+///
+/// 选项按名字扫描（顺序无关），不再按固定位置取 `args.get(3..6)`——原实现使单独
+/// 传入的 `--port` 落入 replay 槽位被静默丢弃，端口回落 8123（P4R Batch 2 实测：
+/// `server <ds> --port=18236` 实际仍监听 8123）。Playwright E2E 需要动态端口，
+/// 故此处按名字取值。
+fn server_cli_run(args: &[String], fake_signal: bool) {
+    let dataset_dir = &args[2];
+    let port: u16 = flag_value(args, "--port")
+        .and_then(|v| v.parse().ok())
         .unwrap_or(8123);
-    let web_root = web
-        .and_then(|w| w.strip_prefix("--web=").map(|v| v.to_string()))
+    let web_root = flag_value(args, "--web")
+        .map(|v| v.to_string())
         .unwrap_or_else(|| "../tools/ets2nav-web/dist".to_string());
-    let trace = replay.and_then(|r| r.strip_prefix("--replay=").map(|v| v.to_string()));
+    let trace = flag_value(args, "--replay").map(|v| v.to_string());
     server_cli::server_cli(dataset_dir, trace.as_deref(), port, &web_root, fake_signal);
+}
+
+/// 从参数表提取 `--name=value` 或 `--name value` 形式的值（两种写法等价）。
+fn flag_value<'a>(args: &'a [String], name: &str) -> Option<&'a str> {
+    let eq = format!("{name}=");
+    let mut it = args.iter();
+    while let Some(a) = it.next() {
+        if let Some(v) = a.strip_prefix(&eq) {
+            return Some(v);
+        }
+        if a == name {
+            return it.next().map(|s| s.as_str());
+        }
+    }
+    None
 }
 
 /// 合成 trace 生成（P4 UI 回放验证）：路线插值 + 速度曲线 → .navtrace
@@ -1552,7 +1568,7 @@ fn syntrace_cli(xz: &str, dataset_dir: &str, out: &str) {
             position: [x, y, z],
             // P4 审计 MINOR 修复（2026-08-12）：由点表逐点 yaw 生成朝向四元数。
             // 原为恒等四元数（heading 恒 0）——matcher 全程按「朝北」打分，巡航段
-            // 持续失配，使 verify-ui-chain.py 的 remaining 递减断言不稳定。
+            // 持续失配，使 verify-server-protocol.py 的 remaining 递减断言不稳定。
             heading: nav_telemetry::yaw_to_quat(yaw),
             speed,
             speed_limit: 0.0,

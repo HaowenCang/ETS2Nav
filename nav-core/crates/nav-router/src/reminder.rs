@@ -671,4 +671,45 @@ mod tests {
             .feasible
         );
     }
+
+    #[test]
+    fn glosa_feasible_invariants_hold_across_sweep() {
+        // P4R-2 数据契约前提：feasible 的建议必须满足 0 ≤ min ≤ max 且均为 5 的
+        // 倍数。server 的 JSON 投影直接暴露这两个 i16，UI 不做二次修正，因此
+        // 「UI 不得输出负数 / min>max」的前提必须由本函数保证，而不是由 UI 兜底。
+        let cfg = GlosaConfig::default();
+        let mut feasible_count = 0;
+        for state in [LightState::Red, LightState::Green] {
+            for d in [20.0f32, 21.0, 50.0, 100.0, 250.0, 499.0, 500.0] {
+                for rem in [0.0f64, 0.5, 2.0, 5.6, 15.0, 40.0, 120.0] {
+                    for v in [0.0f32, 5.0, 13.9, 30.0] {
+                        for limit in [0i16, 30, 50, 80, 130] {
+                            let a = glosa_advice(
+                                d,
+                                state,
+                                SignalConfidence::Verified,
+                                rem,
+                                v,
+                                limit,
+                                &cfg,
+                            );
+                            if !a.feasible {
+                                continue;
+                            }
+                            feasible_count += 1;
+                            assert!(a.v_min_kmh >= 0, "负下限: {a:?} d={d} rem={rem}");
+                            assert!(a.v_max_kmh >= 0, "负上限: {a:?} d={d} rem={rem}");
+                            assert!(a.v_min_kmh <= a.v_max_kmh, "min>max: {a:?} d={d} rem={rem}");
+                            assert_eq!(a.v_min_kmh % 5, 0, "下限未量化到 5: {a:?}");
+                            assert_eq!(a.v_max_kmh % 5, 0, "上限未量化到 5: {a:?}");
+                        }
+                    }
+                }
+            }
+        }
+        assert!(
+            feasible_count > 100,
+            "扫描样本过少，覆盖无效: {feasible_count}"
+        );
+    }
 }

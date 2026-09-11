@@ -202,6 +202,15 @@ pub(crate) fn snapshot_json(s: &NavigationSnapshot) -> String {
             "confidence": format!("{:?}", up.confidence),
         })
     });
+    // §38 GLOSA 结构化投影（P4R Batch 2）：直接暴露 GlosaAdvice 的量化结果，
+    // 不做二次换算，UI 也不得从 reminder.text 反推。
+    //   有建议 → {"min_kmh": i16, "max_kmh": i16}
+    //   无建议 → null（字段恒存在，语义明确，避免 UI 用 undefined 猜）
+    // feasible 不单独输出：字段存在本身即表示区间可行，且 min ≤ max、min ≥ 0
+    // 由 glosa_advice 的量化保证（见 reminder.rs 单测），故不作为独立字段暴露。
+    let glosa = s
+        .glosa
+        .map(|g| serde_json::json!({ "min_kmh": g.v_min_kmh, "max_kmh": g.v_max_kmh }));
     // A2a-M2：warning 结构化——kind（ReminderEvent 变体）+ severity（1=warning/0=info）
     let reminders: Vec<serde_json::Value> = s
         .reminders
@@ -236,6 +245,7 @@ pub(crate) fn snapshot_json(s: &NavigationSnapshot) -> String {
         "matched_edge": s.matched_edge,
         "next_maneuver": maneuver,
         "upcoming_signal": signal,
+        "glosa": glosa,
         "reminders": reminders,
         "destination": s.destination,
         "diagnostics": s.diagnostics,
@@ -542,5 +552,133 @@ mod tests {
         assert!(text.contains("Content-Range: bytes */256\r\n"));
         assert!(text.contains("Content-Length: 0\r\n"));
         assert!(out.ends_with(b"\r\n\r\n"));
+    }
+
+    // ── P4R-2：GLOSA 数据契约（snapshot_json 的 UI-facing projection）──────────
+
+    /// Vehicle 帧 JSON 的最小构造（只填契约断言涉及的字段）。
+    fn snapshot_fixture() -> NavigationSnapshot {
+        use nav_router::session::SessionState;
+        NavigationSnapshot {
+            state: SessionState::Navigating,
+            position: Some((1.0, 0.0, 2.0)),
+            matched_edge: Some(7),
+            match_confidence: None,
+            route_distance_m: Some(1000.0),
+            remaining_m: Some(400.0),
+            remaining_s: Some(50.0),
+            progress: Some(0.6),
+            next_maneuver: None,
+            upcoming_signal: None,
+            glosa: None,
+            reminders: Vec::new(),
+            speed_kmh: 43.2,
+            map_limit_kmh: 50,
+            destination: Some("test".to_string()),
+            diagnostics: String::new(),
+        }
+    }
+
+    fn glosa_advice(min: i16, max: i16) -> nav_router::reminder::GlosaAdvice {
+        nav_router::reminder::GlosaAdvice {
+            v_min_kmh: min,
+            v_max_kmh: max,
+            feasible: true,
+        }
+    }
+
+    #[test]
+    fn snapshot_json_glosa_present_is_structured() {
+        let mut s = snapshot_fixture();
+        s.glosa = Some(glosa_advice(50, 60));
+        let v: serde_json::Value = serde_json::from_str(&snapshot_json(&s)).unwrap();
+        assert_eq!(v["glosa"]["min_kmh"], 50);
+        assert_eq!(v["glosa"]["max_kmh"], 60);
+        assert_eq!(
+            v["glosa"]["min_kmh"].as_i64(),
+            Some(50),
+            "必须是 JSON 数值，不是字符串"
+        );
+        assert_eq!(v["type"], "vehicle");
+    }
+
+    #[test]
+    fn snapshot_json_glosa_single_value_preserved() {
+        // min == max（单值建议）不得被序列化折叠或改写
+        let mut s = snapshot_fixture();
+        s.glosa = Some(glosa_advice(50, 50));
+        let v: serde_json::Value = serde_json::from_str(&snapshot_json(&s)).unwrap();
+        assert_eq!(v["glosa"]["min_kmh"], 50);
+        assert_eq!(v["glosa"]["max_kmh"], 50);
+    }
+
+    #[test]
+    fn snapshot_json_glosa_absent_is_null_field() {
+        // 契约：无建议时字段存在且为 null（不是缺失、不是 0/0——0/0 会被 UI 当作
+        // 「建议 0 km/h」，正是必须避免的降级歧义）
+        let s = snapshot_fixture();
+        assert!(s.glosa.is_none());
+        let v: serde_json::Value = serde_json::from_str(&snapshot_json(&s)).unwrap();
+        assert!(v.get("glosa").is_some(), "glosa 字段必须恒存在");
+        assert!(v["glosa"].is_null(), "无建议必须是 null，不得为 0/0 或缺失");
+    }
+
+    #[test]
+    fn snapshot_json_reminders_preserved_with_glosa() {
+        // §4 兼容性：结构化 glosa 不得取代或破坏既有 reminders / TTS 通道
+        use nav_router::speak::ReminderEvent;
+        let mut s = snapshot_fixture();
+        s.glosa = Some(glosa_advice(50, 60));
+        s.reminders = vec![
+            ReminderEvent::Glosa {
+                v_min_kmh: 50,
+                v_max_kmh: 60,
+            },
+            ReminderEvent::OverSpeed { limit_kmh: 50 },
+        ];
+        let v: serde_json::Value = serde_json::from_str(&snapshot_json(&s)).unwrap();
+        let rs = v["reminders"].as_array().unwrap();
+        assert_eq!(rs.len(), 2, "既有 reminders 不得因新增字段而丢失");
+        assert_eq!(rs[0]["kind"], "glosa");
+        assert_eq!(rs[0]["severity"], 0);
+        assert_eq!(rs[0]["text"], "建议保持50到60", "TTS 文本通道保持原样");
+        assert_eq!(rs[1]["kind"], "overspeed");
+        assert_eq!(rs[1]["severity"], 1);
+    }
+
+    #[test]
+    fn snapshot_json_glosa_survives_speech_gate_suppression() {
+        // 本条锁定 P4R Batch 2 的核心缺陷形态：§48 ReminderGate 每 30s 才放行一次
+        // glosa 语音事件，而 UI 卡片需要连续显示建议区间。因此存在大量「glosa 有值
+        // 但 reminders 中没有 glosa 事件」的帧——结构化字段必须在这种帧上照常输出，
+        // 否则 UI 会在两次播报之间显示空白或残留旧值。
+        let mut s = snapshot_fixture();
+        s.glosa = Some(glosa_advice(45, 55));
+        s.reminders = Vec::new(); // 播报门限抑制：本帧无任何语音事件
+        let v: serde_json::Value = serde_json::from_str(&snapshot_json(&s)).unwrap();
+        assert_eq!(v["reminders"].as_array().unwrap().len(), 0);
+        assert_eq!(
+            v["glosa"]["min_kmh"], 45,
+            "结构化建议不得随语音门限一起消失"
+        );
+        assert_eq!(v["glosa"]["max_kmh"], 55);
+    }
+
+    #[test]
+    fn snapshot_json_glosa_never_emits_non_finite_or_negative() {
+        // 全值域扫描：i16 不可能产生 NaN/Infinity；且 glosa_advice 的量化保证
+        // min ≥ 0、min ≤ max。此处锁定「JSON 层不得引入负数/浮点化」。
+        for (min, max) in [(0i16, 5i16), (5, 5), (0, 0), (i16::MAX, i16::MAX)] {
+            let mut s = snapshot_fixture();
+            s.glosa = Some(glosa_advice(min, max));
+            let v: serde_json::Value = serde_json::from_str(&snapshot_json(&s)).unwrap();
+            let lo = v["glosa"]["min_kmh"].as_i64().unwrap();
+            let hi = v["glosa"]["max_kmh"].as_i64().unwrap();
+            assert!(lo >= 0 && hi >= 0, "不得输出负速度: {lo}..{hi}");
+            assert!(lo <= hi, "下限不得超过上限: {lo}..{hi}");
+            let raw = snapshot_json(&s);
+            assert!(!raw.contains("NaN"), "JSON 不得含 NaN");
+            assert!(!raw.contains("Infinity"), "JSON 不得含 Infinity");
+        }
     }
 }
