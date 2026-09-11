@@ -55,8 +55,10 @@ test("E2E-04b WS map_state 路径渲染路线几何", async ({ page }) => {
   await page.click("#btn-reset");
   await expect.poll(async () => (await sourceCoordinates(page, "route-line"))?.length ?? -1).toBe(0);
 
+  // 经页面自身的 apiFetch 发出（Batch 3.5：动态 API 一律要求会话令牌，页面已由
+  // 回环 bootstrap 取得；测试不注入旁路凭据，走的正是真实客户端路径）。
   const posted = await page.evaluate(async () => {
-    const r = await fetch("/api/route", {
+    const r = await apiFetch("/api/route", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ from: [-58456, 32832], to: [-52925, 36510] }),
@@ -88,7 +90,7 @@ test("E2E-04c 起点不可路由时返回 4xx 且不渲染折线", async ({ page
 
   // 远离任何道路的坐标 → snap_nearest 失败 → 404
   const resp = await page.evaluate(async () => {
-    const r = await fetch("/api/route", {
+    const r = await apiFetch("/api/route", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ from: [9999999, 9999999], to: [9999999, 9999999] }),
@@ -98,10 +100,25 @@ test("E2E-04c 起点不可路由时返回 4xx 且不渲染折线", async ({ page
   expect(resp.status).toBeGreaterThanOrEqual(400);
   expect((await sourceCoordinates(page, "route-line"))?.length ?? 0).toBeLessThanOrEqual(1);
 
-  // 非法 body → 400
+  // 声明为 JSON 但内容非法 → 400
   const bad = await page.evaluate(async () => {
-    const r = await fetch("/api/route", { method: "POST", body: "{}" });
+    const r = await apiFetch("/api/route", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: "{}",
+    });
     return r.status;
   });
   expect(bad).toBe(400);
+
+  // Batch 3.5：未声明 application/json 的写入请求在鉴权之后、解析之前被 415 拒绝
+  // （fetch 对字符串 body 默认填 text/plain;charset=UTF-8，正是 CSRF 可用的形态）
+  const wrongType = await page.evaluate(async () => {
+    const r = await apiFetch("/api/route", { method: "POST", body: "{}" });
+    return { status: r.status, sent: r.headers.get("content-type") };
+  });
+  expect(
+    wrongType.status,
+    "text/plain body 不得被当作 JSON 执行",
+  ).toBe(415);
 });

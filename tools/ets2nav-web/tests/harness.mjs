@@ -31,7 +31,15 @@ const FIXTURE_PROJ = join(
  */
 export const SESSION_DIR = join(tmpdir(), "ets2nav-e2e");
 
-/** 服务器启动超时（含 europe-v5 数据集加载；实测约 3 s，留足余量）。 */
+/**
+ * 服务器启动超时（含 europe-v5 数据集加载与 search.db 读取）。
+ *
+ * 实测：磁盘缓存热时约 3 s；但在**冷缓存 + 并发 I/O**（例如同一会话刚跑完
+ * `dotnet run` 生成 PMTiles fixture）下曾观察到远超 45 s 的启动时间——服务端在
+ * `TcpListener::bind` 之后、accept 循环之前还要读取 search.db，因此「已绑定端口」
+ * 不等于「已可服务」。取 120 s 以避免把 I/O 抖动当成产品缺陷，同时保持失败信息
+ * 可诊断（进程提前退出即立刻失败，并携带退出码与 stderr）。
+ */
 const SERVER_BOOT_TIMEOUT_MS = 120_000;
 
 /** 分配一个当前空闲的 TCP 端口（绑定 0 后立即释放；存在极小的竞态窗口）。 */
@@ -57,18 +65,64 @@ function run(cmd, args, opts = {}) {
   });
 }
 
-async function waitForPort(port, timeoutMs) {
+/**
+ * 向某地址请求 `/api/bootstrap`，返回解析后的 JSON（非 200 时返回
+ * `{status, body}`）。
+ *
+ * P4R Batch 3.5：这是**唯一的令牌出口**，且只对回环对端开放。测试经由它与
+ * 正式客户端走同一条路径取得令牌——不存在 `--disable-auth` 之类的测试后门：
+ * 若该端点被破坏，全部需要令牌的断言会一并失败。
+ *
+ * `host` 必须是服务器认得的 authority（回环名或本机实际地址）；否则服务端会因
+ * Host 校验失败而 403——那正是 Host 策略生效的证据，而不是测试环境问题。
+ */
+export async function bootstrap(host, port) {
+  const r = await fetch(`http://${host}:${port}/api/bootstrap`, {
+    signal: AbortSignal.timeout(5000),
+  });
+  const text = await r.text();
+  if (!r.ok) return { status: r.status, body: text };
+  return JSON.parse(text);
+}
+
+/**
+ * 等待服务器就绪。
+ *
+ * 判据是 bootstrap 返回 200 且带合法令牌，而不再是「/api/snapshot 返回 ok」——
+ * Batch 3.5 之后未认证的 /api/snapshot 必然 401，用它当就绪信号会把「服务器已
+ * 就绪」误判为「服务器未启动」。
+ *
+ * 两种提前失败条件都必须显式处理，否则故障会退化为「等满超时」这种无信息的失败：
+ *   · 子进程已退出（bind 失败、数据集缺失）→ 立即返回，不再空等；
+ *   · 最近一次探测的**实际结果**随返回值给出（连接被拒 / 状态码非 200 / 响应体
+ *     畸形三者含义完全不同，不该被同一个「未监听」掩盖）。
+ */
+async function waitForPort(port, timeoutMs, exited = () => null) {
   const deadline = Date.now() + timeoutMs;
+  const started = Date.now();
+  let last = "尚未发起探测";
   while (Date.now() < deadline) {
+    const code = exited();
+    if (code !== null) return { ok: false, last, exitCode: code, elapsedMs: Date.now() - started };
     try {
-      const r = await fetch(`http://127.0.0.1:${port}/api/snapshot`, {
-        signal: AbortSignal.timeout(2000),
+      const r = await fetch(`http://127.0.0.1:${port}/api/bootstrap`, {
+        signal: AbortSignal.timeout(3000),
       });
-      if (r.ok) return true;
-    } catch { /* 尚未监听 */ }
+      const text = await r.text();
+      last = `status=${r.status} body=${text.slice(0, 120)}`;
+      if (r.ok) {
+        const d = JSON.parse(text);
+        if (typeof d.token === "string" && d.token.length === 64) {
+          return { ok: true, last, elapsedMs: Date.now() - started };
+        }
+        last += " （令牌缺失或形态非法）";
+      }
+    } catch (e) {
+      last = `异常 ${e?.name ?? "Error"}: ${String(e).slice(0, 120)}`;
+    }
     await new Promise((r) => setTimeout(r, 200));
   }
-  return false;
+  return { ok: false, last, exitCode: exited(), elapsedMs: Date.now() - started };
 }
 
 /**
@@ -126,8 +180,11 @@ export async function prepareTrace(log = console.log) {
  * 启动一个 nav-server 实例。
  * @param {{webRoot:string, trace?:string, fakeSignal?:boolean, port?:number, lan?:boolean, log?:Function}} opts
  *   port 省略时动态分配空闲端口；E2E-10 需要「同端口重启」故支持显式指定。
- *   lan=true 加 `--lan`（绑定 0.0.0.0 并要求私网对端携带令牌）；回环对端豁免，
- *   因此本机测试无需令牌即可访问，但二维码/令牌相关断言需要它。
+ *   lan=true 加 `--lan`（绑定 0.0.0.0）。
+ *
+ * 返回的 `token` 由 `/api/bootstrap` 取得——**不是**测试注入的旁路凭据。
+ * 两种模式下动态 API 与 /ws 都要求令牌（Batch 3.5），因此测试必须像真实客户端
+ * 一样先引导再访问。
  */
 export async function startServer({
   webRoot, trace, fakeSignal = false, port, lan = false, log = console.log,
@@ -150,16 +207,28 @@ export async function startServer({
   proc.stderr.on("data", (d) => { stderr += d; });
   proc.stdout.on("data", () => {});
 
-  const up = await waitForPort(chosen, SERVER_BOOT_TIMEOUT_MS);
-  if (!up) {
+  const up = await waitForPort(chosen, SERVER_BOOT_TIMEOUT_MS, () => proc.exitCode);
+  if (!up.ok) {
     proc.kill();
-    throw new Error(`nav-server 未在 ${SERVER_BOOT_TIMEOUT_MS} ms 内监听 :${chosen}\n${stderr}`);
+    throw new Error(
+      `nav-server 未在 ${SERVER_BOOT_TIMEOUT_MS} ms 内于 :${chosen} 就绪`
+      + `（等待 ${up.elapsedMs} ms；exitCode=${up.exitCode ?? "仍在运行"}）\n`
+      + `最后一次探测: ${up.last}\n`
+      + `args: ${args.join(" ")}\n${stderr}`,
+    );
   }
-  log(`[e2e] server :${chosen}${fakeSignal ? " (fake-signal)" : ""}${lan ? " (lan)" : ""}`);
+  const boot = await bootstrap("127.0.0.1", chosen);
+  if (!boot || typeof boot.token !== "string") {
+    throw new Error(`bootstrap 未返回令牌（端口 :${chosen}）: ${JSON.stringify(boot)}`);
+  }
+  log(`[e2e] server :${chosen}${fakeSignal ? " (fake-signal)" : ""}${lan ? " (lan)" : ""}`
+    + ` 就绪耗时 ${up.elapsedMs} ms`);
   return {
     pid: proc.pid,
     port: chosen,
     lan,
+    token: boot.token,
+    bootMs: up.elapsedMs,
     origin: `http://127.0.0.1:${chosen}`,
     stop: () => new Promise((ok) => {
       if (proc.exitCode !== null || proc.signalCode) return ok();
@@ -171,27 +240,14 @@ export async function startServer({
 }
 
 /**
- * 向某地址请求 `/api/lan-bootstrap`，返回解析后的 JSON（非 200 时返回
- * `{status, body}`）。供测试自行判定 LAN 状态，而不是让页面替测试决定分支。
- */
-export async function lanBootstrap(host, port) {
-  const r = await fetch(`http://${host}:${port}/api/lan-bootstrap`, {
-    signal: AbortSignal.timeout(5000),
-  });
-  const text = await r.text();
-  if (!r.ok) return { status: r.status, body: text };
-  return JSON.parse(text);
-}
-
-/**
  * 枚举本机 RFC1918 候选地址（经服务器 bootstrap）。
  *
  * 测试机可能没有任何私网地址（例如仅公网 IP 的构建机），此时二维码分支无法
  * 成立；调用方据此显式选择断言分支，而不是假装通过。
  */
 export async function lanCandidates(host, port) {
-  const d = await lanBootstrap(host, port);
-  return d && d.enabled === true && Array.isArray(d.addresses) ? d.addresses : [];
+  const d = await bootstrap(host, port);
+  return d && d.lan_enabled === true && Array.isArray(d.addresses) ? d.addresses : [];
 }
 
 /** 该 IPv4 是否属 RFC1918（与 rust 侧 `security::classify_peer` 同一口径）。 */

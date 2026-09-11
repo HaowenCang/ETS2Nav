@@ -11,7 +11,7 @@
 // LAN 地址打开时会去连 `ws://127.0.0.1:8123/ws`（手机上指向手机自己）。
 
 import { expect, test } from "@playwright/test";
-import { lanBootstrap, startServer } from "../harness.mjs";
+import { bootstrap, startServer } from "../harness.mjs";
 import { session } from "../harness.mjs";
 import { collectDiagnostics, assertCleanDiagnostics, waitConnected } from "./helpers.mjs";
 
@@ -75,8 +75,8 @@ async function canvasPainted(page) {
 
 /** 本机候选私网地址；无候选时用例无法成立，必须显式失败而不是静默通过。 */
 async function requireCandidates(port) {
-  const boot = await lanBootstrap("127.0.0.1", port);
-  expect(boot.enabled, "测试服务器必须以 --lan 启动").toBe(true);
+  const boot = await bootstrap("127.0.0.1", port);
+  expect(boot.lan_enabled, "测试服务器必须以 --lan 启动").toBe(true);
   const addrs = boot.addresses ?? [];
   expect(
     addrs.length,
@@ -267,6 +267,8 @@ test("E2E-LAN-04 UI 设目的地携带 Bearer；清除令牌后请求被拒", as
 // ─── E2E-LAN-05 重连保持令牌 ───────────────────────────────────────────────
 
 test("E2E-LAN-05 断线自动重连继续携带当前令牌", async ({ page }) => {
+  // 本用例自行启动服务器并等待重连（最多 30 s），预算需覆盖服务器就绪时间
+  test.setTimeout(120_000);
   const s = await session();
   const srv = await startServer({ webRoot: s.webRoot, trace: s.trace, lan: true });
   try {
@@ -318,6 +320,8 @@ test("E2E-LAN-05 断线自动重连继续携带当前令牌", async ({ page }) =
 });
 
 test("E2E-LAN-05b 服务端重启后旧令牌失效但不会被静默丢弃", async ({ page }) => {
+  // 本用例启动两个服务器进程并等待两轮重连观测，预算需覆盖两次服务器就绪
+  test.setTimeout(150_000);
   const s = await session();
   const srv = await startServer({ webRoot: s.webRoot, trace: s.trace, lan: true });
   let srv2 = null;
@@ -334,7 +338,7 @@ test("E2E-LAN-05b 服务端重启后旧令牌失效但不会被静默丢弃", as
     srv2 = await startServer({
       webRoot: s.webRoot, trace: s.trace, lan: true, port: srv.port,
     });
-    const after = await lanBootstrap("127.0.0.1", srv2.port);
+    const after = await bootstrap("127.0.0.1", srv2.port);
     expect(after.token, "重启后必须生成新令牌").not.toBe(boot.token);
 
     // 必须尝试过重连（观察 socket 构造，而非瞬时文案）

@@ -27,8 +27,18 @@ const logWarn = (msg, detail) => console.warn(`[ets2nav] ${msg}`, detail ?? "");
 const logError = (msg, detail) => console.error(`[ets2nav] ${msg}`, detail ?? "");
 
 // ─── 会话令牌（P4R Batch 3）─────────────────────────────────────────────────
-// LAN 模式下 nav-server 要求私网对端携带 256-bit 会话令牌；本机回环对端豁免，
-// 因此本机页面通常没有令牌，而手机从二维码打开时经 URL fragment 得到令牌。
+// 会话令牌（P4R Batch 3.5）。
+//
+// 服务端**两种模式**（默认回环 / `--lan`）都要求动态 API 与 `/ws` 携带 256-bit
+// 令牌；回环不再是免认证理由——浏览器可以被远程页面驱使去连 `127.0.0.1`，服务端
+// 看到的对端同样是回环。因此本页面无论从哪个地址打开都必须持有令牌。
+//
+// 令牌的三个来源，优先级从高到低：
+//   1. URL fragment（手机扫码进入；`#token=…`）——服务端不下发，只能由二维码携带；
+//   2. sessionStorage（同一 tab 会话内的刷新/重连）；
+//   3. `GET /api/bootstrap`——**仅当页面自身位于回环**（本机浏览器或 Tauri）时。
+//      这是服务端唯一的令牌出口，且它自身又限制「必须来自回环对端」。
+//      手机打开的是 LAN 地址，不属于回环，因此永远无法从服务端直接取令牌。
 //
 // 为什么用 fragment 而非 query：fragment（`#` 之后）不会随请求发送给 HTTP
 // server，因而不进入访问日志；query 会。服务端也只在 `/ws` 接受 query 令牌，
@@ -36,8 +46,6 @@ const logError = (msg, detail) => console.error(`[ets2nav] ${msg}`, detail ?? ""
 //
 // 令牌只存在于内存变量与 sessionStorage（当前 tab 会话），不使用 localStorage
 // 长期保存；服务端每次进程启动重新生成，旧令牌自然失效。
-//
-// 令牌绝不出现在 console、DOM 可见文本或 URL 查询串中。
 const TOKEN_KEY = "ets2nav.sessionToken";
 const TOKEN_RE = /^[0-9a-f]{64}$/;
 
@@ -69,6 +77,24 @@ function stripFragment() {
   }
 }
 
+/** 令牌的持久化：内存 + sessionStorage（后者不可用时仅内存，功能不受影响）。 */
+function setSessionToken(v) {
+  sessionToken = v;
+  try {
+    sessionStorage.setItem(TOKEN_KEY, v);
+  } catch (e) {
+    // 隐私模式等场景下 sessionStorage 可能不可用：令牌仍留在内存中，
+    // 本 tab 内一切功能正常，仅刷新后需重新扫码/重新引导。
+    logWarn("sessionStorage 不可用，令牌仅保留在内存", e);
+  }
+}
+
+/**
+ * 从 fragment / sessionStorage 取初始令牌（同步部分）。
+ *
+ * 畸形 fragment 一律按「没有 fragment」处理：先告警再继续走后续来源，
+ * 不静默当作有一个无效令牌（那会让页面在后续每一步都收到 401 而不知原因）。
+ */
 function initSessionToken() {
   const frag = readTokenFragment(location.hash);
   if (frag.present) {
@@ -79,8 +105,6 @@ function initSessionToken() {
       try {
         sessionStorage.setItem(TOKEN_KEY, frag.value);
       } catch (e) {
-        // 隐私模式等场景下 sessionStorage 可能不可用：令牌仍留在内存中，
-        // 本 tab 内一切功能正常，仅刷新后需重新扫码。
         logWarn("sessionStorage 不可用，令牌仅保留在内存", e);
       }
       return frag.value;
@@ -94,6 +118,9 @@ function initSessionToken() {
 }
 
 let sessionToken = initSessionToken();
+
+/** 最近一次 bootstrap 结果（二维码渲染用；不参与鉴权判定）。 */
+let lastBootstrap = null;
 
 /**
  * 统一 API 请求入口：有会话令牌即附 `Authorization: Bearer`，无令牌则普通请求。
@@ -408,8 +435,33 @@ function scheduleReconnect() {
   logWarn(`WS 已断开，${secs}s 后重连（第 ${reconnectAttempts} 次）`);
   reconnectTimer = setTimeout(() => {
     reconnectTimer = null;
-    connect();
+    // Batch 3.5：重连前先尝试刷新令牌。
+    //
+    // 令牌是**进程级**的：服务端重启后旧令牌必然失效。本机页面（回环）可以重新
+    // 引导取回新令牌，因此具备自愈能力；LAN 手机端不能（服务端对非回环一律 403），
+    // 只能重新扫码——这正是「令牌出口仅限回环」的必然结果，不是缺陷。
+    // 刷新失败（服务端尚未起来）时保持旧令牌并照常尝试：重试循环本身会再试。
+    refreshTokenForReconnect().finally(connect);
   }, delay);
+}
+
+/**
+ * 重连前刷新令牌（仅回环页面有效）。
+ *
+ * 刷新不会把令牌导向别处：请求目标是同源/回环 authority，响应体只被本页读取；
+ * 跨源页面既无法触发本函数，也读不到 bootstrap 的响应（服务端的 Origin 策略与
+ * CORS 白名单共同保证这一点）。
+ */
+async function refreshTokenForReconnect() {
+  try {
+    const d = await fetchBootstrap();
+    if (d && d.token !== sessionToken) {
+      setSessionToken(d.token);
+      logInfo("会话令牌已刷新（服务端重启后重新引导）");
+    }
+  } catch (e) {
+    logWarn("重连前刷新令牌失败，沿用当前令牌", e);
+  }
 }
 
 function connect() {
@@ -472,8 +524,9 @@ async function setRoute() {
   if (!isFinite(fx) || !isFinite(fz)) { alert("请输入终点 x/z 坐标"); return; }
   // 起点 = 车辆当前位置（无则用默认 Berlin 点）
   const [px, pz] = lastPos || [-58456, 32832];
-  const base = $("server-url").value.replace(/^ws:\/\//, "http://").replace(/\/ws$/, "");
-  // 经统一 helper：LAN 模式下自动携带 Authorization: Bearer
+  const base = httpBase();
+  if (!base) { alert("连接地址无法解析，无法发送路由请求"); return; }
+  // 经统一 helper：两种模式下都会携带 Authorization: Bearer
   const r = await apiFetch(base + "/api/route", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
@@ -500,7 +553,8 @@ $("btn-follow").onclick = () => resumeFollow();
 map.on("dragstart", pauseFollow);
 map.on("wheel", pauseFollow);
 
-// 同源默认连接地址（P4R Batch 2 引入，Batch 3 修正范围）。
+// 连接地址推导与令牌引导（P4R Batch 2 引入同源推导；Batch 3 修正范围；
+// Batch 3.5 引入会话引导）。
 //
 // 原实现只在 hostname 属于回环（127.0.0.1/localhost/[::1]）时才推导同源 WS 地址，
 // 因此手机从 `http://192.168.x.x:<port>/` 打开页面时不会去连
@@ -511,9 +565,8 @@ map.on("wheel", pauseFollow);
 // 现改为：只要页面是由普通 HTTP(S) 提供的，就按同源推导，与主机是否回环无关。
 const DESKTOP_HOSTS = ["tauri.localhost"];
 
-/** 页面是否由本机回环 HTTP 提供（用于判断本机 UI 还是手机 UI）。 */
-function isLoopbackHost() {
-  const h = location.hostname;
+/** 该主机名是否指向本机回环（判断本机 UI 还是手机 UI，以及能否经 bootstrap 取令牌）。 */
+function isLoopbackHostname(h) {
   return h === "127.0.0.1" || h === "localhost" || h === "::1" || h === "[::1]";
 }
 
@@ -535,6 +588,84 @@ function sameOriginWsUrl() {
   return (protocol === "https:" ? "wss://" : "ws://") + host + "/ws";
 }
 
+/**
+ * nav-server 的 HTTP 基址（bootstrap 与 /api/* 的请求目标）。
+ *
+ * 页面由 nav-server 提供时即同源；Tauri 页面由 WebView2 从
+ * `http://tauri.localhost` 提供，nav-server 另在回环端口上，此时从连接地址
+ * 输入框（`ws://127.0.0.1:8123/ws`）反推。推导失败返回 null。
+ */
+function httpBase() {
+  if (sameOriginWsUrl()) return location.origin;
+  const raw = $("server-url").value.trim();
+  if (!/^wss?:\/\//.test(raw)) return null;
+  return raw
+    .replace(/^wss:\/\//, "https://")
+    .replace(/^ws:\/\//, "http://")
+    .replace(/\/ws(\?.*)?$/, "");
+}
+
+/**
+ * 向服务端索取会话引导信息（含令牌）。
+ *
+ * 只在**基址主机是回环**时尝试：手机打开的是 LAN 地址，服务端必然 403，
+ * 客户端这一侧的判断只是避免一次注定失败的请求，真正的门在服务端。
+ * 返回解析后的 JSON，任何失败都返回 null（不抛异常、不静默替换成假令牌）。
+ */
+async function fetchBootstrap() {
+  const base = httpBase();
+  if (!base) return null;
+  let host;
+  try {
+    host = new URL(base).hostname;
+  } catch (e) {
+    logWarn("连接地址无法解析，会话引导跳过", e);
+    return null;
+  }
+  if (!isLoopbackHostname(host)) return null;
+  let r;
+  try {
+    r = await fetch(base + "/api/bootstrap");
+  } catch (e) {
+    logWarn("会话引导请求失败", e);
+    return null;
+  }
+  if (!r.ok) {
+    logWarn(`会话引导返回 ${r.status}，动态 API 与实时帧流将不可用`);
+    return null;
+  }
+  let d;
+  try {
+    d = await r.json();
+  } catch (e) {
+    logWarn("会话引导返回体不是合法 JSON", e);
+    return null;
+  }
+  if (!d || typeof d.token !== "string" || !TOKEN_RE.test(d.token)) {
+    // 形态校验同样在前端做一次：服务端契约被破坏时应当显式告警，
+    // 而不是把一个畸形令牌一路带到 WS URL 上。
+    logWarn("会话引导未返回合法令牌，已忽略");
+    return null;
+  }
+  lastBootstrap = d;
+  return d;
+}
+
+/**
+ * 确保在建立连接前持有令牌。
+ *
+ * 顺序：fragment/sessionStorage（同步，已在 initSessionToken 中完成）
+ *       → 回环 bootstrap（异步）。
+ * 手机（LAN 地址）没有 fragment 时不会走到 bootstrap，因此没有令牌——
+ * 这是刻意结果：手机端的令牌只能经二维码 fragment 交付。
+ */
+async function ensureSessionToken() {
+  if (sessionToken) return sessionToken;
+  const d = await fetchBootstrap();
+  if (d) setSessionToken(d.token);
+  return sessionToken;
+}
+
 // ─── LAN 二维码（P4R Batch 3）───────────────────────────────────────────────
 // 原实现用 `location.hostname` 构造二维码地址，本机页面打开时得到
 // `http://127.0.0.1:<port>/`——该二维码对手机无效（手机上的 127.0.0.1 指向手机
@@ -544,23 +675,18 @@ function sameOriginWsUrl() {
 // 全部候选并标注网卡名，候选多于一个时由用户在下拉框中选择。
 async function refreshLanQr() {
   const box = $("qr-box");
-  if (!isLoopbackHost()) {
+  const base = httpBase();
+  let host = null;
+  try {
+    host = base ? new URL(base).hostname : null;
+  } catch { /* 地址非法：按「非本机页面」处理，下面隐藏二维码区块 */ }
+  if (!host || !isLoopbackHostname(host)) {
     // 手机端本身就是被扫码的一方，不需要二维码；且远端 bootstrap 必然被拒。
     box.classList.add("hidden");
     return;
   }
-  let data;
-  try {
-    const r = await fetch("api/lan-bootstrap");
-    if (!r.ok) {
-      logWarn(`LAN bootstrap 返回 ${r.status}，二维码不可用`);
-      return;
-    }
-    data = await r.json();
-  } catch (e) {
-    logWarn("LAN bootstrap 请求失败，二维码不可用", e);
-    return;
-  }
+  const data = lastBootstrap ?? (await fetchBootstrap());
+  if (!data) return;
   renderLanQr(data);
 }
 
@@ -571,7 +697,7 @@ function renderLanQr(data) {
   const canvas = $("qr");
   box.classList.remove("hidden");
 
-  const addrs = data && data.enabled === true && Array.isArray(data.addresses)
+  const addrs = data && data.lan_enabled === true && Array.isArray(data.addresses)
     ? data.addresses : [];
 
   const showNote = (text) => {
@@ -583,7 +709,7 @@ function renderLanQr(data) {
     note.classList.remove("hidden");
   };
 
-  if (!data || data.enabled !== true) {
+  if (!data || data.lan_enabled !== true) {
     showNote("局域网未启用——服务以 --lan 启动后可扫码连接手机");
     return;
   }
@@ -609,25 +735,23 @@ function renderLanQr(data) {
   const preferred = addrs.find((a) => a.preferred) || addrs[0];
   sel.value = (kept || preferred).address;
   pick.classList.toggle("hidden", addrs.length < 2);
-  lastLanBootstrap = data;
+  lastBootstrap = data;
   drawQr(data.token, sel.value, data.port);
 }
 
-/** 最近一次 bootstrap 结果（切换候选地址时重绘二维码用；不参与鉴权）。 */
-let lastLanBootstrap = null;
-
 /** 用户在多个候选地址间切换时重绘二维码。 */
 $("lan-address").addEventListener("change", () => {
-  if (!lastLanBootstrap) return;
-  drawQr(lastLanBootstrap.token, $("lan-address").value, lastLanBootstrap.port);
+  if (!lastBootstrap) return;
+  drawQr(lastBootstrap.token, $("lan-address").value, lastBootstrap.port);
 });
 
 /**
  * 生成二维码。
  *
- * 可见文本只显示地址（`http://<addr>:<port>/`），完整含令牌 URL 保存在
- * `canvas.dataset.qrTarget`：令牌在失败截图、trace 等测试 artifact 里出现没有任何
- * 价值，而它经二维码本身交付给手机。E2E 通过 data-qr-target 断言二维码内容。
+ * 可见文本只显示地址（`http://<addr>:<port>/`）。完整含令牌 URL 写入
+ * `canvas.dataset.qrTarget`——它是 DOM 的一部分（不是可见文本，但仍可被同源
+ * 脚本读取），保留它的唯一目的是让 E2E 能断言二维码内容。令牌会出现在失败
+ * 截图与 Playwright trace 里，这一点在报告中明确记录，不声称「令牌不进入 DOM」。
  */
 function drawQr(token, address, port) {
   if (!token) {
@@ -643,11 +767,21 @@ function drawQr(token, address, port) {
 }
 
 
-// 默认连接地址：页面由 nav-server 用 HTTP 提供时按同源推导（含手机经 LAN 地址
-// 打开的情形）；file:// 与桌面端保持 index.html 的默认值。令牌不写入输入框，
-// 由 connect() 在建立连接时附加。
-const derivedWs = sameOriginWsUrl();
-if (derivedWs) $("server-url").value = derivedWs;
+// 启动顺序（P4R Batch 3.5）：先确定连接地址，再确保持有会话令牌，最后连接。
+// 令牌必须在**构造 socket 之前**就位，否则首次连接必然 401，页面会先显示一次
+// 「已断开」再重连——那是引导时序缺陷被当成正常现象。
+//
+// 令牌不写入输入框，由 connect() 在建立连接时附加；每次重连都会重新读取
+// `sessionToken`，因此「重连丢失令牌」在结构上不可能出现。
+async function boot() {
+  const derivedWs = sameOriginWsUrl();
+  if (derivedWs) $("server-url").value = derivedWs;
+  try {
+    await ensureSessionToken();
+  } catch (e) {
+    logWarn("会话令牌引导异常，将以无令牌方式尝试连接", e);
+  }
+  connect();
+}
 
-// 自动连接
-connect();
+boot();

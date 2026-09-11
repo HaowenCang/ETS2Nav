@@ -260,16 +260,53 @@ pub(crate) fn snapshot_json(s: &NavigationSnapshot) -> String {
 /// 落地形态。P4R Batch 3 之前此处无条件写 `Access-Control-Allow-Origin: *`。
 pub(crate) type CorsHeaders = Vec<(&'static str, String)>;
 
-/// 把已判定的 CORS 头序列化为响应头片段（每个头一行，含 CRLF）。
-pub(crate) fn cors_block(cors: &[(&'static str, String)]) -> String {
+/// 把任意头序列化为响应头片段（每个头一行，含 CRLF）。
+///
+/// 键类型固定为 `&str`；值泛化到 `Display` 以便同时接受编译期常量表
+/// （`(&str, &str)`）与运行时构造的 CORS 头（`(&str, String)`）。
+///
+/// 注意：写出的值只来自调用方提供的常量表或 `cors_headers_for`（后者写出的也是
+/// 白名单常量本身），因此响应头结构不可能被请求内容改变——CRLF 注入在构造层面
+/// 就不可达。
+pub(crate) fn header_block<V: std::fmt::Display>(headers: &[(&str, V)]) -> String {
     let mut s = String::new();
-    for (k, v) in cors {
+    for (k, v) in headers {
         s.push_str(k);
         s.push_str(": ");
-        s.push_str(v);
+        s.push_str(&v.to_string());
         s.push_str("\r\n");
     }
     s
+}
+
+/// 把已判定的 CORS 头序列化为响应头片段（每个头一行，含 CRLF）。
+pub(crate) fn cors_block(cors: &[(&'static str, String)]) -> String {
+    header_block(cors)
+}
+
+/// 写一个完整 HTTP 响应，`extra` 为附加响应头。
+///
+/// 所有响应都带 `security::HARDENING_HEADERS`（nosniff / no-referrer）；
+/// 动态 API 的 `Cache-Control: no-store` 由调用方经 `extra` 传入，因为静态资源
+/// 仍需正常缓存（vendor JS 与 PMTiles 的 Range 请求依赖缓存语义）。
+pub(crate) fn http_reply_full(
+    w: &mut dyn Write,
+    status: &str,
+    content_type: &str,
+    body: &[u8],
+    cors: &[(&'static str, String)],
+    extra: &[(&str, String)],
+) -> std::io::Result<()> {
+    let head = format!(
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\n{}{}{}Connection: close\r\n\r\n",
+        body.len(),
+        header_block(crate::security::HARDENING_HEADERS),
+        header_block(extra),
+        cors_block(cors)
+    );
+    w.write_all(head.as_bytes())?;
+    w.write_all(body)?;
+    w.flush()
 }
 
 pub(crate) fn http_reply(
@@ -279,14 +316,15 @@ pub(crate) fn http_reply(
     body: &[u8],
     cors: &[(&'static str, String)],
 ) -> std::io::Result<()> {
-    let head = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n{}\r\n",
-        body.len(),
-        cors_block(cors)
-    );
-    w.write_all(head.as_bytes())?;
-    w.write_all(body)?;
-    w.flush()
+    http_reply_full(w, status, content_type, body, cors, &[])
+}
+
+/// 动态 API 响应的 `extra`：实时导航状态与令牌都不得进入任何缓存。
+pub(crate) fn no_store() -> Vec<(&'static str, String)> {
+    crate::security::NO_STORE_HEADERS
+        .iter()
+        .map(|(k, v)| (*k, (*v).to_string()))
+        .collect()
 }
 
 /// 有界排空入站字节，返回排空字节数。
@@ -425,7 +463,8 @@ pub(crate) fn http_reply_static(
         RangeRequest::Ignore => ("200 OK", total, None, String::new()),
     };
     let head = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {len}\r\nAccept-Ranges: bytes\r\n{extra}Connection: close\r\n{}\r\n",
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {len}\r\nAccept-Ranges: bytes\r\n{extra}{}Connection: close\r\n{}\r\n",
+        header_block(crate::security::HARDENING_HEADERS),
         cors_block(cors)
     );
     w.write_all(head.as_bytes())?;

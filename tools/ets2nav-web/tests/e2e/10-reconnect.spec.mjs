@@ -18,6 +18,11 @@ const wsCounters = () => ({
 });
 
 test("E2E-10 断线后自动重连，且不产生重复 socket", async ({ page }) => {
+  // 本用例需要**启动两个服务器进程**（首个 + 同端口重启）外加 20 s + 30 s 的
+  // 状态断言窗口。单进程就绪实测约 3 s，但冷缓存 + 并发 I/O 下可能显著更长，
+  // 60 s 的默认预算会先于断言耗尽——那是测试预算问题，不是产品失败。断言本身
+  // 未放宽：仍要求退避有界（≤6 次）且必须真正重连成功。
+  test.setTimeout(150_000);
   const s = await session();
   await page.addInitScript(() => {
     window.__wsCreated = 0;

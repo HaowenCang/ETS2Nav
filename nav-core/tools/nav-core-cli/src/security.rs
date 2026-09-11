@@ -1,13 +1,39 @@
-//! P4R Batch 3：LAN 暴露面、会话令牌与 CORS 策略的判定核心。
+//! P4R Batch 3 / 3.5：暴露面控制、会话令牌、来源（Origin/Host）策略与 CORS 判定核心。
 //!
 //! 结构原则：**所有安全判定都是纯函数**（`classify_peer` / `authorize` /
-//! `lan_bootstrap_response` / `cors_headers_for` / `rank_candidates`），socket 与
-//! HTTP 处理层只负责调用它们并把结果落成状态码。这样安全边界可以被穷举式单元
-//! 测试覆盖，而不必依赖启动真实服务器；真实 socket 行为另由集成套件覆盖。
+//! `ServerAuthorities::*` / `bootstrap_response` / `cors_headers_for` /
+//! `rank_candidates`），socket 与 HTTP 处理层只负责调用它们并把结果落成状态码。
+//! 这样安全边界可以被穷举式单元测试覆盖，而不必依赖启动真实服务器；真实 socket
+//! 行为另由集成套件覆盖。
 //!
-//! 威胁模型（本轮范围，见 validation report）：同一局域网内**未授权的第三方**
-//! 读取实时导航状态（位置/目的地/路线）或改写导航目的地。不覆盖：公网暴露、
-//! 本机其他用户进程、TLS/中间人、供应链。因此不做「公网服务器」级设计。
+//! # 两层互不替代的机制（Batch 3.5 的核心修正）
+//!
+//! Batch 3 把 `PeerClass::Loopback` 当作「可信」，于是回环对端对所有动态 API 与
+//! `/ws` 免令牌。该模型混淆了两件不同的事：
+//!
+//! - **TCP 对端地址**说明「连接由本机的某个进程建立」；
+//! - **请求意图**说明「发起者是不是用户认可的那个客户端」。
+//!
+//! 二者并不等价：远程恶意页面可以让**用户的浏览器**向 `127.0.0.1` 发出请求，
+//! 此时服务端看到的对端地址同样是回环。Batch 3.5 以真实 Chromium 复现了两条
+//! 具体路径——跨源 simple POST（`Content-Type: text/plain`，无 preflight）改写
+//! 导航目的地，以及跨站 WebSocket 读取车辆帧流。
+//!
+//! 修正后的模型：
+//!
+//! | 机制 | 决定什么 | 依据 |
+//! |------|----------|------|
+//! | `classify_peer` | 是否允许建立连接、能否取得令牌 | TCP 对端地址 |
+//! | `SessionToken` | 是否允许调用动态 API / `/ws` | 256-bit 随机凭据 |
+//! | `ServerAuthorities` | 浏览器来源（Origin/Host）是否属于本服务器 | 监听端口 + 本机实际地址 |
+//!
+//! 因此：**回环 ≠ 已认证**。身份由令牌承担，对端地址只承担暴露面控制与
+//! bootstrap 资格判定。
+//!
+//! 威胁模型（本轮范围，见 validation report）：同一局域网内**未授权的第三方**，
+//! 以及**用户浏览器被诱导访问的恶意页面**，读取实时导航状态（位置/目的地/路线）
+//! 或改写导航目的地。不覆盖：公网暴露、本机其他用户进程、TLS/中间人、供应链。
+//! 因此不做「公网服务器」级设计。
 
 use std::net::{IpAddr, Ipv4Addr, SocketAddr};
 
@@ -21,9 +47,13 @@ pub const TOKEN_HEX_LEN: usize = TOKEN_BYTES * 2;
 
 /// 连接来源类别。分类只依赖对端 IP，不依赖任何请求内容——请求内容由未授权方
 /// 完全控制，不能作为安全判定的输入。
+///
+/// **本类别不是身份，也不表示已认证**（Batch 3.5 修正）：它与令牌是两层不同的
+/// 机制。`Loopback` 只说明连接由本机某进程建立，浏览器同样可以代表远程页面建立
+/// 这种连接（见模块级说明）。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum PeerClass {
-    /// 127.0.0.0/8。本机 Browser/Tauri dev 路径，两种模式下都免令牌。
+    /// 127.0.0.0/8。本机 Browser/Tauri 路径；**仍需令牌**，但只有它可以取得令牌。
     Loopback,
     /// RFC1918 私网地址。仅 `--lan` 模式下可达，且必须携带令牌。
     PrivateLan,
@@ -67,12 +97,14 @@ fn classify_v4(ip: Ipv4Addr) -> PeerClass {
 // ─── 暴露模式 ────────────────────────────────────────────────────────────────
 
 /// 监听暴露面。默认 `LoopbackOnly`；只有显式 `--lan` 才进入 `Lan`。
+///
+/// **两种模式都生成会话令牌**（Batch 3.5 修正）：模式只决定连接可达范围，
+/// 不决定是否需要认证。
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ExposureMode {
-    /// 只绑定 127.0.0.1。局域网不可达，因此不生成令牌。
+    /// 只绑定 127.0.0.1。局域网不可达；本机页面经 bootstrap 取得令牌后使用。
     LoopbackOnly,
-    /// 绑定 0.0.0.0。私网对端必须携带令牌；回环对端豁免，避免本机
-    /// Browser/Tauri 自举死循环。
+    /// 绑定 0.0.0.0。回环与私网对端都必须携带令牌；令牌只能从回环取得。
     Lan,
 }
 
@@ -102,36 +134,37 @@ pub enum AuthOutcome {
 
 /// 鉴权判定（纯函数）。
 ///
-/// 规则表：
-/// | 模式         | Loopback | PrivateLan        | Disallowed |
-/// |--------------|----------|-------------------|------------|
-/// | LoopbackOnly | Allowed  | Forbidden         | Forbidden  |
-/// | Lan          | Allowed  | 令牌正确→Allowed  | Forbidden  |
+/// 规则表（Batch 3.5 修正后）：
+/// | 模式         | Loopback            | PrivateLan          | Disallowed |
+/// |--------------|---------------------|---------------------|------------|
+/// | LoopbackOnly | 令牌正确→Allowed    | Forbidden           | Forbidden  |
+/// | Lan          | 令牌正确→Allowed    | 令牌正确→Allowed    | Forbidden  |
 ///
-/// 两处刻意的设计：
-/// - `LoopbackOnly` 下私网对端判 `Forbidden` 而非 `Unauthorized`：默认模式下
-///   私网对端根本不该连进来（bind 层已挡住），判 `Forbidden` 是纵深防御，
-///   且语义正确——它不是「缺令牌」，而是「这个来源不该出现」。
-/// - 令牌**只在** `Lan + PrivateLan` 时参与判定：回环豁免是刻意的，否则本机
-///   页面无法自举（它拿不到令牌就无法访问 `/api/lan-bootstrap`）。
+/// 即：**对端类别只决定可达性，令牌决定授权**。回环不再是免令牌理由——
+/// 浏览器可以被远程页面驱使去连 `127.0.0.1`，此时对端同样显示为 `Loopback`，
+/// 而请求意图完全不可信（Batch 3.5 以真实 Chromium 复现，见模块级说明）。
+///
+/// `LoopbackOnly` 下私网对端仍判 `Forbidden` 而非 `Unauthorized`：默认模式下
+/// 私网对端根本不该连进来（bind 层已挡住），判 `Forbidden` 是纵深防御，且语义
+/// 正确——它不是「缺令牌」，而是「这个来源不该出现」。
+///
+/// 自举问题如何解决：本机页面同样拿不到令牌，因此需要一个**唯一**且仅对回环
+/// 开放的令牌出口 `/api/bootstrap`。它是 `is_protected_api` 的唯一豁免，且该豁免
+/// 由来源类别与浏览器 Origin 双重限制，不构成「回环免认证」的一般化通道。
 pub fn authorize(
     mode: ExposureMode,
     peer: PeerClass,
-    expected: Option<&SessionToken>,
+    expected: &SessionToken,
     presented: Option<&str>,
 ) -> AuthOutcome {
     if peer == PeerClass::Disallowed {
         return AuthOutcome::Forbidden;
     }
-    if peer == PeerClass::Loopback {
-        return AuthOutcome::Allowed;
-    }
-    // 以下均为 PrivateLan
-    if mode == ExposureMode::LoopbackOnly {
+    if mode == ExposureMode::LoopbackOnly && peer == PeerClass::PrivateLan {
         return AuthOutcome::Forbidden;
     }
-    match (expected, presented) {
-        (Some(exp), Some(got)) if exp.verify(got) => AuthOutcome::Allowed,
+    match presented {
+        Some(got) if expected.verify(got) => AuthOutcome::Allowed,
         _ => AuthOutcome::Unauthorized,
     }
 }
@@ -248,6 +281,189 @@ pub fn request_path(target: &str) -> &str {
     target.split('?').next().unwrap_or("/")
 }
 
+/// 取某个请求头（已小写键）的值。
+pub fn header<'a>(headers: &'a [(String, String)], name: &str) -> Option<&'a str> {
+    headers
+        .iter()
+        .find(|(k, _)| k == name)
+        .map(|(_, v)| v.as_str())
+}
+
+// ─── 服务器 authority 与浏览器来源策略 ───────────────────────────────────────
+
+/// 本服务器可被访问的 `host:port` 集合。
+///
+/// 用途有两处，且**都不把请求自报的 `Host` 当作信任来源**：
+/// 1. `Host` 头校验（§14）：`Host: evil.example` + `Origin: http://evil.example`
+///    不得因为「二者一致」而被当作同源放行——`evil.example` 不在本表内，
+///    请求直接被拒；
+/// 2. 浏览器 `Origin` 校验（§13）：同源判定只查本表，**不**与 `Host` 比对。
+///
+/// 表中的 host 项来自服务器自身状态：回环名（`127.0.0.1`/`localhost`/`::1`）
+/// 与启动时枚举到的本机 RFC1918 候选地址；端口是 listener 的实际端口。
+/// 因此不存在「任意 Host + 任意 Origin」的自洽放行路径。
+#[derive(Debug, Clone)]
+pub struct ServerAuthorities {
+    port: u16,
+    hosts: Vec<String>,
+}
+
+/// 未带端口时假定的端口（HTTP 默认端口）。
+const DEFAULT_HTTP_PORT: u16 = 80;
+
+impl ServerAuthorities {
+    /// 依据实际监听端口与本机候选地址构造。
+    pub fn new(port: u16, candidates: &[LanCandidate]) -> Self {
+        let mut hosts = vec![
+            "127.0.0.1".to_string(),
+            "localhost".to_string(),
+            "::1".to_string(),
+        ];
+        for c in candidates {
+            let s = c.address.to_string();
+            if !hosts.contains(&s) {
+                hosts.push(s);
+            }
+        }
+        ServerAuthorities { port, hosts }
+    }
+
+    pub fn port(&self) -> u16 {
+        self.port
+    }
+
+    /// 该 host 是否属于本机（已归一化：小写、去方括号）。
+    pub fn host_known(&self, host: &str) -> bool {
+        self.hosts.iter().any(|h| h == host)
+    }
+
+    /// `Host` 头是否可接受。
+    ///
+    /// 刻意**严格**：端口必须等于实际监听端口（未写端口时按 HTTP 默认端口 80
+    /// 处理）。这使下列请求被拒：
+    /// - 攻击者控制的域名（DNS rebinding：域名解析到 127.0.0.1，但 `Host` 是
+    ///   攻击者的域名）；
+    /// - 端口不符的 authority。
+    ///
+    /// 代价（已记入报告）：以本机主机名/组播名（`mypc.local`）访问不再被接受，
+    /// 必须使用回环名或二维码/设置面板给出的实际 IP。URL 是由服务端生成并交付
+    /// 的，该限制不影响正常流程。
+    pub fn host_header_allowed(&self, raw: &str) -> bool {
+        match split_authority(raw) {
+            Some((host, port)) => port == self.port && self.host_known(&host),
+            None => false,
+        }
+    }
+
+    /// 浏览器 `Origin` 是否指向本服务器（同源判定）。
+    ///
+    /// 只接受 `http://` scheme：服务端不提供 TLS，把 `https://` 视为本服务器会
+    /// 制造一个不存在的信任面。
+    pub fn origin_is_self(&self, origin: &str) -> bool {
+        let Some(rest) = origin.strip_prefix("http://") else {
+            return false;
+        };
+        match split_authority(rest) {
+            Some((host, port)) => port == self.port && self.host_known(&host),
+            None => false,
+        }
+    }
+}
+
+/// 拆分 `host[:port]`，返回归一化 host（小写、去 `[]`）与端口。
+///
+/// 未写端口时取 `DEFAULT_HTTP_PORT`。端口段必须为纯数字且非空——`127.0.0.1:8a`
+/// 这类畸形输入返回 `None` 而不是被截断成合法值。
+fn split_authority(raw: &str) -> Option<(String, u16)> {
+    let raw = raw.trim();
+    if raw.is_empty() {
+        return None;
+    }
+    let (host_raw, port) = if let Some(rest) = raw.strip_prefix('[') {
+        // IPv6 字面量：[::1]:8123 / [::1]
+        let (h, tail) = rest.split_once(']')?;
+        let port = match tail.strip_prefix(':') {
+            Some(p) => parse_port(p)?,
+            None if tail.is_empty() => DEFAULT_HTTP_PORT,
+            None => return None,
+        };
+        (h, port)
+    } else {
+        match raw.split_once(':') {
+            Some((h, p)) => (h, parse_port(p)?),
+            None => (raw, DEFAULT_HTTP_PORT),
+        }
+    };
+    let host = host_raw.trim().to_ascii_lowercase();
+    if host.is_empty() || host.contains(char::is_whitespace) {
+        return None;
+    }
+    Some((host, port))
+}
+
+fn parse_port(s: &str) -> Option<u16> {
+    if s.is_empty() || !s.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    s.parse::<u16>().ok()
+}
+
+/// 浏览器来源是否被接受（`/ws` 握手与 `/api/bootstrap` 共用同一策略）。
+///
+/// 两类被接受：
+/// 1. **本服务器自身的同源页面**——authority 在本机已知地址表内且端口相符；
+/// 2. **CORS 白名单**（实测确认的 Tauri origin）。
+///
+/// `None`（无 `Origin` 头）不在本函数职责内：非浏览器客户端本来就不发 `Origin`，
+/// 它必须靠令牌通过认证。调用方必须先判令牌；本函数只是「若浏览器携带 Origin，
+/// 则该 Origin 必须合规」这一附加条件。
+///
+/// `Origin: null`（sandbox iframe / 部分重定向场景）必然落到「不在表内」分支被拒。
+pub fn browser_origin_accepted(auth: &ServerAuthorities, origin: &str) -> bool {
+    auth.origin_is_self(origin) || cors_allowed_origin(origin).is_some()
+}
+
+// ─── 请求体媒体类型策略（CSRF 纵深防御）─────────────────────────────────────
+
+/// 该请求是否必须声明 `Content-Type: application/json`。
+///
+/// 覆盖 `/api/` 下一切带请求体的方法，而不只是当前的 `POST /api/route`：
+/// 按方法而非按端点枚举，使将来新增的写入端点默认继承该约束。
+pub fn body_must_be_json(method: &str, path: &str) -> bool {
+    matches!(method, "POST" | "PUT" | "PATCH") && path.starts_with("/api/")
+}
+
+/// `Content-Type` 是否为 `application/json`（允许 `; charset=utf-8` 等参数）。
+///
+/// 缺失该头即返回 false——「没声明」与「声明错了」在本策略下同样不可接受。
+pub fn is_json_content_type(headers: &[(String, String)]) -> bool {
+    match header(headers, "content-type") {
+        Some(v) => v
+            .split(';')
+            .next()
+            .unwrap_or("")
+            .trim()
+            .eq_ignore_ascii_case("application/json"),
+        None => false,
+    }
+}
+
+// ─── 响应硬化头 ──────────────────────────────────────────────────────────────
+
+/// 所有响应都附带的硬化头。
+///
+/// `nosniff`：阻止浏览器忽略 `Content-Type` 做内容嗅探（例如把 `map.pmtiles`
+/// 或 API 的 JSON 当作脚本/HTML 解释）。
+/// `no-referrer`：页面 URL 不进入任何出站 `Referer`。当前 URL 不含令牌
+/// （fragment 不参与 `Referer`，query 令牌已被服务端拒绝），故此项是纵深防御。
+pub const HARDENING_HEADERS: &[(&str, &str)] = &[
+    ("X-Content-Type-Options", "nosniff"),
+    ("Referrer-Policy", "no-referrer"),
+];
+
+/// 动态 API 响应的缓存指令：实时导航状态与令牌都不得进入任何缓存。
+pub const NO_STORE_HEADERS: &[(&str, &str)] = &[("Cache-Control", "no-store")];
+
 // ─── 局域网地址发现 ──────────────────────────────────────────────────────────
 
 /// 一个候选局域网地址。附带网卡名仅用于**让用户在多个候选中做知情选择**，
@@ -305,43 +521,43 @@ pub fn discover_lan_candidates() -> Vec<LanCandidate> {
 
 // ─── 引导端点 ────────────────────────────────────────────────────────────────
 
-/// `/api/lan-bootstrap` 响应：(HTTP 状态码, JSON 体)。
+/// 会话引导端点路径。**唯一**的动态 API 令牌豁免（见 `is_protected_api`）。
 ///
-/// 这是整个模型的**唯一**令牌出口，且只对回环对端开放。刻意不把令牌放进
-/// `/api/metadata`、`index.html` 或 JS bundle——那些资源对任何 LAN 对端可读
-/// （静态资源不鉴权，见 §11 威胁模型决策），放进去等于取消鉴权。
+/// Batch 3 该端点名为 `/api/lan-bootstrap`，其职责被描述为「LAN 令牌出口」。
+/// Batch 3.5 改为 `session bootstrap`：令牌在两种模式下都存在，本机页面
+/// （`http://127.0.0.1:…` 与 Tauri 的 `http://tauri.localhost`）都经它取得令牌。
+/// 旧名不再保留别名——第二个入口只会多出一条需要独立审计的豁免路径。
+pub const BOOTSTRAP_PATH: &str = "/api/bootstrap";
+
+/// `/api/bootstrap` 响应：(HTTP 状态码, JSON 体)。
 ///
-/// - 非 `--lan`：`200 {"enabled": false}`，且**不生成也不返回**令牌。
-/// - `--lan` + 回环：`200 {"enabled": true, port, addresses[], token}`。
-/// - `--lan` + 私网/其他：`403`，响应体不含任何令牌信息。
+/// 三重限制，缺一不可：
+/// 1. **对端必须是回环**（`PeerClass::Loopback`）。远程对端 403 且响应不含任何
+///    令牌信息——手机不能从服务端取令牌，只能经二维码 fragment 接收。
+/// 2. **若请求携带 `Origin`，该 Origin 必须合规**：只能是本服务器自身的同源页面
+///    或 CORS 白名单（实测的 Tauri origin）。这挡住「恶意页面从用户浏览器里读取
+///    令牌」——即便对端是回环，`Origin: http://127.0.0.1:<别的端口>` 也会被拒。
+/// 3. 响应带 `Cache-Control: no-store`（由调用方经 `NO_STORE_HEADERS` 附加）。
 ///
-/// `addresses` 为对象数组（含 `interface` / `active` / `preferred`），比
-/// 纯字符串数组多出的字段是 UI 在多网卡下做知情选择所必需的：任务书示例形如
-/// `["192.168.1.123"]`，但仅凭地址字符串无法区分 Wi-Fi 与 Hyper-V 虚拟网卡，
-/// UI 只能盲选。表示只有一种，不额外附带冗余的字符串数组。
-pub fn lan_bootstrap_response(
+/// 无 `Origin` 的请求（`curl`、原生客户端、同源 GET）按「非浏览器客户端」处理：
+/// `Origin` 不是认证机制，原生客户端可任意伪造或省略它，因此它只作为浏览器场景
+/// 的附加约束，真正的门是「回环对端」这一条。
+pub fn bootstrap_response(
     mode: ExposureMode,
     peer: PeerClass,
-    port: u16,
-    token: Option<&SessionToken>,
+    origin: Option<&str>,
+    auth: &ServerAuthorities,
+    token: &SessionToken,
     candidates: &[LanCandidate],
 ) -> (u16, String) {
-    if mode == ExposureMode::LoopbackOnly {
-        return (200, r#"{"enabled":false}"#.to_string());
-    }
     if peer != PeerClass::Loopback {
-        return (
-            403,
-            r#"{"error":"lan bootstrap is loopback-only"}"#.to_string(),
-        );
+        return (403, r#"{"error":"bootstrap is loopback-only"}"#.to_string());
     }
-    let Some(token) = token else {
-        // `--lan` 下令牌必然存在；缺失属内部状态错误，按拒绝处理而非放行。
-        return (
-            403,
-            r#"{"error":"lan enabled but no session token"}"#.to_string(),
-        );
-    };
+    if let Some(o) = origin {
+        if !browser_origin_accepted(auth, o) {
+            return (403, r#"{"error":"origin not allowed"}"#.to_string());
+        }
+    }
     let list: Vec<serde_json::Value> = candidates
         .iter()
         .enumerate()
@@ -355,8 +571,8 @@ pub fn lan_bootstrap_response(
         })
         .collect();
     let body = serde_json::json!({
-        "enabled": true,
-        "port": port,
+        "lan_enabled": mode == ExposureMode::Lan,
+        "port": auth.port(),
         "addresses": list,
         "token": token.as_str(),
     });
@@ -427,16 +643,19 @@ pub fn preflight_headers_for(origin: Option<&str>) -> Vec<(&'static str, String)
 
 /// 需要令牌保护的请求路径。
 ///
-/// 采用**默认拒绝**：`/api/` 下的一切路径都受保护，唯一豁免是回环限定的
-/// `/api/lan-bootstrap`。任务书要求「至少保护」五个既有端点；按枚举放行会让
-/// 将来新增的 `/api/*` 端点默认处于未鉴权状态，而按前缀拒绝使新增端点默认安全。
+/// 采用**默认拒绝**：`/api/` 下的一切路径都受保护，唯一豁免是 `/api/bootstrap`。
+/// 按前缀拒绝而非按端点枚举，使将来新增的 `/*` 端点默认安全。
+///
+/// **Batch 3.5 修正**：Batch 3 时回环对端对所有受保护路径免令牌，等于把「TCP
+/// 对端是 127.0.0.1」当作身份。现在唯一豁免只剩 bootstrap，且该豁免自身受
+/// 「回环对端 + Origin 合规」双重限制。
 ///
 /// 静态资源（`/`、`index.html`、JS/CSS/vendor/字体/`map.pmtiles`/manifest）不在
 /// 保护范围内，这是刻意的威胁模型决策：手机必须先取到客户端代码，才能读取 URL
-/// fragment 中的令牌并携带它；且地图档案不是实时个人状态。本轮的防护目标是
-/// **动态导航状态与控制 API**，不是「LAN 服务全部资源均需认证」。
+/// fragment 中的令牌并携带它。报告据此**不**声称「LAN 服务全部资源均需认证」，
+/// 防护目标是**动态导航状态与控制 API**。
 pub fn is_protected_api(path: &str) -> bool {
-    path.starts_with("/api/") && path != "/api/lan-bootstrap"
+    path.starts_with("/api/") && path != BOOTSTRAP_PATH
 }
 
 #[cfg(test)]
@@ -594,14 +813,13 @@ mod tests {
 
         for mode in [LoopbackOnly, Lan] {
             for peer in [Loopback, PrivateLan, Disallowed] {
-                let exp = if mode == Lan { Some(&good) } else { None };
                 for presented in [None, Some(bad.as_str()), Some(good.as_str())] {
-                    let got = authorize(mode, peer, exp, presented);
+                    let got = authorize(mode, peer, &good, presented);
                     let want = match (mode, peer) {
                         (_, Disallowed) => Forbidden,
-                        (_, Loopback) => Allowed,
                         (LoopbackOnly, PrivateLan) => Forbidden,
-                        (Lan, PrivateLan) => {
+                        // 令牌是唯一的授权依据；对端类别只决定可达范围
+                        (_, _) => {
                             if presented == Some(good.as_str()) {
                                 Allowed
                             } else {
@@ -638,40 +856,203 @@ mod tests {
             "a".repeat(TOKEN_HEX_LEN - 1),
             "a".repeat(TOKEN_HEX_LEN + 1),
         ] {
+            for peer in [PeerClass::Loopback, PeerClass::PrivateLan] {
+                assert_eq!(
+                    authorize(ExposureMode::Lan, peer, &good, Some(&wrong)),
+                    AuthOutcome::Unauthorized,
+                    "近似令牌必须被拒: {wrong:?}（peer={peer:?}）"
+                );
+            }
+        }
+    }
+
+    /// Batch 3.5 的核心回归断言：**回环不再免令牌**。
+    ///
+    /// 若该断言语义被还原（`Loopback → Allowed`），跨源 simple POST 与跨站
+    /// WebSocket 会重新可用——浏览器正是以回环对端身份发起这两类请求的。
+    #[test]
+    fn authorize_loopback_requires_token_in_every_mode() {
+        let good = tok(&"a".repeat(TOKEN_HEX_LEN));
+        for mode in [ExposureMode::LoopbackOnly, ExposureMode::Lan] {
+            assert_eq!(
+                authorize(mode, PeerClass::Loopback, &good, None),
+                AuthOutcome::Unauthorized,
+                "{mode:?}: 回环对端无令牌必须 401（回环 ≠ 已认证）"
+            );
             assert_eq!(
                 authorize(
-                    ExposureMode::Lan,
-                    PeerClass::PrivateLan,
-                    Some(&good),
-                    Some(&wrong)
+                    mode,
+                    PeerClass::Loopback,
+                    &good,
+                    Some(&"c".repeat(TOKEN_HEX_LEN))
                 ),
                 AuthOutcome::Unauthorized,
-                "近似令牌必须被拒: {wrong:?}"
+                "{mode:?}: 回环对端错误令牌必须 401"
+            );
+            assert_eq!(
+                authorize(mode, PeerClass::Loopback, &good, Some(good.as_str())),
+                AuthOutcome::Allowed,
+                "{mode:?}: 正确令牌必须放行，否则本机页面无法工作"
             );
         }
     }
 
+    // ── 服务器 authority / Origin 策略 ─────────────────────────────────────
+
+    fn auth_with(port: u16, addrs: &[&str]) -> ServerAuthorities {
+        let list: Vec<LanCandidate> = addrs.iter().map(|a| cand(a, "nic", true)).collect();
+        ServerAuthorities::new(port, &list)
+    }
+
     #[test]
-    fn authorize_loopback_exempt_in_lan_mode() {
-        // 关键：LAN 模式下本机页面必须免令牌，否则 /api/lan-bootstrap 自举死循环
-        let good = tok(&"a".repeat(TOKEN_HEX_LEN));
-        assert_eq!(
-            authorize(ExposureMode::Lan, PeerClass::Loopback, Some(&good), None),
-            AuthOutcome::Allowed
+    fn host_header_accepts_only_own_authorities() {
+        let a = auth_with(8123, &["10.148.63.202", "172.30.0.1"]);
+        for ok in [
+            "127.0.0.1:8123",
+            "localhost:8123",
+            "[::1]:8123",
+            "10.148.63.202:8123",
+            "172.30.0.1:8123",
+            "LOCALHOST:8123",
+        ] {
+            assert!(a.host_header_allowed(ok), "{ok} 应被接受");
+        }
+        for bad in [
+            // DNS rebinding：攻击者域名解析到 127.0.0.1，但 Host 是攻击者的域名
+            "evil.example:8123",
+            "evil.example",
+            // 端口不符
+            "127.0.0.1:8124",
+            "127.0.0.1",
+            "10.148.63.202:80",
+            // 非本机地址
+            "10.0.0.99:8123",
+            "192.168.1.1:8123",
+            // 畸形端口不得被截断成合法值
+            "127.0.0.1:8123x",
+            "127.0.0.1:",
+            "127.0.0.1:8a",
+            "",
+            " ",
+            "127.0.0.1:8123:9",
+        ] {
+            assert!(!a.host_header_allowed(bad), "{bad:?} 不应被接受");
+        }
+    }
+
+    #[test]
+    fn host_default_port_only_matches_port_80() {
+        assert!(auth_with(80, &[]).host_header_allowed("127.0.0.1"));
+        assert!(auth_with(80, &[]).host_header_allowed("127.0.0.1:80"));
+        assert!(!auth_with(8123, &[]).host_header_allowed("127.0.0.1"));
+    }
+
+    #[test]
+    fn origin_self_is_derived_from_server_state_not_host_header() {
+        let a = auth_with(8123, &["10.148.63.202"]);
+        for ok in [
+            "http://127.0.0.1:8123",
+            "http://localhost:8123",
+            "http://[::1]:8123",
+            "http://10.148.63.202:8123",
+        ] {
+            assert!(a.origin_is_self(ok), "{ok} 是服务器自身来源");
+        }
+        for bad in [
+            "http://evil.example",
+            "http://evil.example:8123",
+            // 同机但不同端口 = 不同源。这正是 Batch 3.5 复现的攻击页面形态。
+            "http://127.0.0.1:9999",
+            "http://127.0.0.1",
+            // 无 TLS，https 不构成本服务器的来源
+            "https://127.0.0.1:8123",
+            "http://10.0.0.99:8123",
+            // Origin 为 null（sandbox / 重定向场景）
+            "null",
+            "",
+            // 大小写与空白不得被容错
+            "HTTP://127.0.0.1:8123",
+            " http://127.0.0.1:8123",
+        ] {
+            assert!(!a.origin_is_self(bad), "{bad:?} 不得被视为本服务器来源");
+        }
+    }
+
+    #[test]
+    fn browser_origin_accepted_covers_self_and_tauri_only() {
+        let a = auth_with(8123, &["10.148.63.202"]);
+        assert!(browser_origin_accepted(&a, "http://127.0.0.1:8123"));
+        assert!(browser_origin_accepted(&a, "http://10.148.63.202:8123"));
+        assert!(browser_origin_accepted(&a, "http://tauri.localhost"));
+        for bad in [
+            "http://evil.example",
+            "http://127.0.0.1:9999",
+            "null",
+            "http://tauri.localhost.evil.example",
+        ] {
+            assert!(!browser_origin_accepted(&a, bad), "{bad} 必须被拒");
+        }
+    }
+
+    // ── 请求体媒体类型策略 ─────────────────────────────────────────────────
+
+    #[test]
+    fn json_content_type_policy() {
+        assert!(is_json_content_type(&hdr(
+            "content-type",
+            "application/json"
+        )));
+        assert!(is_json_content_type(&hdr(
+            "content-type",
+            "application/json; charset=utf-8"
+        )));
+        assert!(is_json_content_type(&hdr(
+            "content-type",
+            "APPLICATION/JSON"
+        )));
+        assert!(is_json_content_type(&hdr(
+            "content-type",
+            "application/json ;charset=utf-8"
+        )));
+        for bad in [
+            "text/plain",
+            "text/plain;charset=UTF-8",
+            "application/x-www-form-urlencoded",
+            "multipart/form-data",
+            "application/jsonp",
+            "",
+            " ",
+        ] {
+            assert!(
+                !is_json_content_type(&hdr("content-type", bad)),
+                "{bad:?} 不是 application/json"
+            );
+        }
+        assert!(
+            !is_json_content_type(&[]),
+            "缺失 Content-Type 与声明错误同等不可接受"
+        );
+        assert!(
+            !is_json_content_type(&hdr("x-content-type", "application/json")),
+            "只看 content-type 头"
         );
     }
 
     #[test]
-    fn authorize_lan_without_expected_token_never_allows_private_peer() {
-        // 内部状态异常（LAN 模式却没生成令牌）不得退化为放行
-        assert_eq!(
-            authorize(
-                ExposureMode::Lan,
-                PeerClass::PrivateLan,
-                None,
-                Some("anything")
-            ),
-            AuthOutcome::Unauthorized
+    fn json_body_required_for_every_api_write_method() {
+        for m in ["POST", "PUT", "PATCH"] {
+            assert!(body_must_be_json(m, "/api/route"), "{m} 必须要求 JSON");
+            assert!(
+                body_must_be_json(m, "/api/future"),
+                "新增写入端点默认继承约束"
+            );
+        }
+        for m in ["GET", "HEAD", "OPTIONS", "DELETE"] {
+            assert!(!body_must_be_json(m, "/api/route"), "{m} 无请求体");
+        }
+        assert!(
+            !body_must_be_json("POST", "/static/x"),
+            "非 /api 路径不受约束"
         );
     }
 
@@ -885,23 +1266,25 @@ mod tests {
     // ── 引导端点 ───────────────────────────────────────────────────────────
 
     #[test]
-    fn bootstrap_disabled_without_lan() {
+    fn bootstrap_returns_token_in_loopback_mode_with_lan_disabled() {
+        // Batch 3.5：非 --lan 模式同样下发令牌（本机页面需要它访问动态 API）。
+        // `lan_enabled` 只描述 LAN 暴露面，不描述是否已认证。
         let tok = SessionToken::generate().unwrap();
-        let (code, body) = lan_bootstrap_response(
+        let auth = auth_with(8123, &[]);
+        let (code, body) = bootstrap_response(
             ExposureMode::LoopbackOnly,
             PeerClass::Loopback,
-            8123,
-            Some(&tok),
+            None,
+            &auth,
+            &tok,
             &[],
         );
         assert_eq!(code, 200);
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(v["enabled"], false);
-        assert!(
-            !body.contains(tok.as_str()),
-            "非 LAN 模式不得以任何形式返回令牌"
-        );
-        assert!(v.get("token").is_none());
+        assert_eq!(v["lan_enabled"], false, "默认模式不得声称已开启 LAN");
+        assert_eq!(v["token"], tok.as_str(), "本机页面必须能取到令牌");
+        assert_eq!(v["port"], 8123);
+        assert_eq!(v["addresses"].as_array().unwrap().len(), 0);
     }
 
     #[test]
@@ -911,16 +1294,18 @@ mod tests {
             cand("10.148.63.202", "Wi-Fi", true),
             cand("172.30.0.1", "vEthernet (Default Switch)", true),
         ];
-        let (code, body) = lan_bootstrap_response(
+        let auth = ServerAuthorities::new(8123, &list);
+        let (code, body) = bootstrap_response(
             ExposureMode::Lan,
             PeerClass::Loopback,
-            8123,
-            Some(&tok),
+            Some("http://127.0.0.1:8123"),
+            &auth,
+            &tok,
             &list,
         );
         assert_eq!(code, 200);
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(v["enabled"], true);
+        assert_eq!(v["lan_enabled"], true);
         assert_eq!(v["token"], tok.as_str());
         assert_eq!(v["port"], 8123);
         let a = v["addresses"].as_array().unwrap();
@@ -936,18 +1321,61 @@ mod tests {
     }
 
     #[test]
-    fn bootstrap_refused_for_remote_peer() {
+    fn bootstrap_refused_for_remote_peer_in_both_modes() {
         let tok = SessionToken::generate().unwrap();
         let list = vec![cand("10.148.63.202", "Wi-Fi", true)];
-        for peer in [PeerClass::PrivateLan, PeerClass::Disallowed] {
-            let (code, body) =
-                lan_bootstrap_response(ExposureMode::Lan, peer, 8123, Some(&tok), &list);
-            assert_eq!(code, 403, "{peer:?} 必须被拒绝");
-            assert!(
-                !body.contains(tok.as_str()),
-                "{peer:?} 的拒绝响应不得泄露令牌"
+        let auth = ServerAuthorities::new(8123, &list);
+        for mode in [ExposureMode::LoopbackOnly, ExposureMode::Lan] {
+            for peer in [PeerClass::PrivateLan, PeerClass::Disallowed] {
+                let (code, body) = bootstrap_response(mode, peer, None, &auth, &tok, &list);
+                assert_eq!(code, 403, "{mode:?}/{peer:?} 必须被拒绝");
+                assert!(
+                    !body.contains(tok.as_str()),
+                    "{mode:?}/{peer:?} 的拒绝响应不得泄露令牌"
+                );
+                assert!(!body.contains("10.148.63.202"), "拒绝响应不得泄露候选地址");
+            }
+        }
+    }
+
+    /// 关键回归：恶意页面即便以回环对端身份请求 bootstrap，也不得取得令牌。
+    ///
+    /// `Origin` 由浏览器写入，攻击页面无法把它伪造成 `127.0.0.1:<本端口>`——
+    /// 那需要它自身就运行在该源上。
+    #[test]
+    fn bootstrap_refused_for_bad_browser_origin_even_from_loopback() {
+        let tok = SessionToken::generate().unwrap();
+        let list = vec![cand("10.148.63.202", "Wi-Fi", true)];
+        let auth = ServerAuthorities::new(8123, &list);
+        // 攻击页面与 nav-server 同机不同端口 → 跨源，必须被拒
+        for bad in [
+            "http://127.0.0.1:9999",
+            "http://evil.example",
+            "null",
+            "http://10.0.0.99:8123",
+        ] {
+            let (code, body) = bootstrap_response(
+                ExposureMode::Lan,
+                PeerClass::Loopback,
+                Some(bad),
+                &auth,
+                &tok,
+                &list,
             );
-            assert!(!body.contains("10.148.63.202") || peer == PeerClass::PrivateLan);
+            assert_eq!(code, 403, "Origin {bad} 不得取得令牌");
+            assert!(!body.contains(tok.as_str()), "拒绝响应不得包含令牌");
+        }
+        // 被接受的两种浏览器来源
+        for ok in ["http://127.0.0.1:8123", "http://tauri.localhost"] {
+            let (code, _) = bootstrap_response(
+                ExposureMode::Lan,
+                PeerClass::Loopback,
+                Some(ok),
+                &auth,
+                &tok,
+                &list,
+            );
+            assert_eq!(code, 200, "Origin {ok} 应被接受");
         }
     }
 
@@ -955,16 +1383,18 @@ mod tests {
     fn bootstrap_with_no_candidates_is_explicit_not_bogus() {
         // 无可用局域网地址：返回空候选，绝不退回 127.0.0.1 之类的假地址
         let tok = SessionToken::generate().unwrap();
-        let (code, body) = lan_bootstrap_response(
+        let auth = auth_with(8123, &[]);
+        let (code, body) = bootstrap_response(
             ExposureMode::Lan,
             PeerClass::Loopback,
-            8123,
-            Some(&tok),
+            None,
+            &auth,
+            &tok,
             &[],
         );
         assert_eq!(code, 200);
         let v: serde_json::Value = serde_json::from_str(&body).unwrap();
-        assert_eq!(v["enabled"], true);
+        assert_eq!(v["lan_enabled"], true);
         assert!(v["addresses"].as_array().unwrap().is_empty());
     }
 
@@ -1058,8 +1488,14 @@ mod tests {
         ] {
             assert!(is_protected_api(p), "{p} 必须受保护（默认拒绝）");
         }
-        // 引导端点单独处理（回环限定），不作为普通受保护 API
-        assert!(!is_protected_api("/api/lan-bootstrap"));
+        // 引导端点是唯一豁免（且自身受回环 + Origin 限制）
+        assert!(!is_protected_api("/api/bootstrap"));
+        assert!(!is_protected_api(BOOTSTRAP_PATH));
+        // Batch 3 的旧路径已废弃：它不得作为遗留豁免继续存在
+        assert!(
+            is_protected_api("/api/lan-bootstrap"),
+            "废弃路径必须落回默认拒绝，不得保留第二个豁免入口"
+        );
         // 静态资源不鉴权（§11 威胁模型决策）
         for p in [
             "/",

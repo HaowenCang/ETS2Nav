@@ -3,11 +3,13 @@ use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 
 use crate::security::{
-    self, request_path, AuthOutcome, ExposureMode, LanCandidate, PeerClass, SessionToken,
+    self, request_path, AuthOutcome, ExposureMode, LanCandidate, PeerClass, ServerAuthorities,
+    SessionToken,
 };
 use crate::server::{
-    http_reply, http_reply_static, metadata_json, parse_range, read_http_head, snapshot_json,
-    ws_accept_key, ws_recv_frame, ws_send_frame, CorsHeaders, RangeRequest, ServerShared,
+    http_reply, http_reply_full, http_reply_static, metadata_json, no_store, parse_range,
+    read_http_head, snapshot_json, ws_accept_key, ws_recv_frame, ws_send_frame, CorsHeaders,
+    RangeRequest, ServerShared,
 };
 use nav_router::maneuver::TurnLookup;
 
@@ -23,19 +25,107 @@ pub struct ServerOptions {
     pub port: u16,
     pub web_root: String,
     pub fake_signal: bool,
-    /// 显式 `--lan`：监听 0.0.0.0 并要求私网对端携带会话令牌。
+    /// 显式 `--lan`：监听 0.0.0.0。**不改变令牌要求**——两种模式下动态 API 与
+    /// `/ws` 都必须携带会话令牌（Batch 3.5 修正）。
     pub lan: bool,
 }
 
-/// 安全上下文：暴露模式、会话令牌、局域网候选地址。
+/// 已枚举的本机地址与由其派生的 authority 表。
+///
+/// 二者必须同源更新：`authorities` 决定哪些 `Host`/`Origin` 被接受，
+/// `candidates` 决定 bootstrap 向本机页面通告哪些地址——若不同源，会出现
+/// 「通告的地址连不上（Host 不在表内）」这类自相矛盾状态。
+struct AddressState {
+    authorities: ServerAuthorities,
+    candidates: Vec<LanCandidate>,
+    last_refresh: std::time::Instant,
+}
+
+/// 安全上下文：暴露模式、会话令牌、本机 authority 表。
 pub struct SecurityCtx {
     pub mode: ExposureMode,
-    /// 仅 `Lan` 模式下为 `Some`。回环模式不生成令牌。
-    pub token: Option<SessionToken>,
-    /// 启动时枚举一次。运行中网卡增减不刷新——二维码是启动期快照，
-    /// 服务端对端类别判定始终基于连接的**实际**来源地址，与候选表无关。
-    pub candidates: Vec<LanCandidate>,
+    /// **两种模式下都存在**。令牌是本进程唯一身份凭据；生成失败即拒绝启动。
+    pub token: SessionToken,
     pub port: u16,
+    state: std::sync::Mutex<AddressState>,
+}
+
+impl SecurityCtx {
+    pub fn new(
+        mode: ExposureMode,
+        token: SessionToken,
+        port: u16,
+        candidates: Vec<LanCandidate>,
+    ) -> Self {
+        let authorities = ServerAuthorities::new(port, &candidates);
+        SecurityCtx {
+            mode,
+            token,
+            port,
+            state: std::sync::Mutex::new(AddressState {
+                authorities,
+                candidates,
+                // 启动瞬间即视为刚刷新过，避免启动后第一波请求触发重复枚举
+                last_refresh: std::time::Instant::now(),
+            }),
+        }
+    }
+
+    /// `Host` 头是否可接受。
+    ///
+    /// 未命中时**重新枚举一次网卡**再判：服务器启动后 DHCP 换址、或某块网卡稍后
+    /// 被启用时，旧快照会让正常客户端被拒（可用性回归）。刷新限频 1 秒，使畸形
+    /// `Host` 的洪泛无法把网卡枚举变成 CPU 放大面。
+    ///
+    /// 刷新不削弱安全性：接受集合始终是「本机接口的实际地址 + 回环名」，
+    /// 攻击者控制的域名永远无法进入该集合。
+    fn host_ok(&self, raw: &str) -> bool {
+        if self
+            .state
+            .lock()
+            .unwrap()
+            .authorities
+            .host_header_allowed(raw)
+        {
+            return true;
+        }
+        self.refresh_addresses();
+        self.state
+            .lock()
+            .unwrap()
+            .authorities
+            .host_header_allowed(raw)
+    }
+
+    fn refresh_addresses(&self) {
+        // 默认模式下 listener 只绑 127.0.0.1：非回环 authority 在传输层就不可能
+        // 成为请求的 Host，因此既不需要重新枚举，也不应把本机私网地址变成「可用
+        // 地址」对外通告（`lan_enabled:false` 必须意味着 addresses 为空）。
+        if self.mode != ExposureMode::Lan {
+            return;
+        }
+        {
+            let st = self.state.lock().unwrap();
+            if st.last_refresh.elapsed() < std::time::Duration::from_secs(1) {
+                return;
+            }
+        }
+        let fresh = security::discover_lan_candidates();
+        let mut st = self.state.lock().unwrap();
+        // 双重检查：本函数可能被并发调用，后到者按刷新时间决定是否覆盖
+        if st.last_refresh.elapsed() < std::time::Duration::from_secs(1) {
+            return;
+        }
+        st.authorities = ServerAuthorities::new(self.port, &fresh);
+        st.candidates = fresh;
+        st.last_refresh = std::time::Instant::now();
+    }
+
+    /// 浏览器 `Origin` 是否被接受（同源或 CORS 白名单）。
+    fn origin_accepted(&self, origin: &str) -> bool {
+        let st = self.state.lock().unwrap();
+        security::browser_origin_accepted(&st.authorities, origin)
+    }
 }
 
 pub struct ServerCtx {
@@ -50,41 +140,64 @@ pub struct ServerCtx {
 
 impl ServerCtx {
     /// 请求来源的鉴权判定（薄封装，判定逻辑在 `security::authorize`）。
+    ///
+    /// `/api/bootstrap` 是唯一豁免；其余 `/api/*` 在**两种模式下、两类对端上**
+    /// 都必须通过令牌校验（Batch 3.5：回环不再免认证）。
     fn decide(&self, peer: PeerClass, presented: Option<&str>, path: &str) -> AuthOutcome {
         if !security::is_protected_api(path) {
             return AuthOutcome::Allowed;
         }
-        security::authorize(
-            self.security.mode,
-            peer,
-            self.security.token.as_ref(),
-            presented,
-        )
+        security::authorize(self.security.mode, peer, &self.security.token, presented)
     }
 
-    fn token(&self) -> Option<&SessionToken> {
-        self.security.token.as_ref()
+    fn token(&self) -> &SessionToken {
+        &self.security.token
     }
 }
 
 /// 鉴权失败的统一响应（401/403），并附带该请求 origin 对应的 CORS 头。
 fn deny(stream: &mut TcpStream, outcome: AuthOutcome, cors: &CorsHeaders) -> std::io::Result<()> {
+    let extra = no_store();
     match outcome {
-        AuthOutcome::Unauthorized => http_reply(
+        AuthOutcome::Unauthorized => http_reply_full(
             stream,
             "401 Unauthorized",
             "application/json",
             b"{\"error\":\"unauthorized\"}",
             cors,
+            &extra,
         ),
-        _ => http_reply(
+        _ => http_reply_full(
             stream,
             "403 Forbidden",
             "application/json",
             b"{\"error\":\"forbidden\"}",
             cors,
+            &extra,
         ),
     }
+}
+
+/// 把 `Host` 回显进 JSON 错误体前的转义。
+///
+/// 回显对端自报的 authority 只是为了诊断（「为什么这台机器连不上」），但它是对端
+/// 完全控制的字符串，因此必须转义 `"` / `\` / 控制字符，并截断长度：这两件事共同
+/// 保证响应体不可能被构造成任意 JSON 结构。
+fn json_escape_short(s: &str) -> String {
+    const MAX: usize = 64;
+    let mut out = String::with_capacity(s.len());
+    for c in s.chars().take(MAX) {
+        match c {
+            '"' => out.push_str("\\\""),
+            '\\' => out.push_str("\\\\"),
+            c if (c as u32) < 0x20 => out.push('?'),
+            c => out.push(c),
+        }
+    }
+    if s.chars().count() > MAX {
+        out.push('…');
+    }
+    out
 }
 
 fn content_type(path: &str) -> &'static str {
@@ -111,13 +224,14 @@ fn content_type(path: &str) -> &'static str {
 
 /// 静态文件 + API 路由（HTTP 短连接）。graph 访问经 gate 锁（短暂持有，<1ms 级）。
 ///
-/// P4R Batch 3 的请求处理顺序（顺序本身是安全语义的一部分）：
+/// 请求处理顺序（顺序本身是安全语义的一部分）：
 ///   1. 解析请求行/headers；
 ///   2. `OPTIONS` 预检 → 仅对白名单 origin 返回许可头；
-///   3. `/api/lan-bootstrap` → 回环限定（唯一令牌出口），先于通用鉴权；
-///   4. `/api/*` → 默认拒绝式鉴权（缺失/错误令牌 401）；
-///   5. 业务路由；
-///   6. 静态文件（不鉴权，见 `security::is_protected_api` 的威胁模型说明）。
+///   3. `/api/bootstrap` → 回环 + Origin 合规（唯一豁免，唯一令牌出口）；
+///   4. `/api/*` → 默认拒绝式鉴权（缺失/错误令牌 401，**回环同样如此**）；
+///   5. 写入方法 → `Content-Type: application/json` 强制（否则 415）；
+///   6. 业务路由；
+///   7. 静态文件（不鉴权，见 `security::is_protected_api` 的威胁模型说明）。
 fn handle_http(
     ctx: &ServerCtx,
     stream: &mut TcpStream,
@@ -131,13 +245,11 @@ fn handle_http(
     let target = parts.next().unwrap_or("/");
     let path = request_path(target);
 
-    // Origin 只用于决定「是否发出 CORS 许可头」，绝不参与授权判定（§15）：
+    // Origin 只用于决定「是否发出 CORS 许可头」，绝不参与授权判定：
     // 非浏览器客户端可以伪造任意 Origin，CORS 也不是访问控制机制。
-    let origin = headers
-        .iter()
-        .find(|(k, _)| k == "origin")
-        .map(|(_, v)| v.as_str());
+    let origin = security::header(headers, "origin");
     let cors = security::cors_headers_for(origin);
+    let extra = no_store();
 
     // ── CORS 预检 ──────────────────────────────────────────────────────────
     if method == "OPTIONS" {
@@ -149,30 +261,44 @@ fn handle_http(
         return http_reply(stream, "204 No Content", "text/plain", b"", &pf);
     }
 
-    // ── 引导端点：唯一的令牌出口，且只对回环对端开放 ────────────────────────
-    if path == "/api/lan-bootstrap" {
+    // ── 会话引导：唯一的动态 API 豁免，也是唯一的令牌出口 ──────────────────
+    if path == security::BOOTSTRAP_PATH {
         if method != "GET" {
-            return http_reply(
+            return http_reply_full(
                 stream,
                 "405 Method Not Allowed",
                 "application/json",
                 b"{\"error\":\"method not allowed\"}",
                 &cors,
+                &extra,
             );
         }
-        let (code, json) = security::lan_bootstrap_response(
-            ctx.security.mode,
-            peer,
-            ctx.security.port,
-            ctx.security.token.as_ref(),
-            &ctx.security.candidates,
-        );
+        let (code, json) = {
+            let st = ctx.security.state.lock().unwrap();
+            security::bootstrap_response(
+                ctx.security.mode,
+                peer,
+                origin,
+                &st.authorities,
+                &ctx.security.token,
+                &st.candidates,
+            )
+        };
+        // 令牌出现在响应体里，因此缓存与内容嗅探都必须被明确禁止：
+        // 403 与 200 走同一输出路径，不存在「拒绝路径漏掉硬化头」的分支。
         let status = if code == 200 {
             "200 OK"
         } else {
             "403 Forbidden"
         };
-        return http_reply(stream, status, "application/json", json.as_bytes(), &cors);
+        return http_reply_full(
+            stream,
+            status,
+            "application/json",
+            json.as_bytes(),
+            &cors,
+            &extra,
+        );
     }
 
     // ── 动态 API 鉴权：默认拒绝 ────────────────────────────────────────────
@@ -184,15 +310,32 @@ fn handle_http(
         return deny(stream, outcome, &cors);
     }
 
+    // ── 请求体媒体类型策略（CSRF 纵深防御）────────────────────────────────
+    // 只靠令牌已足够阻断 Batch 3.5 复现的跨源 simple POST，但「text/plain 的
+    // body 被当作 JSON 执行」本身就是一类应当单独关闭的形态：浏览器只对
+    // safelisted content type 允许无 preflight 的跨源发送，因此要求
+    // application/json 使跨源写入在**预检层**就不可达，而不只依赖令牌。
+    if security::body_must_be_json(method, path) && !security::is_json_content_type(headers) {
+        return http_reply_full(
+            stream,
+            "415 Unsupported Media Type",
+            "application/json",
+            b"{\"error\":\"content-type must be application/json\"}",
+            &cors,
+            &extra,
+        );
+    }
+
     // POST /api/route：{"from":[x,z],"to":[x,z]}
     if method == "POST" && path == "/api/route" {
         let Ok(v) = serde_json::from_slice::<serde_json::Value>(body) else {
-            return http_reply(
+            return http_reply_full(
                 stream,
                 "400 Bad Request",
                 "application/json",
                 b"{\"error\":\"bad json\"}",
                 &cors,
+                &extra,
             );
         };
         let from = v["from"]
@@ -202,32 +345,35 @@ fn handle_http(
             .as_array()
             .and_then(|a| Some((a.first()?.as_f64()?, a.get(1)?.as_f64()?)));
         let (Some((fx, fz)), Some((tx, tz))) = (from, to) else {
-            return http_reply(
+            return http_reply_full(
                 stream,
                 "400 Bad Request",
                 "application/json",
                 b"{\"error\":\"need from/to [x,z]\"}",
                 &cors,
+                &extra,
             );
         };
         let graph = &ctx.graph;
         let spatial = &ctx.spatial;
         let Some(s1) = nav_router::snap::snap_nearest(graph, spatial, fx, fz, 300.0) else {
-            return http_reply(
+            return http_reply_full(
                 stream,
                 "404 Not Found",
                 "application/json",
                 b"{\"error\":\"start not routable\"}",
                 &cors,
+                &extra,
             );
         };
         let Some(s2) = nav_router::snap::snap_nearest(graph, spatial, tx, tz, 300.0) else {
-            return http_reply(
+            return http_reply_full(
                 stream,
                 "404 Not Found",
                 "application/json",
                 b"{\"error\":\"dest not routable\"}",
                 &cors,
+                &extra,
             );
         };
         let mut router = nav_router::search::Router::new(graph.node_count());
@@ -259,22 +405,25 @@ fn handle_http(
                     "polyline": polyline,
                     "edge_count": route.edges.len(),
                 });
-                // 副作用严格发生在鉴权之后：未授权请求不得触达此行（S4）。
+                // 副作用严格发生在鉴权与媒体类型检查之后：未授权请求不得触达此行
+                // （S4 / BLS-01 以真实广播为观测通道断言这一点）。
                 *ctx.shared.pending_dest.lock().unwrap() = Some((tx, tz));
-                http_reply(
+                http_reply_full(
                     stream,
                     "200 OK",
                     "application/json",
                     out.to_string().as_bytes(),
                     &cors,
+                    &extra,
                 )
             }
-            None => http_reply(
+            None => http_reply_full(
                 stream,
                 "404 Not Found",
                 "application/json",
                 b"{\"error\":\"no route\"}",
                 &cors,
+                &extra,
             ),
         };
     }
@@ -282,12 +431,13 @@ fn handle_http(
     // GET /api/snapshot：轮询备用通道
     if method == "GET" && path == "/api/snapshot" {
         let latest = ctx.shared.latest_json.lock().unwrap().clone();
-        return http_reply(
+        return http_reply_full(
             stream,
             "200 OK",
             "application/json",
             latest.as_bytes(),
             &cors,
+            &extra,
         );
     }
 
@@ -298,7 +448,14 @@ fn handle_http(
             ctx.graph.edges.len(),
             &ctx.dataset_dir,
         );
-        return http_reply(stream, "200 OK", "application/json", out.as_bytes(), &cors);
+        return http_reply_full(
+            stream,
+            "200 OK",
+            "application/json",
+            out.as_bytes(),
+            &cors,
+            &extra,
+        );
     }
 
     // GET /api/search?q=xxx（A2a-M1 §60：POI 搜索——search.db 全量加载后内存过滤）
@@ -325,12 +482,13 @@ fn handle_http(
                 .collect()
         };
         let out = serde_json::json!({ "query": q, "results": hits });
-        return http_reply(
+        return http_reply_full(
             stream,
             "200 OK",
             "application/json",
             out.to_string().as_bytes(),
             &cors,
+            &extra,
         );
     }
 
@@ -350,16 +508,24 @@ fn handle_http(
             },
             "arrive_margin_m": cfg.arrive_margin_m,
         });
-        return http_reply(
+        return http_reply_full(
             stream,
             "200 OK",
             "application/json",
             out.to_string().as_bytes(),
             &cors,
+            &extra,
         );
     }
 
-    http_reply(stream, "404 Not Found", "text/plain", b"not found", &cors)
+    http_reply_full(
+        stream,
+        "404 Not Found",
+        "text/plain",
+        b"not found",
+        &cors,
+        &extra,
+    )
 }
 
 pub fn server_cli(opts: &ServerOptions) {
@@ -377,18 +543,19 @@ pub fn server_cli(opts: &ServerOptions) {
     } else {
         ExposureMode::LoopbackOnly
     };
-    // LAN 模式下令牌生成失败必须**拒绝启动**：绝不能降级为「无令牌的 LAN 服务」。
-    let token = if mode == ExposureMode::Lan {
-        match SessionToken::generate() {
-            Ok(t) => Some(t),
-            Err(e) => {
-                eprintln!("[server] 会话令牌生成失败，拒绝以 --lan 启动: {e}");
-                std::process::exit(1);
-            }
+    // 令牌在**两种模式下**都生成（Batch 3.5）：回环页面同样必须经令牌访问动态
+    // API——「对端是 127.0.0.1」不构成身份，浏览器可以代表远程页面建立这种连接。
+    // 生成失败一律拒绝启动：绝不降级为「无令牌」的服务。
+    let token = match SessionToken::generate() {
+        Ok(t) => t,
+        Err(e) => {
+            eprintln!("[server] 会话令牌生成失败，拒绝启动: {e}");
+            std::process::exit(1);
         }
-    } else {
-        None
     };
+    // 仅 `--lan` 时才枚举局域网候选。默认模式下 listener 只绑 127.0.0.1，任何非回环
+    // 地址都不可能连入，因此枚举既无用，又会让 `lan_enabled:false` 与「返回了可用
+    // 局域网地址」自相矛盾（UI 若据此画二维码，会给出一个连不上的地址）。
     let candidates = if mode == ExposureMode::Lan {
         security::discover_lan_candidates()
     } else {
@@ -553,22 +720,17 @@ pub fn server_cli(opts: &ServerOptions) {
         dataset_dir: dataset_dir.to_string(),
         shared,
         pois,
-        security: SecurityCtx {
-            mode,
-            token,
-            candidates,
-            port: actual_port,
-        },
+        security: SecurityCtx::new(mode, token, actual_port, candidates),
     });
     let web_root = web_root.to_string();
     // 启动横幅刻意**不含**令牌本体：stdout/stderr 会进入终端回滚、日志与
-    // CI artifact。令牌只经回环 `/api/lan-bootstrap` 交付。
+    // CI artifact。令牌只经回环 `/api/bootstrap` 交付。
     eprintln!(
-        "[server] listening on {}:{}（web root: {web_root}，LAN 访问: {}）",
+        "[server] listening on {}:{}（web root: {web_root}，LAN 访问: {}，动态 API 一律需会话令牌）",
         mode.bind_addr(port).ip(),
         actual_port,
         if lan {
-            format!("启用（需会话令牌；本机候选地址 {candidate_count} 个）")
+            format!("启用（本机候选地址 {candidate_count} 个）")
         } else {
             "禁用（仅回环）".to_string()
         }
@@ -618,19 +780,57 @@ fn handle_conn(
     stream.set_read_timeout(Some(std::time::Duration::from_secs(30)))?;
     let (req_line, headers, body_len, mut body_rem) = read_http_head(stream)?;
 
-    let origin = headers
-        .iter()
-        .find(|(k, _)| k == "origin")
-        .map(|(_, v)| v.as_str());
+    // ── Host 校验（§14）────────────────────────────────────────────────────
+    // 必须在任何依赖 authority 的判定之前。理由是「不要让 Host 成为信任来源」：
+    // 若同源判定写成 `Origin == Host`，则攻击者把 DNS 指到 127.0.0.1 后，
+    // `Host: evil.example` + `Origin: http://evil.example` 会自洽通过。
+    // 这里的接受集合只来自服务器自身状态（回环名 + 本机实际地址 + 实际端口），
+    // 因此攻击者控制的 authority 永远无法进入。
+    let host = security::header(&headers, "host").unwrap_or("");
+    if !ctx.security.host_ok(host) {
+        let msg = format!(
+            "{{\"error\":\"unrecognized host authority\",\"host\":\"{}\"}}",
+            // 回显经过 JSON 转义与长度上限，避免把响应体变成反射通道
+            json_escape_short(host)
+        );
+        let _ = http_reply(
+            stream,
+            "403 Forbidden",
+            "application/json",
+            msg.as_bytes(),
+            &[],
+        );
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(250)));
+        crate::server::drain_inbound(stream, 8192);
+        return Ok(());
+    }
+
+    let origin = security::header(&headers, "origin");
     let cors = security::cors_headers_for(origin);
 
     // WebSocket 升级
     let target = req_line.split_whitespace().nth(1).unwrap_or("/");
     if request_path(target) == "/ws" {
-        // ── 鉴权必须先于 101 ──────────────────────────────────────────────
-        // 浏览器 WebSocket API 无法设置 Authorization 头，故 WS 令牌经 query 传递；
-        // 同时接受 Authorization 头（便于原生客户端）。**HTTP API 不接受 query
-        // 令牌**——该差异由集成测试锁定。
+        // ── 校验顺序本身是安全语义：Origin → 令牌 → 101 ────────────────────
+        // 1) Origin：浏览器必然携带它，且无法伪造（伪造需要页面自身运行在该源上）。
+        //    非浏览器客户端不发 Origin，落到「无 Origin → 按原生客户端处理」分支。
+        //    这一步独立于令牌：BLS-04 断言「持有正确令牌但 Origin 恶意」仍被拒，
+        //    否则 Origin 检查就等于被令牌完全覆盖而形同虚设。
+        if let Some(o) = origin {
+            if !ctx.security.origin_accepted(o) {
+                return http_reply(
+                    stream,
+                    "403 Forbidden",
+                    "application/json",
+                    b"{\"error\":\"origin not allowed\"}",
+                    &cors,
+                );
+            }
+        }
+        // 2) 令牌：浏览器 WebSocket API 无法设置 Authorization 头，故 WS 令牌经
+        //    query 传递；同时接受 Authorization 头（便于原生客户端）。**HTTP API
+        //    不接受 query 令牌**——该差异由集成测试锁定。两种模式下、两类对端上
+        //    都必须通过（Batch 3.5：回环不再豁免）。
         let presented = security::bearer_token(&headers)
             .map(|s| s.to_string())
             .or_else(|| security::query_param(target, "token"));

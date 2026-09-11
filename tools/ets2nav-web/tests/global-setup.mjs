@@ -19,9 +19,12 @@ export default async function globalSetup() {
   //             （离线回放没有实机灯态，§36/§37/§38 否则不可达）；
   //   lan    —— 额外加 `--lan`，用于令牌/二维码/同源 WS 的用例。
   //
-  // data / signal 也以 `--lan` 启动：回环对端在 LAN 模式下**豁免令牌**，因此既有
-  // 26 项用例的访问方式与断言完全不变，同时二维码拿到真实局域网地址（不再编码
-  // 无效的 127.0.0.1），使 E2E-11b 的二维码布局断言保持有意义。
+  // data / signal 也以 `--lan` 启动：页面在两种模式下都从回环地址打开，二维码
+  // 因此拿到真实局域网地址（不再编码无效的 127.0.0.1），使 E2E-11b 的二维码布局
+  // 断言保持有意义。
+  //
+  // P4R Batch 3.5：两种模式都要求令牌，页面自身经 `/api/bootstrap` 引导取得；
+  // 令牌在此一并记录，供需要直接发 HTTP/WS 的用例使用（不设测试旁路）。
   const data = await startServer({ webRoot, trace, lan: true });
   const signal = await startServer({ webRoot, trace, fakeSignal: true, lan: true });
   const lan = await startServer({ webRoot, trace, fakeSignal: true, lan: true });
@@ -35,10 +38,13 @@ export default async function globalSetup() {
     trace,
     dataOrigin: data.origin,
     dataPort: data.port,
+    dataToken: data.token,
     signalOrigin: signal.origin,
     signalPort: signal.port,
+    signalToken: signal.token,
     lanOrigin: lan.origin,
     lanPort: lan.port,
+    lanToken: lan.token,
     lanCandidates: candidates,
   });
 

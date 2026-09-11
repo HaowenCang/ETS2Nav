@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
-"""nav-server LAN 暴露面 / 鉴权 / CORS 集成验证（P4R Batch 3 §20 S1–S8）。
+"""nav-server 暴露面 / 鉴权 / Origin / Host / CORS 集成验证（P4R Batch 3 §20 S1–S9，
+Batch 3.5 扩展为 S1–S11）。
 
 这不是单元测试：全部断言都打在**真实运行的 nav-core-cli server 进程**上，经真实
 TCP/HTTP/WebSocket 连接，并且刻意区分两种来源：
 
-    127.0.0.1        -> Loopback     （服务端豁免令牌）
-    <本机 RFC1918>   -> PrivateLan   （服务端要求令牌）
+    127.0.0.1        -> Loopback     （Batch 3.5 起**同样要求令牌**）
+    <本机 RFC1918>   -> PrivateLan   （要求令牌）
+    <本机非私网地址> -> Disallowed   （连接层即被拒绝）
 
 关键在于：从本机连到自己的私网地址时，内核选用的源地址就是该私网地址，因此服务端
 看到的对端**确实**是 PrivateLan，而不是回环。这使单机也能真实执行「远端来源」矩阵，
 无需第二台设备，也不是靠桩件伪造来源。
+
+Batch 3.5 的核心修正是：**「TCP 对端是 127.0.0.1」不等于「请求意图可信」**。浏览器
+可以被远程页面驱使去连回环，服务端看到的对端同样是 Loopback。因此本脚本新增的
+S3b（回环 API 令牌矩阵）、S10（Host 策略）与 S11（Origin 策略）与既有断言同等重要，
+且 S1/S4/S5 中依赖「回环免令牌」的旧断言已按新模型改写。
 
 用法:
     verify-lan-security.py <config.json>
@@ -17,10 +24,10 @@ TCP/HTTP/WebSocket 连接，并且刻意区分两种来源：
 
 config.json 由 scripts/run-security-test.mjs 生成：
     {"defaultPort":N, "lanPort":N, "tokenLive":"...", "tokenStale":"...",
-     "candidates":["10.x.x.x", ...]}
+     "candidates":["10.x.x.x", ...], "disallowedCandidates":[...]}
 
-退出码：0 全部通过；1 存在 FAIL；2 自检失败；3 远端来源矩阵无法执行（NOT VERIFIED，
-不计为通过——安全结论不能建立在未执行的检查上）。
+退出码：0 全部通过；1 存在 FAIL；2 自检失败；3 存在 NOT VERIFIED
+（不计为通过——安全结论不能建立在未执行的检查上）。
 """
 import base64
 import json
@@ -61,6 +68,11 @@ def has_cors_wildcard(headers):
     return False
 
 
+def is_token_shaped(s):
+    """令牌契约：64 位小写十六进制。S1/S2 用它判断 bootstrap 是否真的下发了令牌。"""
+    return isinstance(s, str) and len(s) == 64 and all(c in "0123456789abcdef" for c in s)
+
+
 def selftest():
     """验证本脚本的解析与判定逻辑本身正确——否则「PASS」可能只是解析器坏了。"""
     cases = []
@@ -90,6 +102,13 @@ def selftest():
     _, h, _ = parse_response(b"HTTP/1.1 200 OK\r\nAccess-Control-Allow-Origin: *\r\n\r\n")
     eq("bare star flagged", has_cors_wildcard(h), True)
 
+    # 令牌形态判定：正向与反向样本都必须正确，否则 S1/S2 可能把畸形值当合法令牌
+    eq("token shaped 64 hex", is_token_shaped("a" * 64), True)
+    eq("token shaped rejects uppercase", is_token_shaped("A" * 64), False)
+    eq("token shaped rejects short", is_token_shaped("a" * 63), False)
+    eq("token shaped rejects non-str", is_token_shaped(None), False)
+    eq("token shaped rejects non-hex", is_token_shaped("g" * 64), False)
+
     bad = 0
     for name, ok, detail in cases:
         print(f"[{'PASS' if ok else 'FAIL'}] selftest: {name}" + ("" if ok else f" — {detail}"))
@@ -110,6 +129,8 @@ with open(sys.argv[1], "r", encoding="utf-8") as fh:
 
 DEFAULT_PORT = int(CFG["defaultPort"])
 LAN_PORT = int(CFG["lanPort"])
+# 默认（非 --lan）模式进程的令牌。Batch 3.5：该进程同样生成并下发令牌。
+DEFAULT_TOKEN = CFG.get("defaultToken")
 TOKEN_LIVE = CFG["tokenLive"]
 TOKEN_STALE = CFG["tokenStale"]
 CANDIDATES = CFG.get("candidates") or []
@@ -123,7 +144,11 @@ DISALLOWED_CANDIDATES = CFG.get("disallowedCandidates") or []
 
 
 def http(host, port, method, path, headers=None, body=b"", timeout=8.0):
-    """发一个 HTTP 请求。返回 (status, headers, body_text)；连接失败返回 None。"""
+    """发一个 HTTP 请求。返回 (status, headers, body_text)；连接失败返回 None。
+
+    `Host` 默认写成 `{host}:{port}`，但可经 headers 覆盖——S10 需要发送与目标
+    authority 不符的 Host，以验证服务端不把它当作信任来源。
+    """
     try:
         s = socket.create_connection((host, port), timeout=timeout)
     except OSError:
@@ -166,19 +191,31 @@ def http(host, port, method, path, headers=None, body=b"", timeout=8.0):
     return st, h, b.decode("utf-8", "replace")
 
 
-def ws_attempt(host, port, path, timeout=8.0):
-    """尝试 WS 握手。返回 (status, headers, sock)；握手完成则 sock 可直接读帧。"""
+#: 表示「不发送 Origin 头」的哨兵值（原生客户端路径）。
+NO_ORIGIN = object()
+
+
+def ws_attempt(host, port, path, timeout=8.0, origin=NO_ORIGIN, host_header=None):
+    """尝试 WS 握手。返回 (status, headers, sock)；握手完成则 sock 可直接读帧。
+
+    `origin` 默认取同源（`http://{host}:{port}`），可显式传入任意值以验证 Origin
+    策略，或传 `NO_ORIGIN` 表示完全不发送 Origin（原生客户端）。
+
+    `host_header` 可覆盖 Host 头（S10 Host 策略）。
+    """
     try:
         s = socket.create_connection((host, port), timeout=timeout)
     except OSError:
         return (None, {}, None)
     key = base64.b64encode(os.urandom(16)).decode()
-    req = (
-        f"GET {path} HTTP/1.1\r\nHost: {host}:{port}\r\nOrigin: http://{host}:{port}\r\n"
+    hdr = f"GET {path} HTTP/1.1\r\nHost: {host_header or f'{host}:{port}'}\r\n"
+    if origin is not NO_ORIGIN:
+        hdr += f"Origin: {origin}\r\n"
+    hdr += (
         f"Upgrade: websocket\r\nConnection: Upgrade\r\n"
         f"Sec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
     )
-    s.sendall(req.encode())
+    s.sendall(hdr.encode())
     s.settimeout(timeout)
     raw = b""
     try:
@@ -267,20 +304,35 @@ def bearer(tok):
     return {"Authorization": f"Bearer {tok}"}
 
 
+def wait_for_up(host, port, seconds=60.0):
+    """等待服务器可服务：以 bootstrap 返回 200 为就绪判据。"""
+    end = time.time() + seconds
+    while time.time() < end:
+        r = http(host, port, "GET", "/api/bootstrap", timeout=3.0)
+        if r is not None and r[0] == 200:
+            return True
+        time.sleep(0.3)
+    return False
+
+
 ROUTE_A = {"from": [-58456, 32832], "to": [-52925, 36510]}
 ROUTE_B = {"from": [-58456, 32832], "to": [-57000, 34500]}
 
-
-def post_route(host, port, headers, payload):
-    return http(host, port, "POST", "/api/route", headers, json.dumps(payload).encode())
+JSON_CT = {"Content-Type": "application/json"}
 
 
-# ─── 前置：令牌轮换（S6）与候选地址 ─────────────────────────────────────────
+def post_route(host, port, headers, payload, content_type="application/json"):
+    h = dict(headers or {})
+    h["Content-Type"] = content_type
+    return http(host, port, "POST", "/api/route", h, json.dumps(payload).encode())
+
+
+# ─── 主流程 ──────────────────────────────────────────────────────────────────
 
 
 def main():
     print("=" * 72)
-    print("nav-server LAN 安全集成验证（S1–S8）")
+    print("nav-server 暴露面 / 鉴权 / Origin / Host / CORS 集成验证（S1–S11）")
     print("=" * 72)
     print(f"default 模式端口 : {DEFAULT_PORT}")
     print(f"--lan   模式端口 : {LAN_PORT}")
@@ -294,42 +346,68 @@ def main():
     else:
         check("S6 令牌每次进程启动重新生成", True,
               f"len={len(TOKEN_LIVE)} 且与上一进程不同")
-    check("S6 令牌为 256-bit（64 位小写十六进制）",
-          len(TOKEN_LIVE) == 64 and all(c in "0123456789abcdef" for c in TOKEN_LIVE),
+    check("S6 令牌为 256-bit（64 位小写十六进制）", is_token_shaped(TOKEN_LIVE),
           f"len={len(TOKEN_LIVE)}")
 
-    # ── S1 默认 bind ───────────────────────────────────────────────────────
-    r = http("127.0.0.1", DEFAULT_PORT, "GET", "/api/snapshot")
-    check("S1 默认模式回环可达 /api/snapshot", r is not None and r[0] == 200,
-          f"status={r[0] if r else 'CONN-FAIL'}")
+    # ── S1 默认 bind 与默认模式令牌 ────────────────────────────────────────
+    # Batch 3.5：默认（非 --lan）模式**同样生成并下发令牌**，且动态 API 同样要求
+    # 令牌。旧断言「默认模式不生成令牌 / 不含 token 字段」已按新模型删除——那正是
+    # 「回环免认证」模型在默认模式下的形态。
+    check("S1 默认模式同样下发会话令牌（两种模式一致）",
+          is_token_shaped(DEFAULT_TOKEN),
+          f"len={len(DEFAULT_TOKEN) if DEFAULT_TOKEN else 0}")
+    if DEFAULT_TOKEN is None:
+        not_verified("S1 默认模式回环 API 令牌矩阵",
+                     "运行器未提供 defaultToken，无法构造带令牌请求")
+    else:
+        r = http("127.0.0.1", DEFAULT_PORT, "GET", "/api/snapshot")
+        check("S1 默认模式回环无令牌 401（回环 ≠ 已认证）",
+              r is not None and r[0] == 401, f"status={r[0] if r else 'CONN-FAIL'}")
+        r = http("127.0.0.1", DEFAULT_PORT, "GET", "/api/snapshot", bearer(DEFAULT_TOKEN))
+        check("S1 默认模式回环带令牌 200",
+              r is not None and r[0] == 200, f"status={r[0] if r else 'CONN-FAIL'}")
     if LAN_IP is None:
         not_verified("S1 默认模式私网地址不可达", "本机无 RFC1918 候选地址，无法构造私网来源连接")
     else:
         r2 = http(LAN_IP, DEFAULT_PORT, "GET", "/api/snapshot")
         check("S1 默认模式私网地址不可达（只绑 127.0.0.1）", r2 is None,
               f"status={r2[0] if r2 else 'CONN-FAIL(期望)'}")
-    # 默认模式不得生成/返回令牌
-    r = http("127.0.0.1", DEFAULT_PORT, "GET", "/api/lan-bootstrap")
+    # 默认模式的 bootstrap 只描述暴露面，不下发可选地址
+    r = http("127.0.0.1", DEFAULT_PORT, "GET", "/api/bootstrap")
     body = r[2] if r else ""
-    check("S1 默认模式 bootstrap 为 enabled:false",
-          r is not None and r[0] == 200 and json.loads(body).get("enabled") is False,
-          body[:120])
-    check("S1 默认模式 bootstrap 不含任何令牌字段",
-          '"token"' not in body and TOKEN_LIVE not in body)
+    try:
+        bv = json.loads(body)
+    except json.JSONDecodeError:
+        bv = {}
+    check("S1 默认模式 bootstrap 为 lan_enabled:false",
+          r is not None and r[0] == 200 and bv.get("lan_enabled") is False, body[:120])
+    check("S1 默认模式 bootstrap 不下发局域网候选地址",
+          bv.get("addresses") == [], f"addresses={bv.get('addresses')!r}")
+    check("S1 bootstrap 响应带 no-store 与 nosniff",
+          r is not None and r[1].get("cache-control") == "no-store"
+          and r[1].get("x-content-type-options") == "nosniff"
+          and r[1].get("referrer-policy") == "no-referrer",
+          f"hdr={ {k: r[1].get(k) for k in ('cache-control', 'x-content-type-options', 'referrer-policy')} if r else None}")
+    # 退役路径必须落回默认拒绝，不得保留第二个豁免入口
+    r = http("127.0.0.1", DEFAULT_PORT, "GET", "/api/lan-bootstrap")
+    check("S1 退役路径 /api/lan-bootstrap 不再是豁免端点",
+          r is not None and r[0] == 401, f"status={r[0] if r else 'CONN-FAIL'}")
 
-    # ── S2 LAN bootstrap ───────────────────────────────────────────────────
-    r = http("127.0.0.1", LAN_PORT, "GET", "/api/lan-bootstrap")
+    # ── S2 bootstrap（唯一令牌出口）────────────────────────────────────────
+    r = http("127.0.0.1", LAN_PORT, "GET", "/api/bootstrap")
     boot = {}
     if r and r[0] == 200:
         try:
             boot = json.loads(r[2])
         except json.JSONDecodeError:
             boot = {}
-    check("S2 回环 bootstrap 返回 enabled:true", boot.get("enabled") is True, str(boot)[:160])
+    check("S2 回环 bootstrap 返回 lan_enabled:true", boot.get("lan_enabled") is True,
+          str(boot)[:160])
     check("S2 回环 bootstrap 返回可用令牌",
-          boot.get("token") == TOKEN_LIVE and len(TOKEN_LIVE) == 64)
+          boot.get("token") == TOKEN_LIVE and is_token_shaped(TOKEN_LIVE))
     addrs = boot.get("addresses") or []
-    check("S2 bootstrap 返回至少一个候选地址", len(addrs) >= 1, json.dumps(addrs, ensure_ascii=False))
+    check("S2 bootstrap 返回至少一个候选地址", len(addrs) >= 1,
+          json.dumps(addrs, ensure_ascii=False))
     check("S2 候选地址均为 RFC1918 且非回环",
           bool(addrs) and all(a["address"] != "127.0.0.1" for a in addrs)
           and all(a["address"].startswith(("10.", "192.168."))
@@ -338,12 +416,16 @@ def main():
     check("S2 首个候选被标为 preferred",
           bool(addrs) and addrs[0].get("preferred") is True
           and all(a.get("preferred") is False for a in addrs[1:]))
+    # bootstrap 是**唯一**豁免端点：POST 也不得被接受
+    r = http("127.0.0.1", LAN_PORT, "POST", "/api/bootstrap", JSON_CT, b"{}")
+    check("S2 bootstrap 只接受 GET（405）",
+          r is not None and r[0] == 405, f"status={r[0] if r else 'CONN-FAIL'}")
 
     if LAN_IP is None:
         not_verified("S2 远端 bootstrap 被拒（403）", "无私网地址")
         not_verified("S2 远端拒绝响应不泄露令牌", "无私网地址")
     else:
-        r = http(LAN_IP, LAN_PORT, "GET", "/api/lan-bootstrap")
+        r = http(LAN_IP, LAN_PORT, "GET", "/api/bootstrap")
         check("S2 远端 bootstrap 被拒（403）", r is not None and r[0] == 403,
               f"status={r[0] if r else 'CONN-FAIL'}")
         check("S2 远端拒绝响应不泄露令牌",
@@ -353,7 +435,7 @@ def main():
     if LAN_IP is None:
         for n in ["S3 snapshot 无令牌 401", "S3 snapshot 错令牌 401",
                   "S3 snapshot 正确令牌 200", "S3 route 无令牌 401",
-                  "S3 route 错令牌 401", "S3 route 正确令牌 正常处理"]:
+                  "S3 route 错令牌 401"]:
             not_verified(n, "无私网地址，无法构造远端来源")
     else:
         r = http(LAN_IP, LAN_PORT, "GET", "/api/snapshot")
@@ -369,7 +451,7 @@ def main():
         r = http(LAN_IP, LAN_PORT, "GET", f"/api/snapshot?token={TOKEN_LIVE}")
         check("S3 HTTP API 不接受 query 令牌", r is not None and r[0] == 401,
               f"status={r[0] if r else 'CONN-FAIL'}")
-        # 伪造 Origin 不构成授权（§15：Origin 不是 authentication）
+        # 伪造 Origin 不构成授权（Origin 不是 authentication）
         r = http(LAN_IP, LAN_PORT, "GET", "/api/snapshot",
                  {"Origin": "http://tauri.localhost"})
         check("S3 伪造白名单 Origin 仍 401（Origin 非授权）",
@@ -382,10 +464,48 @@ def main():
         check("S3 route 错令牌 401", r is not None and r[0] == 401,
               f"status={r[0] if r else 'CONN-FAIL'}")
 
+    # ── S3b 回环 API 令牌矩阵（Batch 3.5 新增，本批核心）──────────────────
+    # 五个受保护端点：回环对端**无令牌一律 401，带令牌一律 200**。
+    # 这条断言若被还原为「回环免令牌」，跨源 simple POST（BLS-01）即重新可用。
+    if DEFAULT_TOKEN is None:
+        not_verified("S3b 回环受保护端点令牌矩阵", "运行器未提供 defaultToken")
+    else:
+        for path in ("/api/snapshot", "/api/metadata", "/api/settings", "/api/search"):
+            r = http("127.0.0.1", DEFAULT_PORT, "GET", path)
+            check(f"S3b 回环无令牌 401: {path}", r is not None and r[0] == 401,
+                  f"status={r[0] if r else 'CONN-FAIL'}")
+            r = http("127.0.0.1", DEFAULT_PORT, "GET", path, bearer(DEFAULT_TOKEN))
+            check(f"S3b 回环带令牌 200: {path}", r is not None and r[0] == 200,
+                  f"status={r[0] if r else 'CONN-FAIL'}")
+        r = post_route("127.0.0.1", DEFAULT_PORT, None, ROUTE_A)
+        check("S3b 回环 POST /api/route 无令牌 401",
+              r is not None and r[0] == 401, f"status={r[0] if r else 'CONN-FAIL'}")
+        r = post_route("127.0.0.1", DEFAULT_PORT, bearer(DEFAULT_TOKEN), ROUTE_A)
+        check("S3b 回环 POST /api/route 带令牌 200",
+              r is not None and r[0] == 200, f"status={r[0] if r else 'CONN-FAIL'}")
+
+    # ── S3c /api/route 媒体类型策略（CSRF 纵深防御）────────────────────────
+    # 浏览器只对 CORS safelisted content type 允许无预检的跨源发送；要求
+    # application/json 使跨源写入在预检层即不可达，而不只依赖令牌。
+    if DEFAULT_TOKEN is None:
+        not_verified("S3c route 媒体类型策略", "运行器未提供 defaultToken")
+    else:
+        for bad in ("text/plain", "text/plain;charset=UTF-8",
+                    "application/x-www-form-urlencoded"):
+            r = post_route("127.0.0.1", DEFAULT_PORT, bearer(DEFAULT_TOKEN),
+                           ROUTE_A, content_type=bad)
+            check(f"S3c 错误 Content-Type 被拒 415: {bad}",
+                  r is not None and r[0] == 415, f"status={r[0] if r else 'CONN-FAIL'}")
+        r = post_route("127.0.0.1", DEFAULT_PORT, bearer(DEFAULT_TOKEN), ROUTE_A,
+                       content_type="application/json; charset=utf-8")
+        check("S3c application/json; charset=utf-8 被接受",
+              r is not None and r[0] == 200, f"status={r[0] if r else 'CONN-FAIL'}")
+
     # ── S4 未授权 route 不得产生副作用 ─────────────────────────────────────
-    # 观测通道：回环 WS 客户端（LAN 模式下豁免令牌）接收 map_state 广播。
-    observer_status, _, obs = ws_attempt("127.0.0.1", LAN_PORT, "/ws")
-    check("S4 观测通道建立（回环 WS 免令牌 101）", observer_status == 101,
+    # 观测通道：回环 WS 客户端（Batch 3.5 起同样需要令牌）接收 map_state 广播。
+    observer_status, _, obs = ws_attempt("127.0.0.1", LAN_PORT,
+                                         "/ws?token=" + TOKEN_LIVE)
+    check("S4 观测通道建立（回环 WS + 令牌 101）", observer_status == 101,
           f"status={observer_status}")
     if obs is None:
         not_verified("S4 未授权 route 无副作用", "观测通道不可用，无法证明副作用缺失")
@@ -431,7 +551,7 @@ def main():
         except OSError:
             pass
 
-    # ── S5 WebSocket 鉴权 ─────────────────────────────────────────────────
+    # ── S5 WebSocket 鉴权（两种来源、两种模式）─────────────────────────────
     if LAN_IP is None:
         for n in ["S5 远端 /ws 无令牌不升级", "S5 远端 /ws 错令牌不升级",
                   "S5 远端 /ws 正确令牌 101 + 帧流"]:
@@ -458,11 +578,20 @@ def main():
         else:
             check("S5 远端授权连接收到 vehicle 帧流", False, "101 后未取得 socket")
 
-    # WS 也接受 Authorization 头（原生客户端路径），且 loopback 免令牌
-    st, _, s2 = ws_attempt("127.0.0.1", LAN_PORT, "/ws")
-    check("S5 回环 /ws 免令牌可连接（LAN 模式豁免）", st == 101, f"status={st}")
+    # 回环 WS 同样要求令牌（Batch 3.5 修正：原先「LAN 模式回环豁免」）
+    st, _, _ = ws_attempt("127.0.0.1", LAN_PORT, "/ws")
+    check("S5 回环 /ws 无令牌不升级（401，回环 ≠ 已认证）", st == 401, f"status={st}")
+    st, _, _ = ws_attempt("127.0.0.1", LAN_PORT, "/ws?token=" + "b" * 64)
+    check("S5 回环 /ws 错令牌不升级（401）", st == 401, f"status={st}")
+    st, _, s2 = ws_attempt("127.0.0.1", LAN_PORT, "/ws?token=" + TOKEN_LIVE)
+    check("S5 回环 /ws 正确令牌完成 101", st == 101, f"status={st}")
     if s2:
         s2.close()
+    # WS 也接受 Authorization 头（原生客户端路径）
+    st, _, s3 = ws_attempt("127.0.0.1", LAN_PORT, "/ws", origin=NO_ORIGIN)
+    check("S5 无 Origin 且无令牌的原生客户端仍被拒（401）", st == 401, f"status={st}")
+    if s3:
+        s3.close()
 
     # ── S6（续）旧令牌在新进程上失效 ───────────────────────────────────────
     if LAN_IP is None:
@@ -476,11 +605,13 @@ def main():
     check("S6 旧令牌不能升级 WS", st == 401, f"status={st}")
 
     # ── S7 metadata 隐私 ──────────────────────────────────────────────────
+    # Batch 3.5：回环同样需要令牌，故统一带令牌访问（不再有「回环免令牌」分支）。
     host = LAN_IP or "127.0.0.1"
-    hdrs = bearer(TOKEN_LIVE) if LAN_IP else None
+    hdrs = bearer(TOKEN_LIVE) if LAN_IP else bearer(DEFAULT_TOKEN or "")
     r = http(host, LAN_PORT, "GET", "/api/metadata", hdrs)
     body = r[2] if r else ""
-    check("S7 metadata 可达", r is not None and r[0] == 200, f"status={r[0] if r else 'CONN-FAIL'}")
+    check("S7 metadata 可达", r is not None and r[0] == 200,
+          f"status={r[0] if r else 'CONN-FAIL'}")
     leaks = [p for p in (":\\Users\\", ":\\Projects\\", "/home/", "\\\\", ":/")
              if p in body]
     check("S7 metadata 不含绝对路径片段", not leaks, f"命中={leaks} body={body[:160]}")
@@ -509,14 +640,14 @@ def main():
     def acao(resp):
         return (resp[1].get("access-control-allow-origin") if resp else None)
 
-    r = http("127.0.0.1", LAN_PORT, "GET", "/api/snapshot")
+    r = http("127.0.0.1", LAN_PORT, "GET", "/api/snapshot", bearer(TOKEN_LIVE))
     check("S8 同源（无 Origin 头）不返回 ACAO", r is not None and acao(r) is None,
           f"ACAO={acao(r)!r}")
     check("S8 同源请求本身成功（不依赖 CORS 头）", r is not None and r[0] == 200,
           f"status={r[0] if r else 'CONN-FAIL'}")
 
     r = http("127.0.0.1", LAN_PORT, "GET", "/api/snapshot",
-             {"Origin": "http://tauri.localhost"})
+             {"Origin": "http://tauri.localhost", **bearer(TOKEN_LIVE)})
     check("S8 已实测 Tauri origin 获得精确 ACAO",
           acao(r) == "http://tauri.localhost", f"ACAO={acao(r)!r}")
     check("S8 白名单响应带 Vary: Origin",
@@ -525,14 +656,17 @@ def main():
 
     for bad in ("http://evil.example", "null", "http://tauri.localhost.evil.example",
                 "tauri://localhost", "https://tauri.localhost"):
-        r = http("127.0.0.1", LAN_PORT, "GET", "/api/snapshot", {"Origin": bad})
+        r = http("127.0.0.1", LAN_PORT, "GET", "/api/snapshot",
+                 {"Origin": bad, **bearer(TOKEN_LIVE)})
         check(f"S8 未批准 origin 无 CORS 头: {bad}", acao(r) is None, f"ACAO={acao(r)!r}")
 
     # 任何响应都不得出现通配符
     wild = []
     for origin in (None, "http://tauri.localhost", "http://evil.example"):
-        hh = {"Origin": origin} if origin else None
-        for path in ("/api/snapshot", "/api/metadata", "/api/lan-bootstrap", "/index.html"):
+        hh = dict(bearer(TOKEN_LIVE))
+        if origin:
+            hh["Origin"] = origin
+        for path in ("/api/snapshot", "/api/metadata", "/api/bootstrap", "/index.html"):
             rr = http("127.0.0.1", LAN_PORT, "GET", path, hh)
             if rr and has_cors_wildcard(rr[1]):
                 wild.append((origin, path, rr[1].get("access-control-allow-origin")))
@@ -576,10 +710,6 @@ def main():
         check("静态 JS 不含令牌", r is not None and TOKEN_LIVE not in (r[2] or ""))
 
     # ── S9 不受允许来源（Disallowed）在连接层被拒绝 ────────────────────────
-    # 「不受允许」指既非回环也非 RFC1918。要真实执行这条断言，必须让服务端看到
-    # 这样一个对端地址——伪造来源不可行，因此改用本机非私网接口地址（VPN 隧道、
-    # 链路本地等）：连到这些地址时内核选用的源地址就是它本身，服务端看到的是
-    # 真实的不受允许来源。具体哪些地址可连接依机器而定，故逐个探测。
     reachable = None
     for cand in DISALLOWED_CANDIDATES:
         probe = http(cand, LAN_PORT, "GET", "/api/snapshot", timeout=3.0)
@@ -609,16 +739,103 @@ def main():
         r = http(reachable, DEFAULT_PORT, "GET", "/api/snapshot")
         check("S9 默认模式下 Disallowed 来源同样不可达",
               r is None or r[0] == 403, f"status={r[0] if r else 'CONN-FAIL'}")
-        # bootstrap 亦不得对不受允许来源开放
-        r = http(reachable, LAN_PORT, "GET", "/api/lan-bootstrap")
+        r = http(reachable, LAN_PORT, "GET", "/api/bootstrap")
         check("S9 Disallowed 来源 bootstrap 被拒",
               r is not None and r[0] == 403, f"status={r[0] if r else 'CONN-FAIL'}")
         check("S9 Disallowed 拒绝响应不泄露令牌",
               r is not None and TOKEN_LIVE not in r[2])
 
+    # ── S10 Host 策略（§14）──────────────────────────────────────────────
+    # 攻击场景：DNS rebinding 让攻击者的域名解析到 127.0.0.1，于是浏览器把请求发到
+    # 本机服务，但 Host（与 Origin）都是攻击者的域名。服务端若以「Origin == Host」
+    # 判同源，就会把这套自洽的组合当成合法来源。本组断言锁定：接受集合只来自
+    # 服务器自身状态（回环名 + 本机实际地址 + 实际监听端口）。
+    r = http("127.0.0.1", LAN_PORT, "GET", "/api/snapshot",
+             {"Host": "evil.example", **bearer(TOKEN_LIVE)})
+    check("S10 外部域名的 Host 被拒（DNS rebinding）",
+          r is not None and r[0] == 403, f"status={r[0] if r else 'CONN-FAIL'}")
+    r = http("127.0.0.1", LAN_PORT, "GET", "/api/snapshot",
+             {"Host": "evil.example", "Origin": "http://evil.example", **bearer(TOKEN_LIVE)})
+    check("S10 Host 与 Origin 同为攻击者域名仍被拒（不得自洽放行）",
+          r is not None and r[0] == 403, f"status={r[0] if r else 'CONN-FAIL'}")
+    r = http("127.0.0.1", LAN_PORT, "GET", "/api/snapshot",
+             {"Host": f"127.0.0.1:{LAN_PORT + 1}", **bearer(TOKEN_LIVE)})
+    check("S10 端口不符的 Host 被拒",
+          r is not None and r[0] == 403, f"status={r[0] if r else 'CONN-FAIL'}")
+    r = http("127.0.0.1", LAN_PORT, "GET", "/api/bootstrap", {"Host": "evil.example"})
+    check("S10 bootstrap 同样受 Host 策略约束（不可绕过）",
+          r is not None and r[0] == 403, f"status={r[0] if r else 'CONN-FAIL'}")
+    st, _, _ = ws_attempt("127.0.0.1", LAN_PORT, "/ws?token=" + TOKEN_LIVE,
+                          host_header=f"127.0.0.1:{LAN_PORT + 1}")
+    check("S10 WS 握手同样受 Host 策略约束",
+          st == 403, f"status={st}")
+    # 正向：合法 authority 不得被误伤
+    for ok_host in (f"127.0.0.1:{LAN_PORT}", f"localhost:{LAN_PORT}"):
+        r = http("127.0.0.1", LAN_PORT, "GET", "/api/snapshot",
+                 {"Host": ok_host, **bearer(TOKEN_LIVE)})
+        check(f"S10 合法 authority 不被误伤: {ok_host}",
+              r is not None and r[0] == 200, f"status={r[0] if r else 'CONN-FAIL'}")
+    if LAN_IP:
+        r = http(LAN_IP, LAN_PORT, "GET", "/api/snapshot",
+                 {"Host": f"{LAN_IP}:{LAN_PORT}", **bearer(TOKEN_LIVE)})
+        check(f"S10 本机实际私网 authority 不被误伤: {LAN_IP}",
+              r is not None and r[0] == 200, f"status={r[0] if r else 'CONN-FAIL'}")
+
+    # ── S11 浏览器 Origin 策略（bootstrap 与 WS 共用）─────────────────────
+    # 攻击页面与 nav-server 同机不同端口 = 跨源。它可以让浏览器以**回环对端**身份
+    # 发出请求，因此仅凭对端类别无法拒绝——这正是 Batch 3.5 的漏洞形态。
+    attacker_origin = f"http://127.0.0.1:{LAN_PORT + 1}"
+    r = http("127.0.0.1", LAN_PORT, "GET", "/api/bootstrap",
+             {"Origin": attacker_origin})
+    check("S11 回环对端 + 跨源 Origin 的 bootstrap 被拒（403）",
+          r is not None and r[0] == 403, f"status={r[0] if r else 'CONN-FAIL'}")
+    check("S11 该拒绝响应不含令牌",
+          r is not None and TOKEN_LIVE not in (r[2] or ""))
+    for bad in ("http://evil.example", "null", "https://127.0.0.1:" + str(LAN_PORT)):
+        r = http("127.0.0.1", LAN_PORT, "GET", "/api/bootstrap", {"Origin": bad})
+        check(f"S11 bootstrap 拒绝未批准 Origin: {bad}",
+              r is not None and r[0] == 403 and TOKEN_LIVE not in (r[2] or ""),
+              f"status={r[0] if r else 'CONN-FAIL'}")
+    # 正向：同源页面与实测 Tauri origin 必须仍能取得令牌
+    for ok in (f"http://127.0.0.1:{LAN_PORT}", "http://tauri.localhost"):
+        r = http("127.0.0.1", LAN_PORT, "GET", "/api/bootstrap", {"Origin": ok})
+        got = ""
+        if r and r[0] == 200:
+            try:
+                got = json.loads(r[2]).get("token", "")
+            except json.JSONDecodeError:
+                got = ""
+        check(f"S11 已批准 Origin 可取得令牌: {ok}",
+              r is not None and r[0] == 200 and got == TOKEN_LIVE,
+              f"status={r[0] if r else 'CONN-FAIL'}")
+
+    # WS：持有**正确令牌**但 Origin 恶意，仍必须被拒——否则 Origin 检查等于被令牌
+    # 完全覆盖而形同虚设（BLS-04 的服务端对应断言）。
+    for bad in (attacker_origin, "http://evil.example", "null"):
+        st, _, _ = ws_attempt("127.0.0.1", LAN_PORT, "/ws?token=" + TOKEN_LIVE,
+                              origin=bad)
+        check(f"S11 正确令牌 + 恶意 Origin 的 WS 仍被拒（403，无 101）: {bad}",
+              st == 403, f"status={st}")
+    # 正向：同源 Origin 与实测 Tauri origin
+    for ok in (f"http://127.0.0.1:{LAN_PORT}", "http://tauri.localhost"):
+        st, _, s = ws_attempt("127.0.0.1", LAN_PORT, "/ws?token=" + TOKEN_LIVE,
+                              origin=ok)
+        check(f"S11 已批准 Origin 的 WS 完成 101: {ok}", st == 101, f"status={st}")
+        if s:
+            s.close()
+    # 原生客户端：不带 Origin，凭令牌升级（Origin 检查不得误伤原生客户端）
+    st, _, s = ws_attempt("127.0.0.1", LAN_PORT, "/ws?token=" + TOKEN_LIVE,
+                          origin=NO_ORIGIN)
+    check("S11 无 Origin 的原生客户端凭令牌完成 101", st == 101, f"status={st}")
+    if s:
+        frames = ws_collect(s, seconds=25.0,
+                            predicate=lambda d: d.get("type") == "vehicle")
+        check("S11 原生客户端确实收到 vehicle 帧流",
+              any(d.get("type") == "vehicle" for d in frames), f"frames={len(frames)}")
+        s.close()
+
     print()
     print("=" * 72)
-    total = len(FAIL) + len(NOT_VERIFIED) + len(SKIP)
     print(f"FAIL={len(FAIL)}  NOT_VERIFIED={len(NOT_VERIFIED)}  SKIP={len(SKIP)}")
     if FAIL:
         for n in FAIL:

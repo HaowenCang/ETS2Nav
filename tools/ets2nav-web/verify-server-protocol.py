@@ -145,14 +145,51 @@ if __name__ == "__main__" and "--selftest" in sys.argv:
 PORT = int(sys.argv[1]) if len(sys.argv) > 1 else 8123
 FAIL = []
 
+#: 会话令牌（P4R Batch 3.5）。动态 API 与 /ws 在两种模式下都要求它，因此本脚本
+#: 先经 `/api/bootstrap` 引导——与浏览器页面走的是同一条路径，不设测试旁路。
+TOKEN = None
+
+
+def bootstrap_token(port):
+    """经回环 `/api/bootstrap` 取得会话令牌。失败即返回 None（后续断言据此 FAIL）。"""
+    s = socket.create_connection(("127.0.0.1", port))
+    req = (
+        f"GET /api/bootstrap HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n"
+        f"Connection: close\r\n\r\n"
+    )
+    s.sendall(req.encode())
+    s.settimeout(8)
+    data = b""
+    while True:
+        try:
+            chunk = s.recv(4096)
+        except socket.timeout:
+            break
+        if not chunk:
+            break
+        data += chunk
+    head, _, body = data.partition(b"\r\n\r\n")
+    if b" 200 " not in head.split(b"\r\n")[0]:
+        return None
+    try:
+        return json.loads(body.decode("utf-8")).get("token")
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return None
+
+
+def bearer_headers(tok):
+    return {"Authorization": f"Bearer {tok}"} if tok else {}
+
 
 def ws_connect(port):
+    """原生客户端握手：不发 Origin，令牌经 query 传递（浏览器 WS API 无法设头）。"""
     s = socket.create_connection(("127.0.0.1", port))
     import base64
     import os
     key = base64.b64encode(os.urandom(16)).decode()
     req = (
-        f"GET /ws HTTP/1.1\r\nHost: localhost\r\nUpgrade: websocket\r\n"
+        f"GET /ws?token={TOKEN} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\n"
+        f"Upgrade: websocket\r\n"
         f"Connection: Upgrade\r\nSec-WebSocket-Key: {key}\r\nSec-WebSocket-Version: 13\r\n\r\n"
     )
     s.sendall(req.encode())
@@ -178,9 +215,10 @@ def recv_frame(ss):
 
 def http_post(port, path, body):
     s = socket.create_connection(("127.0.0.1", port))
+    auth = f"Authorization: Bearer {TOKEN}\r\n" if TOKEN else ""
     req = (
-        f"POST {path} HTTP/1.1\r\nHost: localhost\r\nContent-Type: application/json\r\n"
-        f"Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode() + body
+        f"POST {path} HTTP/1.1\r\nHost: 127.0.0.1:{port}\r\nContent-Type: application/json\r\n"
+        f"{auth}Content-Length: {len(body)}\r\nConnection: close\r\n\r\n".encode() + body
     )
     s.sendall(req)
     s.settimeout(10)
@@ -265,6 +303,31 @@ def observe_progress(ws, min_run=MIN_DECREASING_RUN, max_frames=900, max_seconds
 
 
 # 1) 静态文件与 API 冒烟
+# 前置：取得会话令牌（Batch 3.5：两种模式下动态 API 与 /ws 都要求令牌，回环不豁免）。
+TOKEN = bootstrap_token(PORT)
+check("GET /api/bootstrap 返回会话令牌（回环）",
+      isinstance(TOKEN, str) and len(TOKEN) == 64,
+      f"token={'<64 hex>' if TOKEN else None}")
+
+# 未授权请求必须被拒（同一条路径上的负向对照，避免「令牌没生效也照样 PASS」）
+s = socket.create_connection(("127.0.0.1", PORT))
+s.sendall(
+    f"GET /api/snapshot HTTP/1.1\r\nHost: 127.0.0.1:{PORT}\r\nConnection: close\r\n\r\n".encode()
+)
+s.settimeout(5)
+_unauth = b""
+while True:
+    try:
+        chunk = s.recv(4096)
+    except socket.timeout:
+        break
+    if not chunk:
+        break
+    _unauth += chunk
+check("GET /api/snapshot 无令牌 401（回环 ≠ 已认证）",
+      int(_unauth.split(b" ")[1]) == 401,
+      f"code={int(_unauth.split(b' ')[1]) if _unauth else 'NO-RESPONSE'}")
+
 ROUTE_BODY = json.dumps({"from": ROUTE_FROM, "to": ROUTE_TO}).encode()
 code, body = http_post(PORT, "/api/route", ROUTE_BODY)
 check("POST /api/route 200", code == 200, f"code={code}")
@@ -355,9 +418,14 @@ else:
     print("[SKIP] reminders 未触发（无信号场景正常）——kind 结构化由 server 单测/伪造信号路径覆盖")
 
 # 3) 快照轮询通道
-code, body = http_post(PORT, "/api/route", b"{}")  # 400 路径也验证错误处理
+# 合法媒体类型但 body 非法 → 400（原实现只算不判，该断言此前实际缺失）
+code, _ = http_post(PORT, "/api/route", b"{}")
+check("POST /api/route 非法 JSON body 400", code == 400, f"code={code}")
 s = socket.create_connection(("127.0.0.1", PORT))
-s.sendall(b"GET /api/snapshot HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n")
+s.sendall(
+    f"GET /api/snapshot HTTP/1.1\r\nHost: 127.0.0.1:{PORT}\r\n"
+    f"Authorization: Bearer {TOKEN}\r\nConnection: close\r\n\r\n".encode()
+)
 s.settimeout(5)
 data = b""
 while True:

@@ -18,7 +18,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { DATASET, NAV_CLI, REPO_ROOT, disallowedLocalAddresses, freePort, lanBootstrap, startServer } from "../tests/harness.mjs";
+import { DATASET, NAV_CLI, REPO_ROOT, bootstrap, disallowedLocalAddresses, freePort, startServer } from "../tests/harness.mjs";
 
 const SCRIPT = join(dirname(fileURLToPath(import.meta.url)), "..", "verify-lan-security.py");
 const WORK = join(tmpdir(), "ets2nav-security");
@@ -64,20 +64,22 @@ const start = async (opts) => {
 
 let code = 1;
 try {
-  // 默认模式：验证只绑回环
+  // 默认模式：验证只绑回环，且**同样**生成令牌、同样要求令牌（Batch 3.5）
   const def = await start({});
+  const defBoot = await bootstrap("127.0.0.1", def.port);
+  const defaultToken = defBoot.token;
 
   // LAN 模式第一进程：取令牌 A 后停止
   const lanPort = await freePort();
   const first = await start({ lan: true, port: lanPort, log: () => {} });
-  const bootA = await lanBootstrap("127.0.0.1", first.port);
+  const bootA = await bootstrap("127.0.0.1", first.port);
   const tokenStale = bootA.token;
   await first.stop();
   servers.splice(servers.indexOf(first), 1);
 
   // LAN 模式第二进程：同端口重启，取令牌 B（在跑服务）
   const second = await start({ lan: true, port: lanPort, log: () => {} });
-  const bootB = await lanBootstrap("127.0.0.1", second.port);
+  const bootB = await bootstrap("127.0.0.1", second.port);
   const tokenLive = bootB.token;
   const candidates = (bootB.addresses ?? []).map((a) => a.address);
 
@@ -91,6 +93,7 @@ try {
   await writeFile(CFG, JSON.stringify({
     defaultPort: def.port,
     lanPort: second.port,
+    defaultToken,
     tokenLive,
     tokenStale,
     candidates,
