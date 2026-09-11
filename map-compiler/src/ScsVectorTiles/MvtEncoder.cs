@@ -139,7 +139,7 @@ public static class MvtEncoder
         return b.ToArray();
     }
 
-    private static List<byte> EncodeGeometry(Feature f)
+    internal static List<byte> EncodeGeometry(Feature f)
     {
         var g = new List<byte>();
         int cx = 0, cy = 0;
@@ -171,7 +171,18 @@ public static class MvtEncoder
         return g;
     }
 
-    private static byte[] EncodeValue(object v)
+    /// <summary>
+    /// MVT <c>Value</c> 编码。字段号取自 vector_tile.proto：
+    /// 1=string_value(2) / 2=float_value(5) / 3=double_value(1) / 4=int_value(0) /
+    /// 7=bool_value(0)。括号内为 wire type。
+    ///
+    /// 2026-09 修复：整数原先写为 field 2（wire 0），而 field 2 是 float_value，
+    /// wire type 必须为 5——该值声明与线型不符，MapLibre 解析时静默丢弃整个要素，
+    /// 导致带 speed_limit 的 road 与带 movements 的 junction 在浏览器中完全不渲染。
+    /// 整数应使用 field 4（int_value）。
+    /// 同时移除「未知类型产出一个零字节 Value」的静默行为，改为显式失败。
+    /// </summary>
+    internal static byte[] EncodeValue(object v)
     {
         var b = new List<byte>();
         switch (v)
@@ -183,17 +194,21 @@ public static class MvtEncoder
                 b.AddRange(sb);
                 break;
             case int i:
-                b.AddRange(EncodeTag(2, 0));
-                b.AddRange(EncodeVarint((ulong)i));
+                b.AddRange(EncodeTag(4, 0)); // int_value
+                b.AddRange(EncodeVarint(unchecked((ulong)(long)i)));
                 break;
             case long l:
-                b.AddRange(EncodeTag(2, 0));
-                b.AddRange(EncodeVarint((ulong)l));
+                b.AddRange(EncodeTag(4, 0)); // int_value
+                b.AddRange(EncodeVarint(unchecked((ulong)l)));
                 break;
             case double d:
-                b.AddRange(EncodeTag(3, 1));
+                b.AddRange(EncodeTag(3, 1)); // double_value
                 b.AddRange(BitConverter.GetBytes(d));
                 break;
+            default:
+                throw new NotSupportedException(
+                    $"MVT Value 不支持的类型 {v.GetType().Name}（只支持 string/int/long/double）；" +
+                    "拒绝静默写入空 Value。");
         }
         return b.ToArray();
     }

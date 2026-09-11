@@ -9,4 +9,10 @@
     <ProjectReference Include="..\ScsMapModel\ScsMapModel.csproj" />
     <ProjectReference Include="..\ScsGraph\ScsGraph.csproj" />
   </ItemGroup>
+  <!-- 规范符合性测试需直接断言 MVT Value 的字段号与线型编码 -->
+  <ItemGroup>
+    <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
+      <_Parameter1>ScsVectorTiles.Tests</_Parameter1>
+    </AssemblyAttribute>
+  </ItemGroup>
 </Project>

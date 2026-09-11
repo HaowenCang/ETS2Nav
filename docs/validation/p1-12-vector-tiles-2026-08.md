@@ -53,3 +53,23 @@
 ## 通过条件（正式）
 
 P1-12 通过。下一步 P1-13 Europe Build（全欧洲 679 sector 数据集构建）。
+
+---
+
+## 附记（2026-09，P4R Batch 1.5 追加，不修改上文历史结论）
+
+上文「PMTiles 结构独立验证（python）：header/root directory/gzip 解压全部通过」与
+「graph-debugger 已集成 pmtiles source（MapLibre GL v4 原生支持）」两项结论**经复核不成立**：
+
+1. `PmtilesWriter` 当时把 root directory 序列化为 **JSON**，而非 v3 规范的 varint 二进制目录；
+   TileID 采用行主序而非 Hilbert 曲线；compression 枚举与 metadata.type 亦不符规范。
+   当时的 python 校验只覆盖了 header 与 gzip，未校验目录编码，故未发现。
+2. `MapLibre GL v4` **没有**内置 `pmtiles` source 类型（4.7.1 bundle 中字符串 `"pmtiles"`
+   出现 0 次），`{type:'pmtiles'}` 必然抛错；叠加 `catch(e){}` 被静默吞掉，
+   瓦片层从未真正加载。
+3. 另发现 `MvtEncoder` 整数标签字段号错误与 `TileBuilder` 道路几何退化，
+   两者叠加使道路/交叉口在浏览器中完全不渲染。
+
+上述三项均已在 P4R Batch 1.5 修复并重新验证，详见
+[`p4r-pmtiles-conformance-2026-09.md`](./p4r-pmtiles-conformance-2026-09.md)。
+本附记按「历史报告保留历史语义 + dated addendum」的约定追加，不改写原结论。

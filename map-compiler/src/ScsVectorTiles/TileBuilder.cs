@@ -60,7 +60,10 @@ public static class TileBuilder
                 var f = new MvtEncoder.Feature
                 {
                     Type = 2,
-                    Points = new[] { new[] { px0 - ox, py0 - oy }, new[] { px1 - ox, py1 - oy } },
+                    // MvtEncoder 的每个「段」是一串扁平 x,y,x,y… 坐标；线段两端必须在
+                    // 同一段内，否则每段只有 1 个点、只发出 MoveTo 而不发出 LineTo，
+                    // 道路会被编码成两个单点 LineString 而永远不渲染（2026-09 修复）。
+                    Points = new[] { new[] { px0 - ox, py0 - oy, px1 - ox, py1 - oy } },
                     Tags = new Dictionary<string, object>
                     {
                         ["kind"] = r.RoadLook,

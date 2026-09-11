@@ -4,7 +4,7 @@ use std::sync::Arc;
 
 use crate::server::{
     http_reply, http_reply_static, parse_range, read_http_head, snapshot_json, ws_accept_key,
-    ws_recv_frame, ws_send_frame, ServerShared,
+    ws_recv_frame, ws_send_frame, RangeRequest, ServerShared,
 };
 use nav_router::maneuver::TurnLookup;
 
@@ -489,10 +489,10 @@ fn handle_conn(
     match std::fs::read(&full) {
         Ok(body) => {
             // P4R-02：PMTiles 客户端依赖 Byte Serving（Range/206）读取档案头与目录。
-            let range = headers
-                .iter()
-                .find(|(k, _)| k == "range")
-                .and_then(|(_, v)| parse_range(v, body.len() as u64));
+            let range = match headers.iter().find(|(k, _)| k == "range") {
+                Some((_, v)) => parse_range(v, body.len() as u64),
+                None => RangeRequest::Ignore,
+            };
             let head_only = req_line.starts_with("HEAD ");
             http_reply_static(stream, content_type(rel), &body, range, head_only)
         }
