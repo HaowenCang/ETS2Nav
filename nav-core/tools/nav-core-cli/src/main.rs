@@ -4,6 +4,7 @@ use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
 
+mod security;
 mod server;
 mod server_cli;
 
@@ -15,7 +16,8 @@ fn usage() {
     eprintln!("  nav-core-cli replay <trace.navtrace>      —— 回放 trace");
     eprintln!("  nav-core-cli match <trace> <dataset-dir>   —— trace 回放 Map Matching");
     eprintln!("  nav-core-cli snap <x,z> <dataset-dir>       —— 目的地吸附（最近可路由 edge）");
-    eprintln!("  nav-core-cli server <dataset-dir> [--replay=<trace>] [--port=<N>] [--web=<dir>] [--fake-signal]");
+    eprintln!("  nav-core-cli server <dataset-dir> [--replay=<trace>] [--port=<N>] [--web=<dir>] [--fake-signal] [--lan]");
+    eprintln!("      —— 默认只监听 127.0.0.1；--lan 才监听局域网并要求私网对端携带会话令牌");
 }
 
 fn main() {
@@ -1441,7 +1443,18 @@ fn server_cli_run(args: &[String], fake_signal: bool) {
         .map(|v| v.to_string())
         .unwrap_or_else(|| "../tools/ets2nav-web/dist".to_string());
     let trace = flag_value(args, "--replay").map(|v| v.to_string());
-    server_cli::server_cli(dataset_dir, trace.as_deref(), port, &web_root, fake_signal);
+    // P4R Batch 3：默认只监听回环，只有显式 `--lan` 才暴露到局域网。
+    // 全部选项按名扫描，因此 `--lan` 可与 `--replay/--fake-signal/--port/--web`
+    // 以任意顺序组合。
+    let lan = args.iter().skip(3).any(|a| a == "--lan");
+    server_cli::server_cli(&server_cli::ServerOptions {
+        dataset_dir: dataset_dir.to_string(),
+        trace_path: trace,
+        port,
+        web_root,
+        fake_signal,
+        lan,
+    });
 }
 
 /// 从参数表提取 `--name=value` 或 `--name value` 形式的值（两种写法等价）。

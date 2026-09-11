@@ -26,8 +26,14 @@ export default defineConfig({
     ...devices["Desktop Chrome"],
     channel: undefined,
     // 关闭「复用已安装浏览器」：只用本仓库锁定版本下载的构建
+    //
+    // `--no-proxy-server`：LAN 用例从 http://<RFC1918>:port/ 打开页面，以此让服务端
+    // 看到**私网**对端（本机连自己的私网地址时源地址即该私网地址）。若浏览器把请求
+    // 交给系统代理，服务端看到的对端会变成回环并从豁免路径通过，用例会悄然测错对象。
+    // 本机系统代理的 bypass 列表恰好覆盖 10.*/172.16-31.*/192.168.*，但那是巧合而非
+    // 保证，故在此显式禁用代理，使结果不依赖开发机的代理配置。
     launchOptions: {
-      args: ["--no-sandbox", "--disable-dev-shm-usage"],
+      args: ["--no-sandbox", "--disable-dev-shm-usage", "--no-proxy-server"],
     },
     actionTimeout: 10_000,
     trace: "retain-on-failure",

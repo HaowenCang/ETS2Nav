@@ -11,7 +11,7 @@ import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { existsSync } from "node:fs";
 import { cp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { networkInterfaces, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -124,10 +124,14 @@ export async function prepareTrace(log = console.log) {
 
 /**
  * 启动一个 nav-server 实例。
- * @param {{webRoot:string, trace?:string, fakeSignal?:boolean, port?:number, log?:Function}} opts
+ * @param {{webRoot:string, trace?:string, fakeSignal?:boolean, port?:number, lan?:boolean, log?:Function}} opts
  *   port 省略时动态分配空闲端口；E2E-10 需要「同端口重启」故支持显式指定。
+ *   lan=true 加 `--lan`（绑定 0.0.0.0 并要求私网对端携带令牌）；回环对端豁免，
+ *   因此本机测试无需令牌即可访问，但二维码/令牌相关断言需要它。
  */
-export async function startServer({ webRoot, trace, fakeSignal = false, port, log = console.log }) {
+export async function startServer({
+  webRoot, trace, fakeSignal = false, port, lan = false, log = console.log,
+}) {
   const chosen = port ?? await freePort();
   const args = [
     "server", DATASET,
@@ -136,6 +140,7 @@ export async function startServer({ webRoot, trace, fakeSignal = false, port, lo
   ];
   if (trace) args.push(`--replay=${trace}`);
   if (fakeSignal) args.push("--fake-signal");
+  if (lan) args.push("--lan");
   const proc = spawn(NAV_CLI, args, {
     cwd: join(REPO_ROOT, "nav-core"),
     stdio: ["ignore", "pipe", "pipe"],
@@ -150,10 +155,11 @@ export async function startServer({ webRoot, trace, fakeSignal = false, port, lo
     proc.kill();
     throw new Error(`nav-server 未在 ${SERVER_BOOT_TIMEOUT_MS} ms 内监听 :${chosen}\n${stderr}`);
   }
-  log(`[e2e] server :${chosen}${fakeSignal ? " (fake-signal)" : ""}`);
+  log(`[e2e] server :${chosen}${fakeSignal ? " (fake-signal)" : ""}${lan ? " (lan)" : ""}`);
   return {
     pid: proc.pid,
     port: chosen,
+    lan,
     origin: `http://127.0.0.1:${chosen}`,
     stop: () => new Promise((ok) => {
       if (proc.exitCode !== null || proc.signalCode) return ok();
@@ -162,6 +168,58 @@ export async function startServer({ webRoot, trace, fakeSignal = false, port, lo
     }),
     get stderr() { return stderr; },
   };
+}
+
+/**
+ * 向某地址请求 `/api/lan-bootstrap`，返回解析后的 JSON（非 200 时返回
+ * `{status, body}`）。供测试自行判定 LAN 状态，而不是让页面替测试决定分支。
+ */
+export async function lanBootstrap(host, port) {
+  const r = await fetch(`http://${host}:${port}/api/lan-bootstrap`, {
+    signal: AbortSignal.timeout(5000),
+  });
+  const text = await r.text();
+  if (!r.ok) return { status: r.status, body: text };
+  return JSON.parse(text);
+}
+
+/**
+ * 枚举本机 RFC1918 候选地址（经服务器 bootstrap）。
+ *
+ * 测试机可能没有任何私网地址（例如仅公网 IP 的构建机），此时二维码分支无法
+ * 成立；调用方据此显式选择断言分支，而不是假装通过。
+ */
+export async function lanCandidates(host, port) {
+  const d = await lanBootstrap(host, port);
+  return d && d.enabled === true && Array.isArray(d.addresses) ? d.addresses : [];
+}
+
+/** 该 IPv4 是否属 RFC1918（与 rust 侧 `security::classify_peer` 同一口径）。 */
+export function isRfc1918(ip) {
+  const [a, b] = ip.split(".").map(Number);
+  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+}
+
+/**
+ * 本机**非** RFC1918 的非回环 IPv4 地址（服务端会判为 `Disallowed`）。
+ *
+ * 存在的理由：要真实执行「不受允许的来源被拒绝」这条断言，必须让服务端看到一个
+ * 既非回环、也非私网的对端地址。本机的 VPN/隧道地址（如 198.18.0.0/15）恰好满足
+ * ——连到它时内核选用的源地址就是它本身，于是服务端看到的是真实的不受允许来源，
+ * 而不是伪造的。可用的具体地址依机器而定，故此处枚举后由调用方逐个探测连通性。
+ *
+ * 链路本地（169.254/16）也在 Disallowed 之列，但通常不可连接，一并列入由探测筛选。
+ */
+export function disallowedLocalAddresses() {
+  const out = [];
+  for (const list of Object.values(networkInterfaces())) {
+    for (const ni of list ?? []) {
+      if (ni.family !== "IPv4" || ni.internal) continue;
+      if (ni.address === "127.0.0.1" || isRfc1918(ni.address)) continue;
+      out.push(ni.address);
+    }
+  }
+  return out;
 }
 
 export async function cleanupSession() {

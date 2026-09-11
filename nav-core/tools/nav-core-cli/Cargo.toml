@@ -11,3 +11,5 @@ nav-spatial = { path = "../../crates/nav-spatial" }
 nav-matcher = { path = "../../crates/nav-matcher" }
 nav-router = { path = "../../crates/nav-router" }
 serde_json = "1"
+getrandom = "0.4.3"
+if-addrs = "0.15.0"

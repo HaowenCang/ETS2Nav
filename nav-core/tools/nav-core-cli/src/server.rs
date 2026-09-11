@@ -254,19 +254,85 @@ pub(crate) fn snapshot_json(s: &NavigationSnapshot) -> String {
 }
 
 // ─── HTTP 工具 ───────────────────────────────────────────────────────────────
+
+/// 已判定的 CORS 响应头（由 `security::cors_headers_for` / `preflight_headers_for`
+/// 产出）。空表 ⇒ 不发出任何 CORS 头，这正是「非白名单 origin 不得获得许可」的
+/// 落地形态。P4R Batch 3 之前此处无条件写 `Access-Control-Allow-Origin: *`。
+pub(crate) type CorsHeaders = Vec<(&'static str, String)>;
+
+/// 把已判定的 CORS 头序列化为响应头片段（每个头一行，含 CRLF）。
+pub(crate) fn cors_block(cors: &[(&'static str, String)]) -> String {
+    let mut s = String::new();
+    for (k, v) in cors {
+        s.push_str(k);
+        s.push_str(": ");
+        s.push_str(v);
+        s.push_str("\r\n");
+    }
+    s
+}
+
 pub(crate) fn http_reply(
     w: &mut dyn Write,
     status: &str,
     content_type: &str,
     body: &[u8],
+    cors: &[(&'static str, String)],
 ) -> std::io::Result<()> {
     let head = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n",
-        body.len()
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {}\r\nConnection: close\r\n{}\r\n",
+        body.len(),
+        cors_block(cors)
     );
     w.write_all(head.as_bytes())?;
     w.write_all(body)?;
     w.flush()
+}
+
+/// 有界排空入站字节，返回排空字节数。
+///
+/// 用途单一：在**刻意不解析请求**的早期拒绝路径上，接收队列里仍留有客户端发来的
+/// 字节；Windows 在仍有未读入站数据时关闭连接会发 RST，可能把刚写出的拒绝响应一并
+/// 丢弃，使客户端只看到「连接被中止」而非 403（实测：同一地址三次连接中出现一次
+/// WinError 10053）。排空只丢弃字节、不做任何解析，因此不改变「拒绝路径不解释请求
+/// 内容」这一性质。
+///
+/// 必须有界：否则对端可以持续发送数据把拒绝线程钉住。
+pub(crate) fn drain_inbound(r: &mut dyn Read, max_bytes: usize) -> usize {
+    let mut buf = [0u8; 2048];
+    let mut total = 0usize;
+    while total < max_bytes {
+        match r.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => total += n,
+            Err(_) => break, // 超时/复位即停止：排空是尽力而为，不承担正确性
+        }
+    }
+    total
+}
+
+/// `/api/metadata` 的非敏感投影（纯函数，独立于 socket 以便直接断言隐私性质）。
+///
+/// 原实现返回 `ctx.dataset_dir` 的**完整绝对路径**（如 `E:\Projects\...`），
+/// 会把开发机用户名与目录结构泄露给任何能访问该端点的对端。此处只暴露数据集
+/// 的**目录名**（`data/europe-v5` → `europe-v5`）与图规模统计。`dataset_dir`
+/// 在进程内部照常保留，用于加载与日志。
+pub(crate) fn metadata_json(nodes: usize, edges: usize, dataset_dir: &str) -> String {
+    serde_json::json!({
+        "nodes": nodes,
+        "edges": edges,
+        "dataset": dataset_display_name(dataset_dir),
+    })
+    .to_string()
+}
+
+/// 数据集显示名：取路径最后一段，绝不返回完整路径。
+pub(crate) fn dataset_display_name(dataset_dir: &str) -> String {
+    std::path::Path::new(dataset_dir)
+        .file_name()
+        .map(|s| s.to_string_lossy().into_owned())
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "unknown".to_string())
 }
 
 /// `Range` 头解析结果。
@@ -336,6 +402,7 @@ pub(crate) fn http_reply_static(
     body: &[u8],
     range: RangeRequest,
     head_only: bool,
+    cors: &[(&'static str, String)],
 ) -> std::io::Result<()> {
     let total = body.len() as u64;
     let (status, len, slice, extra) = match range {
@@ -358,7 +425,8 @@ pub(crate) fn http_reply_static(
         RangeRequest::Ignore => ("200 OK", total, None, String::new()),
     };
     let head = format!(
-        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {len}\r\nAccept-Ranges: bytes\r\n{extra}Connection: close\r\nAccess-Control-Allow-Origin: *\r\n\r\n"
+        "HTTP/1.1 {status}\r\nContent-Type: {content_type}\r\nContent-Length: {len}\r\nAccept-Ranges: bytes\r\n{extra}Connection: close\r\n{}\r\n",
+        cors_block(cors)
     );
     w.write_all(head.as_bytes())?;
     if !head_only {
@@ -488,6 +556,7 @@ mod tests {
     fn http_reply_static_range_semantics() {
         use RangeRequest::*;
         let body: Vec<u8> = (0u8..=255).collect();
+        let no_cors: &[(&'static str, String)] = &[];
 
         let mut out = Vec::new();
         http_reply_static(
@@ -496,6 +565,7 @@ mod tests {
             &body,
             Satisfiable(10, 19),
             false,
+            no_cors,
         )
         .unwrap();
         let text = String::from_utf8_lossy(&out).to_string();
@@ -513,21 +583,29 @@ mod tests {
 
         // 端点越界：截断到表示末尾（RFC 9110 §14.1.2）
         let mut out = Vec::new();
-        http_reply_static(&mut out, "text/plain", &body, Satisfiable(250, 9999), false).unwrap();
+        http_reply_static(
+            &mut out,
+            "text/plain",
+            &body,
+            Satisfiable(250, 9999),
+            false,
+            no_cors,
+        )
+        .unwrap();
         let text = String::from_utf8_lossy(&out).to_string();
         assert!(text.contains("Content-Range: bytes 250-255/256\r\n"));
         assert!(text.contains("Content-Length: 6\r\n"));
 
         // 无 Range：200 全量
         let mut out = Vec::new();
-        http_reply_static(&mut out, "text/plain", b"abc", Ignore, false).unwrap();
+        http_reply_static(&mut out, "text/plain", b"abc", Ignore, false, no_cors).unwrap();
         let text = String::from_utf8_lossy(&out).to_string();
         assert!(text.starts_with("HTTP/1.1 200 OK\r\n"));
         assert!(text.contains("Content-Length: 3\r\n"));
 
         // HEAD：与 GET 相同头部但不带 body
         let mut out = Vec::new();
-        http_reply_static(&mut out, "text/plain", b"abc", Ignore, true).unwrap();
+        http_reply_static(&mut out, "text/plain", b"abc", Ignore, true, no_cors).unwrap();
         let text = String::from_utf8_lossy(&out).to_string();
         assert!(text.starts_with("HTTP/1.1 200 OK\r\n"));
         assert!(text.contains("Content-Length: 3\r\n"));
@@ -538,7 +616,15 @@ mod tests {
 
         // HEAD + Range：头部按 206 描述，仍不得写 body
         let mut out = Vec::new();
-        http_reply_static(&mut out, "text/plain", &body, Satisfiable(0, 99), true).unwrap();
+        http_reply_static(
+            &mut out,
+            "text/plain",
+            &body,
+            Satisfiable(0, 99),
+            true,
+            no_cors,
+        )
+        .unwrap();
         let text = String::from_utf8_lossy(&out).to_string();
         assert!(text.starts_with("HTTP/1.1 206 Partial Content\r\n"));
         assert!(text.contains("Content-Length: 100\r\n"));
@@ -546,12 +632,173 @@ mod tests {
 
         // 起点越界：416 + 表示长度，且不带 body
         let mut out = Vec::new();
-        http_reply_static(&mut out, "text/plain", &body, Unsatisfiable, false).unwrap();
+        http_reply_static(&mut out, "text/plain", &body, Unsatisfiable, false, no_cors).unwrap();
         let text = String::from_utf8_lossy(&out).to_string();
         assert!(text.starts_with("HTTP/1.1 416 Range Not Satisfiable\r\n"));
         assert!(text.contains("Content-Range: bytes */256\r\n"));
         assert!(text.contains("Content-Length: 0\r\n"));
         assert!(out.ends_with(b"\r\n\r\n"));
+    }
+
+    // ── P4R Batch 3：CORS 头注入形态 ────────────────────────────────────────
+
+    #[test]
+    fn http_reply_has_no_cors_header_by_default() {
+        let mut out = Vec::new();
+        http_reply(&mut out, "200 OK", "text/plain", b"ok", &[]).unwrap();
+        let text = String::from_utf8_lossy(&out).to_string();
+        assert!(
+            !text.contains("Access-Control-Allow-Origin"),
+            "无许可判定时不得发出任何 CORS 头（P4R Batch 3 移除了通配符）"
+        );
+        assert!(!text.contains('*'));
+        assert!(text.starts_with("HTTP/1.1 200 OK\r\n"));
+        assert!(out.ends_with(b"ok"));
+    }
+
+    #[test]
+    fn http_reply_emits_specific_origin_and_vary() {
+        let cors = crate::security::cors_headers_for(Some("http://tauri.localhost"));
+        let mut out = Vec::new();
+        http_reply(&mut out, "200 OK", "application/json", b"{}", &cors).unwrap();
+        let text = String::from_utf8_lossy(&out).to_string();
+        assert!(text.contains("Access-Control-Allow-Origin: http://tauri.localhost\r\n"));
+        assert!(text.contains("Vary: Origin\r\n"));
+        assert!(
+            !text.contains("Access-Control-Allow-Origin: *"),
+            "绝不得回通配符"
+        );
+        // 头部必须以空行结束，body 原样跟随
+        assert!(text.contains("\r\n\r\n{}"), "头部与 body 之间必须有空行");
+    }
+
+    #[test]
+    fn http_reply_denied_origin_adds_nothing() {
+        let cors = crate::security::cors_headers_for(Some("http://evil.example"));
+        let mut out = Vec::new();
+        http_reply(
+            &mut out,
+            "401 Unauthorized",
+            "application/json",
+            b"{}",
+            &cors,
+        )
+        .unwrap();
+        let text = String::from_utf8_lossy(&out).to_string();
+        assert!(!text.contains("Access-Control"));
+        assert!(!text.contains("Vary"));
+    }
+
+    #[test]
+    fn static_reply_carries_cors_only_for_allowed_origin() {
+        let cors = crate::security::cors_headers_for(Some("http://tauri.localhost"));
+        let mut out = Vec::new();
+        http_reply_static(
+            &mut out,
+            "text/plain",
+            b"x",
+            RangeRequest::Ignore,
+            false,
+            &cors,
+        )
+        .unwrap();
+        let text = String::from_utf8_lossy(&out).to_string();
+        assert!(text.contains("Access-Control-Allow-Origin: http://tauri.localhost\r\n"));
+        assert!(text.contains("Content-Length: 1\r\n"));
+        assert!(!text.contains('*'));
+
+        let mut out = Vec::new();
+        http_reply_static(
+            &mut out,
+            "text/plain",
+            b"x",
+            RangeRequest::Ignore,
+            false,
+            &[],
+        )
+        .unwrap();
+        let text = String::from_utf8_lossy(&out).to_string();
+        assert!(!text.contains("Access-Control"));
+        assert!(!text.contains('*'));
+    }
+
+    // ── P4R Batch 3：/api/metadata 路径泄露（S7）────────────────────────────
+
+    #[test]
+    fn drain_inbound_is_bounded_and_stops_at_eof() {
+        // 全部读走
+        let data = [7u8; 100];
+        let mut r = &data[..];
+        assert_eq!(drain_inbound(&mut r, 8192), 100);
+        // 上限生效：数据远多于上限时不得无限读
+        let big = vec![1u8; 100_000];
+        let mut r = &big[..];
+        let n = drain_inbound(&mut r, 4096);
+        assert!(
+            (4096..=4096 + 2048).contains(&n),
+            "必须在上限附近停止，实际 {n}"
+        );
+        // 空输入立即返回
+        let empty: &[u8] = &[];
+        let mut r = empty;
+        assert_eq!(drain_inbound(&mut r, 8192), 0);
+    }
+
+    #[test]
+    fn early_reject_response_is_delivered_before_drain() {
+        // 顺序契约：必须先写拒绝响应再排空，否则排空会先吃掉请求、响应仍可能被 RST 丢弃。
+        // 此处以「写响应 + 排空」组合验证总字节数，锁定两者不互相吞并。
+        let mut out = Vec::new();
+        http_reply(&mut out, "403 Forbidden", "text/plain", b"forbidden", &[]).unwrap();
+        let written = out.len();
+        assert!(String::from_utf8_lossy(&out).starts_with("HTTP/1.1 403 Forbidden\r\n"));
+        let req = b"GET /api/snapshot HTTP/1.1\r\nHost: x\r\n\r\n";
+        let mut r = &req[..];
+        let drained = drain_inbound(&mut r, 8192);
+        assert_eq!(drained, req.len());
+        assert_eq!(out.len(), written, "排空不得改动已写出的响应");
+    }
+
+    #[test]
+    fn metadata_json_never_leaks_absolute_path() {
+        // 这些是**合成示例路径**，不是本机真实路径：本测试断言输出中不含输入路径，
+        // 用任意路径均可成立，因此不得把开发机的真实用户名/工程路径写进仓库。
+        for dir in [
+            r"E:\work\ets2nav\data\europe-v5",
+            r"C:\Users\example\ets2nav\data\europe-v5",
+            "/home/example/ets2nav/data/europe-v5",
+            r"data\europe-v5",
+        ] {
+            let s = metadata_json(123, 456, dir);
+            assert!(!s.contains(dir), "不得回显完整 dataset_dir: {dir}");
+            assert!(!s.contains(r":\"), "不得含 Windows 盘符路径: {s}");
+            assert!(!s.contains("/"), "不得含路径分隔符: {s}");
+            assert!(!s.contains('\\'), "不得含反斜杠: {s}");
+            assert!(!s.to_lowercase().contains("users"), "不得含用户名段: {s}");
+            assert!(
+                !s.to_lowercase().contains("projects"),
+                "不得含工程路径段: {s}"
+            );
+            let v: serde_json::Value = serde_json::from_str(&s).unwrap();
+            assert_eq!(v["dataset"], "europe-v5");
+            assert_eq!(v["nodes"], 123);
+            assert_eq!(v["edges"], 456);
+        }
+    }
+
+    #[test]
+    fn dataset_display_name_is_last_segment() {
+        assert_eq!(dataset_display_name(r"E:\a\b\europe-v5"), "europe-v5");
+        assert_eq!(dataset_display_name("data/europe-v5"), "europe-v5");
+        assert_eq!(dataset_display_name("data/europe-v5/"), "europe-v5");
+        assert_eq!(dataset_display_name("europe-v5"), "europe-v5");
+        assert_eq!(dataset_display_name("."), "unknown");
+        assert_eq!(dataset_display_name(""), "unknown");
+        // 关键：任何输入都不得让输出等于输入的完整路径
+        for d in [r"C:\Users\x\d", "/tmp/x/d"] {
+            assert_ne!(dataset_display_name(d), d);
+            assert!(!dataset_display_name(d).contains([':', '\\', '/']));
+        }
     }
 
     // ── P4R-2：GLOSA 数据契约（snapshot_json 的 UI-facing projection）──────────

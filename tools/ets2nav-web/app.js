@@ -26,6 +26,93 @@ const logInfo = (msg, detail) => console.info(`[ets2nav] ${msg}`, detail ?? "");
 const logWarn = (msg, detail) => console.warn(`[ets2nav] ${msg}`, detail ?? "");
 const logError = (msg, detail) => console.error(`[ets2nav] ${msg}`, detail ?? "");
 
+// ─── 会话令牌（P4R Batch 3）─────────────────────────────────────────────────
+// LAN 模式下 nav-server 要求私网对端携带 256-bit 会话令牌；本机回环对端豁免，
+// 因此本机页面通常没有令牌，而手机从二维码打开时经 URL fragment 得到令牌。
+//
+// 为什么用 fragment 而非 query：fragment（`#` 之后）不会随请求发送给 HTTP
+// server，因而不进入访问日志；query 会。服务端也只在 `/ws` 接受 query 令牌，
+// `/api/*` 一律要求 `Authorization: Bearer`。
+//
+// 令牌只存在于内存变量与 sessionStorage（当前 tab 会话），不使用 localStorage
+// 长期保存；服务端每次进程启动重新生成，旧令牌自然失效。
+//
+// 令牌绝不出现在 console、DOM 可见文本或 URL 查询串中。
+const TOKEN_KEY = "ets2nav.sessionToken";
+const TOKEN_RE = /^[0-9a-f]{64}$/;
+
+/**
+ * 解析 fragment 中的令牌。
+ * 返回 {present, value}：present 表示 fragment 里确实出现了 token 参数
+ * （无论是否合法），value 仅在形态合法时为字符串。
+ * 区分二者是为了对「携带了畸形令牌」给出显式告警，而不是静默当作没有令牌。
+ */
+function readTokenFragment(hash) {
+  if (!hash) return { present: false, value: null };
+  const body = hash.startsWith("#") ? hash.slice(1) : hash;
+  for (const part of body.split("&")) {
+    const eq = part.indexOf("=");
+    if (eq > 0 && part.slice(0, eq) === "token") {
+      const v = part.slice(eq + 1);
+      return { present: true, value: TOKEN_RE.test(v) ? v : null };
+    }
+  }
+  return { present: false, value: null };
+}
+
+/** 用 replaceState 从地址栏移除 fragment（令牌留在截图/书签/历史里没有意义）。 */
+function stripFragment() {
+  try {
+    history.replaceState(null, "", location.pathname + location.search);
+  } catch (e) {
+    logWarn("history.replaceState 失败，地址栏 fragment 未能移除", e);
+  }
+}
+
+function initSessionToken() {
+  const frag = readTokenFragment(location.hash);
+  if (frag.present) {
+    stripFragment(); // 无论令牌是否合法都先抹掉
+    if (frag.value === null) {
+      logWarn("URL fragment 中的 token 形态非法（期望 64 位小写十六进制），已忽略");
+    } else {
+      try {
+        sessionStorage.setItem(TOKEN_KEY, frag.value);
+      } catch (e) {
+        // 隐私模式等场景下 sessionStorage 可能不可用：令牌仍留在内存中，
+        // 本 tab 内一切功能正常，仅刷新后需重新扫码。
+        logWarn("sessionStorage 不可用，令牌仅保留在内存", e);
+      }
+      return frag.value;
+    }
+  }
+  try {
+    return sessionStorage.getItem(TOKEN_KEY) || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+let sessionToken = initSessionToken();
+
+/**
+ * 统一 API 请求入口：有会话令牌即附 `Authorization: Bearer`，无令牌则普通请求。
+ * 所有动态 API 调用（route/snapshot/search/settings）都应经此函数，避免在每处
+ * fetch 里重复认证逻辑。令牌不写日志。
+ */
+async function apiFetch(url, init = {}) {
+  const headers = new Headers(init.headers || undefined);
+  if (sessionToken) headers.set("Authorization", "Bearer " + sessionToken);
+  return fetch(url, { ...init, headers });
+}
+
+/** 给 WS URL 附加当前会话令牌（幂等：已含 token 参数则不重复附加）。 */
+function withToken(url, token) {
+  if (!token) return url;
+  if (/[?&]token=/.test(url)) return url;
+  return url + (url.includes("?") ? "&" : "?") + "token=" + token;
+}
+
 async function headOk(url) {
   const r = await fetch(url, { method: "HEAD" });
   return r.ok;
@@ -330,14 +417,18 @@ function connect() {
     clearTimeout(reconnectTimer);
     reconnectTimer = null;
   }
-  const url = $("server-url").value.trim();
+  // `base` 是输入框里的地址，永不含令牌，因此可以安全地进入状态文案与日志；
+  // 令牌在构造 socket 的那一刻附加，因此每次重连都会带上**当前**令牌
+  // （不存在「首次连接有令牌、重连后丢失」的形态）。
+  const base = $("server-url").value.trim();
+  const url = withToken(base, sessionToken);
   const prev = ws;
   let sock;
   try {
     sock = new WebSocket(url);
   } catch (e) {
     // URL 非法等构造期异常：不得以未捕获异常终止页面脚本
-    logError(`WebSocket 构造失败（地址：${url}）`, e);
+    logError(`WebSocket 构造失败（地址：${base}）`, e);
     $("conn-status").textContent = "连接错误";
     $("conn-status").className = "";
     return;
@@ -352,22 +443,10 @@ function connect() {
   sock.onopen = () => {
     if (!isCurrent()) return;
     reconnectAttempts = 0; // 连上即重置退避
-    $("conn-status").textContent = "已连接 " + url;
+    $("conn-status").textContent = "已连接 " + base;
     $("conn-status").className = "on";
-    // §61：展示同网移动端可用地址（server 监听 0.0.0.0——用当前 host 换协议）
-    try {
-      const httpBase = url.replace(/^ws:\/\//, "http://").replace(/\/ws$/, "");
-      const displayUrl = "http://" + location.hostname + ":" + new URL(httpBase).port + "/";
-      $("qr-url").textContent = displayUrl;
-      // qrcode@1.5.4（官方维护，MIT）：API 为 toCanvas(canvas, text, options, cb)，
-      // 取代此前未版本化 vendor 的 new QRCode(el, {...})。
-      QRCode.toCanvas($("qr"), displayUrl, { width: 140, margin: 1 }, (err) => {
-        if (err) { logError("二维码生成失败", err); return; }
-        $("qr-box").classList.remove("hidden");
-      });
-    } catch (e) {
-      logError("二维码地址构造失败", e);
-    }
+    // 二维码地址必须由服务器提供实际局域网地址，不得用 location.hostname
+    refreshLanQr();
   };
   sock.onmessage = (ev) => {
     if (!isCurrent()) return;
@@ -394,7 +473,8 @@ async function setRoute() {
   // 起点 = 车辆当前位置（无则用默认 Berlin 点）
   const [px, pz] = lastPos || [-58456, 32832];
   const base = $("server-url").value.replace(/^ws:\/\//, "http://").replace(/\/ws$/, "");
-  const r = await fetch(base + "/api/route", {
+  // 经统一 helper：LAN 模式下自动携带 Authorization: Bearer
+  const r = await apiFetch(base + "/api/route", {
     method: "POST",
     headers: { "Content-Type": "application/json" },
     body: JSON.stringify({ from: [px, pz], to: [fx, fz] }),
@@ -420,18 +500,152 @@ $("btn-follow").onclick = () => resumeFollow();
 map.on("dragstart", pauseFollow);
 map.on("wheel", pauseFollow);
 
-// 同源默认连接地址（P4R Batch 2）：index.html 中的默认值硬编码 127.0.0.1:8123，
-// 因此当 nav-server 监听其他端口时，由该 server 自己提供的页面仍会去连 8123——
-// 页面与服务端端口脱节。此处只在页面确实由本机回环 HTTP 提供时把默认值改写为
-// 同源 WS 地址；file:// 打开与桌面端（Tauri 的 tauri.localhost 等非回环主机）
-// 保持原默认值不变，避免破坏既有部署方式。
+// 同源默认连接地址（P4R Batch 2 引入，Batch 3 修正范围）。
+//
+// 原实现只在 hostname 属于回环（127.0.0.1/localhost/[::1]）时才推导同源 WS 地址，
+// 因此手机从 `http://192.168.x.x:<port>/` 打开页面时不会去连
+// `ws://192.168.x.x:<port>/ws`，而是沿用 index.html 里硬编码的
+// `ws://127.0.0.1:8123/ws`——手机上 127.0.0.1 指向手机自己，连接必然失败。
+// 这是 PLAN-P3plus B5「移动端可用」的阻断项。
+//
+// 现改为：只要页面是由普通 HTTP(S) 提供的，就按同源推导，与主机是否回环无关。
+const DESKTOP_HOSTS = ["tauri.localhost"];
+
+/** 页面是否由本机回环 HTTP 提供（用于判断本机 UI 还是手机 UI）。 */
+function isLoopbackHost() {
+  const h = location.hostname;
+  return h === "127.0.0.1" || h === "localhost" || h === "::1" || h === "[::1]";
+}
+
+/**
+ * 同源 WS 地址（不含令牌，令牌由 connect() 在建立连接时附加）。
+ *
+ * 返回 null 的两种情形都是「页面不是由 nav-server 用 HTTP 提供的」，此时代保持
+ * index.html 中的默认地址不变：
+ *   - 非 http/https：`file://` 直接打开、Tauri 的 `tauri://` 自定义协议；
+ *   - 桌面端主机：Windows 上 Tauri 2.11.5 的页面 origin 实测为
+ *     `http://tauri.localhost`（见 docs/validation/p4r-batch3-2026-09.md）。
+ *     它形如普通 HTTP 页面，但不是 nav-server 提供的，若按同源推导会去连
+ *     `ws://tauri.localhost/ws` 并必然失败。
+ */
 function sameOriginWsUrl() {
   const { protocol, hostname, host } = location;
   if (protocol !== "http:" && protocol !== "https:") return null;
-  const loopback = hostname === "127.0.0.1" || hostname === "localhost" || hostname === "[::1]";
-  if (!loopback) return null;
+  if (DESKTOP_HOSTS.includes(hostname)) return null;
   return (protocol === "https:" ? "wss://" : "ws://") + host + "/ws";
 }
+
+// ─── LAN 二维码（P4R Batch 3）───────────────────────────────────────────────
+// 原实现用 `location.hostname` 构造二维码地址，本机页面打开时得到
+// `http://127.0.0.1:<port>/`——该二维码对手机无效（手机上的 127.0.0.1 指向手机
+// 自己）。现改为向服务器索取实际 RFC1918 候选地址。
+//
+// 多网卡（Wi-Fi / 以太网 / VPN / Hyper-V / WSL）并存时不静默挑选：服务器返回
+// 全部候选并标注网卡名，候选多于一个时由用户在下拉框中选择。
+async function refreshLanQr() {
+  const box = $("qr-box");
+  if (!isLoopbackHost()) {
+    // 手机端本身就是被扫码的一方，不需要二维码；且远端 bootstrap 必然被拒。
+    box.classList.add("hidden");
+    return;
+  }
+  let data;
+  try {
+    const r = await fetch("api/lan-bootstrap");
+    if (!r.ok) {
+      logWarn(`LAN bootstrap 返回 ${r.status}，二维码不可用`);
+      return;
+    }
+    data = await r.json();
+  } catch (e) {
+    logWarn("LAN bootstrap 请求失败，二维码不可用", e);
+    return;
+  }
+  renderLanQr(data);
+}
+
+function renderLanQr(data) {
+  const box = $("qr-box");
+  const note = $("lan-note");
+  const pick = $("lan-pick");
+  const canvas = $("qr");
+  box.classList.remove("hidden");
+
+  const addrs = data && data.enabled === true && Array.isArray(data.addresses)
+    ? data.addresses : [];
+
+  const showNote = (text) => {
+    canvas.classList.add("hidden");
+    pick.classList.add("hidden");
+    canvas.removeAttribute("data-qr-target");
+    $("qr-url").textContent = "";
+    note.textContent = text;
+    note.classList.remove("hidden");
+  };
+
+  if (!data || data.enabled !== true) {
+    showNote("局域网未启用——服务以 --lan 启动后可扫码连接手机");
+    return;
+  }
+  if (addrs.length === 0) {
+    showNote("未发现可用局域网地址——请确认已连接 Wi-Fi 或以太网");
+    return;
+  }
+
+  note.classList.add("hidden");
+  canvas.classList.remove("hidden");
+  const sel = $("lan-address");
+  const previous = sel.value;
+  sel.innerHTML = "";
+  for (const a of addrs) {
+    const opt = document.createElement("option");
+    opt.value = a.address;
+    opt.textContent = a.interface ? `${a.address}（${a.interface}）` : a.address;
+    sel.appendChild(opt);
+  }
+  // 服务器已排序并把首选标为 preferred；仅当用户先前的选择仍然存在时才保留它，
+  // 否则回到服务器首选，不静默漂移到列表里的其他地址。
+  const kept = addrs.find((a) => a.address === previous);
+  const preferred = addrs.find((a) => a.preferred) || addrs[0];
+  sel.value = (kept || preferred).address;
+  pick.classList.toggle("hidden", addrs.length < 2);
+  lastLanBootstrap = data;
+  drawQr(data.token, sel.value, data.port);
+}
+
+/** 最近一次 bootstrap 结果（切换候选地址时重绘二维码用；不参与鉴权）。 */
+let lastLanBootstrap = null;
+
+/** 用户在多个候选地址间切换时重绘二维码。 */
+$("lan-address").addEventListener("change", () => {
+  if (!lastLanBootstrap) return;
+  drawQr(lastLanBootstrap.token, $("lan-address").value, lastLanBootstrap.port);
+});
+
+/**
+ * 生成二维码。
+ *
+ * 可见文本只显示地址（`http://<addr>:<port>/`），完整含令牌 URL 保存在
+ * `canvas.dataset.qrTarget`：令牌在失败截图、trace 等测试 artifact 里出现没有任何
+ * 价值，而它经二维码本身交付给手机。E2E 通过 data-qr-target 断言二维码内容。
+ */
+function drawQr(token, address, port) {
+  if (!token) {
+    logWarn("bootstrap 未返回令牌，二维码不可用");
+    return;
+  }
+  const target = `http://${address}:${port}/#token=${token}`;
+  $("qr-url").textContent = `http://${address}:${port}/`;
+  $("qr").dataset.qrTarget = target;
+  QRCode.toCanvas($("qr"), target, { width: 140, margin: 1 }, (err) => {
+    if (err) logError("二维码生成失败", err);
+  });
+}
+
+
+// 默认连接地址：页面由 nav-server 用 HTTP 提供时按同源推导（含手机经 LAN 地址
+// 打开的情形）；file:// 与桌面端保持 index.html 的默认值。令牌不写入输入框，
+// 由 connect() 在建立连接时附加。
 const derivedWs = sameOriginWsUrl();
 if (derivedWs) $("server-url").value = derivedWs;
 

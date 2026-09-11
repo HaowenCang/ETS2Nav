@@ -7,7 +7,8 @@
   "scripts": {
     "build": "node scripts/build.mjs",
     "test:e2e": "playwright test",
-    "test:protocol": "node scripts/run-protocol-test.mjs"
+    "test:protocol": "node scripts/run-protocol-test.mjs",
+    "test:security": "node scripts/run-security-test.mjs"
   },
   "dependencies": {
     "maplibre-gl": "4.7.1",
