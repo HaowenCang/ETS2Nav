@@ -514,3 +514,20 @@ if errorlevel 1 (echo DATASET SMOKE FAIL & set FAIL=1) else (echo DATASET SMOKE 
 **未改动项与其理由**：`PLAN.md` §4.2「验证」段的「clippy 0 / 97 测试」与本文 §5 的「cargo test 100 passed」均为**各自时点的历史实跑记录**（分别为 P5 修复时与 2026-08-12 加固时），不是当前值，故不追改——文档记录当时证据，当前值由 §9 各表与本清单承担。
 
 
+
+---
+
+## 附录 A —— 2026-09-12 追补（P4R Batch 4）
+
+**本节为事后追补，不修改上文任何当时的结论与数值。**
+
+上文 §9.2 记录了「逐步判定与累积 FAIL 解耦」这一修复，并据此在 §5 的四套件表中声明各步骤判定系基于真实退出码。按 P4R Batch 4 的重新审计，该声明对其中若干步骤并不成立：
+
+1. **管道吞掉退出码。** `run-p2/p3-tests.bat` 的 `cargo clippy --all-targets 2>&1 | findstr …`、`cargo test 2>&1 | findstr /C:"FAILED"`，以及 `nav-core-cli regression|match|signal|bench … | findstr …`，其 `ERRORLEVEL` 取的是 `findstr` 的退出码，被测进程退出码被丢弃。于是「CARGO TEST PASS」在 `cargo test` 因**编译错误**失败（输出为 `error[E…]`、不含 `FAILED`）时同样成立——编译不过被报告为测试通过。
+2. **反向判定。** `run-p5-tests.bat` 的 `cargo test -p od-corpus 2>&1 | findstr /C:"FAILED" /C:"error[E"` 之后接 `if errorlevel 1 (echo … PASS)`：`findstr` 退出码 1（未找到）被当作成功条件；`cargo` 无法启动时输出为空，同样判 PASS。
+3. **恒真 marker。** `nav-core-cli match` 的统计行与 `signal` 的空结果分支都含有被 `findstr` 搜索的关键词，文本判定无法区分成功与空结果。
+4. **基准自证。** `run-p5-tests.bat` 在基准缺失时先生成、再与刚生成的文件比较，结构上不可能失败；因此该文件的 ALL PASS 记录不构成对 OD 一致性的验证。
+5. **隐式输入与陈旧产物。** `run-p2/p3` 复用 `%TEMP%\real.navtrace`（跨轮污染）；`run-p1` 执行 `tools/dataset-reader-smoke/target/release/*.exe` 却从未构建它；`run-p2/p3/p5` 在 trace 已存在时不重建 `nav-core-cli`。
+6. **开发者绝对路径。** `run-p2/p3/p5` 以 `set DATASET=E:\Projects\Pi\ETS2Nav\data\europe-v5` 覆盖用户环境变量；产品代码中另有六处本机绝对路径缺省值，测试代码中另有三处。
+
+上述各项均已在 P4R Batch 4 中修复并重新实测（四条入口 exit 0）。**上文四套件 ALL PASS 的记录本身未被推翻**——它记录的是当时那些命令确实执行完毕；被修正的是「该记录证明了什么」这一推论强度。当前判定契约、配置 contract、clean-clone 复现与 E2E-09 根因见 `docs/validation/p4r-batch4-2026-09.md`。

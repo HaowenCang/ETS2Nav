@@ -7,7 +7,16 @@ using ScsResource;
 using ScsSector;
 
 var cmdArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
-var installDir = Arg(cmdArgs, "--install") ?? @"E:\SteamLibrary\steamapps\common\Euro Truck Simulator 2";
+// 安装目录来源：--install > 环境变量 ETS2_INSTALL > 报错退出（P4R Batch 4）。
+// 原实现在此硬编码了一名开发者的本机路径：换一台机器时会去探测一个不存在的目录，
+// 探针结论因此取决于谁在跑它。探针工具不猜路径。
+var installDir = Arg(cmdArgs, "--install")
+    ?? Environment.GetEnvironmentVariable("ETS2_INSTALL");
+if (string.IsNullOrWhiteSpace(installDir))
+{
+    Console.Error.WriteLine("ERROR: 需要 --install <游戏根目录>，或设置环境变量 ETS2_INSTALL");
+    Environment.Exit(2);
+}
 var install = GameInstall.Detect(installDir);
 Console.WriteLine($"游戏 v{install.GameVersion}，{install.Archives.Count} archives / {install.EnabledDlc.Count} DLC");
 using var overlay = install.BuildOverlay();

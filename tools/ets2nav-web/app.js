@@ -262,6 +262,70 @@ const FOLLOW_RESUME_MS = 8000;
 const FOLLOW_RESUME_MIN_KMH = 5;
 let followPausedAt = 0;
 
+// ─── 手势状态（P4R Batch 4：修复「跟随动画吞掉用户拖动」）────────────────────
+//
+// 缺陷与机理（实测，非推断）：onSnapshot 每 50 ms（20 Hz 快照）调用一次
+// map.easeTo()，而 MapLibre 的 easeTo 开头就是 `this._stop(false, …)`，其
+// `HandlerManager.stop()` 会对**所有**交互 handler 执行 reset()——包括正在进行中的
+// 拖拽（DragHandler._lastPoint 被删除，此后的 mousemove 一律被忽略）。
+//
+// 因此存在一个致命窗口：mousedown 之后、位移超过 clickTolerance 的第一个 mousemove
+// 之前，只要有一次 easeTo 落下，这次拖动就永久失效——MapLibre 不再发出 dragstart，
+// 反而在 mouseup 时发出 click，于是挂在 dragstart 上的 pauseFollow 从不执行，相机
+// 继续跟随。对照实验（每条件 16 次，仅改变一个变量）：
+//
+//   跟随动画运行 + 快速合成拖动（按下到首次移动约 8 ms）→ dragstart 15/16
+//   相机静止     + 同一段输入                          → dragstart 16/16
+//   跟随动画运行 + 真实人类节奏（按下后 40 ms 才移动）  → dragstart  0/16
+//   同上节奏，但手势期间不发 easeTo                     → dragstart 16/16
+//
+// 每一次失败都对应「该窗口内确实夹了一次 easeTo」，没有一次失败缺少这一条件。结论：
+// 这不是测试缺陷——真实用户按下后需要 30–70 ms 才会移动超过 3 px，因此**真实拖动
+// 几乎必然被自己的跟随动画吞掉**（0/16）。
+//
+// 修复分两层，缺一不可：
+//   1. 指点按下期间不发起相机动画。MapLibre 本就在 mousedown 时以 `_stop(true)` 取消
+//      进行中的缓动（该分支不 reset handler），若我们随后再发起新的 easeTo，就等于把
+//      它刚建立的手势状态抹掉。按下期间跳过 easeTo，手势即可正常开始（对照实验第 4 行）。
+//   2. 暂停判据取自**用户原始输入**（Pointer Events + 位移阈值），而不是库事件
+//      dragstart。§57 的承诺是「手动拖动后暂停」，把它绑在一个可被自身动画抑制的库
+//      事件上正是本缺陷的成因；dragstart 监听保留作双重保险。
+//
+// 语义边界（刻意保持）：普通点击（按下后无位移）**不**暂停 follow——地图上没有点击
+// 交互，且跟随不该因为一次误触而中断。阈值取 MapLibre 默认 clickTolerance（3 px），
+// 使产品对「拖动」的定义与库对「拖动」的定义不会分叉。
+const DRAG_TOLERANCE_PX = 3;
+
+/** 指点是否按在地图画布上（鼠标/触摸/笔统一走 Pointer Events，故手机拖动同样受益）。 */
+let pointerDownOnMap = false;
+/** 按下位置（视口坐标）；用于按位移判定「用户确实在拖动」。 */
+let pointerDownAt = null;
+
+function onPointerDown(e) {
+  // 只认主键：中键/右键是旋转、俯仰等其它手势，不改变跟随语义
+  if (e.pointerType === "mouse" && e.button !== 0) return;
+  pointerDownOnMap = true;
+  pointerDownAt = { x: e.clientX, y: e.clientY };
+}
+
+function onPointerMove(e) {
+  // 窗口外释放鼠标时浏览器可能不派发 pointerup（MapLibre 对同一问题有等价防御）：
+  // 鼠标移动到「按键已不再按下」即视为手势结束，避免相机被永久冻结。
+  if (e.pointerType === "mouse" && e.buttons === 0) {
+    onPointerRelease();
+    return;
+  }
+  if (!pointerDownOnMap || !pointerDownAt || !following) return;
+  const dx = e.clientX - pointerDownAt.x;
+  const dy = e.clientY - pointerDownAt.y;
+  if (Math.hypot(dx, dy) >= DRAG_TOLERANCE_PX) pauseFollow();
+}
+
+function onPointerRelease() {
+  pointerDownOnMap = false;
+  pointerDownAt = null;
+}
+
 function pauseFollow() {
   if (!following) return;
   following = false;
@@ -378,7 +442,10 @@ function onSnapshot(snap) {
     lastPos = snap.position;
     if (mapReady) {
       map.getSource("vehicle").setData({ type: "Point", coordinates: toLngLat([snap.position[0], snap.position[1]]) });
-      if (following) {
+      // §57 跟随：按下期间不发相机动画（见「手势状态」段落的机理说明）。
+      // 若在此期间发起新的 easeTo，MapLibre 会 reset 掉刚开始的拖拽状态，使这次
+      // 拖动既不平移地图、也不触发 dragstart——用户的手势会被自己的跟随动画吞掉。
+      if (following && !pointerDownOnMap) {
         map.easeTo({ center: toLngLat([snap.position[0], snap.position[1]]), zoom: autoZoom(snap), duration: 200 });
         $("follow-hint").classList.add("hidden");
       }
@@ -552,6 +619,20 @@ $("btn-reset").onclick = () => {
 $("btn-follow").onclick = () => resumeFollow();
 map.on("dragstart", pauseFollow);
 map.on("wheel", pauseFollow);
+
+// 手势侦测（P4R Batch 4）：挂在画布容器上并用 Pointer Events，覆盖鼠标/触摸/笔。
+// capture 阶段注册，确保在任何库处理之前记录按下状态。
+{
+  const canvasEl = map.getCanvasContainer();
+  canvasEl.addEventListener("pointerdown", onPointerDown, true);
+  // 移动与释放挂在 window 上：拖动过程中指针可以移出画布（MapLibre 自身也用
+  // document/window 级监听跟踪手势），挂在画布上会漏掉这些事件。
+  window.addEventListener("pointermove", onPointerMove, true);
+  window.addEventListener("pointerup", onPointerRelease, true);
+  window.addEventListener("pointercancel", onPointerRelease, true);
+  // 窗口失焦时不可能再有指针按下：必须复位，否则相机会被永久冻结。
+  window.addEventListener("blur", onPointerRelease);
+}
 
 // 连接地址推导与令牌引导（P4R Batch 2 引入同源推导；Batch 3 修正范围；
 // Batch 3.5 引入会话引导）。

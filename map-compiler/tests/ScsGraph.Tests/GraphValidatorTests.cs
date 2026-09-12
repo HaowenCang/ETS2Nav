@@ -1,11 +1,14 @@
 using ScsSector;
 using ScsGraph;
+using ScsTests;
 
 namespace ScsGraph.Tests;
 
 public class GraphValidatorTests
 {
-    private const string BerlinDir = @"E:\Projects\Pi\ETS2Nav\vendor\extracted\base_map\map\europe";
+    // 解包根不再硬编码开发者本机路径（P4R Batch 4）：见 TestPaths
+    private static readonly string BerlinDir =
+        TestPaths.ExtractedFile("base_map", "map", "europe");
 
     private static SectorFile ReadSector(string name)
     {

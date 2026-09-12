@@ -16,6 +16,7 @@ fn usage() {
     eprintln!("  nav-core-cli replay <trace.navtrace>      —— 回放 trace");
     eprintln!("  nav-core-cli match <trace> <dataset-dir>   —— trace 回放 Map Matching");
     eprintln!("  nav-core-cli snap <x,z> <dataset-dir>       —— 目的地吸附（最近可路由 edge）");
+    eprintln!("  nav-core-cli bench <dataset-dir> [--trace=<trace>] —— 性能基准（trace 可选，缺省跳过匹配段）");
     eprintln!("  nav-core-cli server <dataset-dir> [--replay=<trace>] [--port=<N>] [--web=<dir>] [--fake-signal] [--lan]");
     eprintln!("      —— 默认只监听 127.0.0.1；--lan 才监听局域网并要求私网对端携带会话令牌");
 }
@@ -51,7 +52,17 @@ fn main() {
             server_cli_run(&args, fake)
         }
         ("syntrace", _) if args.len() >= 5 => syntrace_cli(&args[2], &args[3], &args[4]),
-        ("bench", _) if args.len() >= 3 => bench_cli(&args[2]),
+        ("bench", _) if args.len() >= 3 => {
+            // trace 来源：--trace=<path> > 环境变量 ETS2NAV_TRACE > 不提供。
+            // P4R Batch 4 前此处硬编码 `C:/Users/<开发者>/AppData/Local/Temp/real.navtrace`：
+            // 既把开发者本机路径写进了产品二进制，又使匹配段在不同机器上静默出现/消失，
+            // 回归判定因此不可复现。改为显式输入，缺省时打印明确的跳过行而不是静默跳过。
+            let trace = flag_value(&args, "--trace")
+                .map(|v| v.to_string())
+                .or_else(|| std::env::var("ETS2NAV_TRACE").ok())
+                .filter(|s| !s.trim().is_empty());
+            bench_cli(&args[2], trace.as_deref())
+        }
         _ => {
             usage();
             std::process::exit(2);
@@ -380,7 +391,11 @@ fn roundabout_stats(dataset_dir: &str) {
 }
 
 /// bench：正式性能基准（§139-140）——加载/内存/路线时延分布/匹配 p99。
-fn bench_cli(dataset_dir: &str) {
+///
+/// `trace` 为显式输入（`--trace=<path>` 或环境变量 `ETS2NAV_TRACE`）。缺失时跳过匹配段
+/// 并打印 `[匹配] 跳过`。此前的硬编码 `%TEMP%\real.navtrace` 使「匹配 p99」这一行在
+/// 有该文件的开发机上出现、在干净机器上消失——同一命令的输出随机器而变，回归不可复现。
+fn bench_cli(dataset_dir: &str, trace: Option<&str>) {
     // 1) 加载计时
     let t0 = std::time::Instant::now();
     let (routing, junctions) = nav_dataset::load_dataset(std::path::Path::new(dataset_dir))
@@ -456,30 +471,43 @@ fn bench_cli(dataset_dir: &str) {
     let p = |q: f64| -> f64 { times[((times.len() as f64) * q) as usize] };
     println!("[路线] {} 条（Berlin 核心网 fastest）：p50={:.2}ms p95={:.3}ms p99={:.3}ms max={:.3}ms（目标典型 <500ms）",
         solved, p(0.5), p(0.95), p(0.99), times.last().unwrap());
-    // 3) 匹配 p99（trace 回放）
-    let trace = "C:/Users/20659/AppData/Local/Temp/real.navtrace";
-    if std::path::Path::new(trace).exists() {
-        let frames: Vec<nav_telemetry::TraceFrame> =
-            nav_telemetry::replay(std::path::Path::new(trace))
-                .unwrap()
-                .collect();
-        let mut m = nav_matcher::MapMatcher::new(nav_matcher::MatcherConfig::default());
-        let mut mtimes = Vec::new();
-        for f in &frames {
-            let p = f.snap.position;
-            let yaw = quat_yaw(f.snap.heading);
-            let t = std::time::Instant::now();
-            m.match_frame(&graph, &spatial, p[0], p[2], yaw);
-            mtimes.push(t.elapsed().as_secs_f64() * 1000.0);
+    // 3) 匹配 p99（trace 回放；trace 为显式输入，未提供时明确跳过）
+    match trace {
+        Some(path) if std::path::Path::new(path).exists() => {
+            let frames: Vec<nav_telemetry::TraceFrame> =
+                nav_telemetry::replay(std::path::Path::new(path))
+                    .unwrap_or_else(|e| {
+                        eprintln!("打开 trace 失败 {path}: {e}");
+                        std::process::exit(1);
+                    })
+                    .collect();
+            let mut m = nav_matcher::MapMatcher::new(nav_matcher::MatcherConfig::default());
+            let mut mtimes = Vec::new();
+            for f in &frames {
+                let p = f.snap.position;
+                let yaw = quat_yaw(f.snap.heading);
+                let t = std::time::Instant::now();
+                m.match_frame(&graph, &spatial, p[0], p[2], yaw);
+                mtimes.push(t.elapsed().as_secs_f64() * 1000.0);
+            }
+            mtimes.sort_by(|a, b| a.partial_cmp(b).unwrap());
+            let mp = |q: f64| -> f64 { mtimes[((mtimes.len() as f64) * q) as usize] };
+            println!(
+                "[匹配] {} 帧：p50={:.3}ms p99={:.3}ms（目标 p99<10ms）",
+                mtimes.len(),
+                mp(0.5),
+                mp(0.99)
+            );
         }
-        mtimes.sort_by(|a, b| a.partial_cmp(b).unwrap());
-        let mp = |q: f64| -> f64 { mtimes[((mtimes.len() as f64) * q) as usize] };
-        println!(
-            "[匹配] {} 帧：p50={:.3}ms p99={:.3}ms（目标 p99<10ms）",
-            mtimes.len(),
-            mp(0.5),
-            mp(0.99)
-        );
+        Some(path) => {
+            eprintln!("trace 不存在: {path}");
+            std::process::exit(1);
+        }
+        None => {
+            println!(
+                "[匹配] 跳过（未提供 trace；用 --trace=<trace> 或环境变量 ETS2NAV_TRACE 指定）"
+            );
+        }
     }
     // 4) P3 前方限速查询热路径（10000 次 Berlin 路线 lookahead）
     let (s1, s2) = (
@@ -858,8 +886,10 @@ fn signal_cli(xz: &str, dataset_dir: &str) {
         nav_router::cost::RouteProfile::Fastest,
     );
     let Some(route) = router.astar(&req) else {
-        println!("无路线");
-        return;
+        // 业务失败必须以非零退出码表达（P4R Batch 4）：原先只打印到 stdout 后 return，
+        // 进程退出码仍是 0，使 "无路线" 与 "有路线" 在机器语义上不可区分。
+        eprintln!("无路线");
+        std::process::exit(1);
     };
     // 受控 movement 序列（前 6 个）
     let mut idx = 0;
@@ -1201,7 +1231,11 @@ fn speed_cli(xz: &str, dataset_dir: &str, horizon: Option<&String>) {
                 prev = b.offset_m;
             }
         }
-        None => eprintln!("无路线"),
+        None => {
+            // 同上：无路线是业务失败，必须由退出码表达（P4R Batch 4）
+            eprintln!("无路线");
+            std::process::exit(1);
+        }
     }
 }
 

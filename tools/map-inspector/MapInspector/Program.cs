@@ -14,7 +14,12 @@ using ScsValidation.Validators;
 
 var cmdArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
 var installDir = Arg(args, "--install");   // 游戏安装根目录（经 GameInstall+Overlay 直接读 .scs）
-string dir = Arg(args, "--dir") ?? @"E:\Projects\Pi\ETS2Nav\vendor\extracted";   // 含 base_map/ 与 def/ 的解包根
+// 解包根（含 base_map/ 与 def/）：--dir > 环境变量 ETS2NAV_EXTRACTED > <仓库根>/vendor/extracted。
+// 原实现把一名开发者的本机绝对路径写成默认值：换机器或换检出位置后会静默读错目录
+// （P4R Batch 4）。仓库根由程序集位置向上查找，与仓库所在盘符无关。
+string dir = Arg(args, "--dir")
+    ?? Environment.GetEnvironmentVariable("ETS2NAV_EXTRACTED")
+    ?? FindRepoRelativeExtracted();
 
 // 资源层（P1-02）：所有 sector 读取经 IScsResourceProvider；上层不直接触碰文件系统
 // DirectoryProvider/OverlayProvider 均实现 IDisposable（P1-03 评审 m2：句柄所有权）
@@ -138,6 +143,27 @@ string? Arg(string[] a, string key)
 {
     for (int i = 0; i < a.Length - 1; i++)
         if (a[i] == key) return a[i + 1];
+    return null;
+}
+
+// 仓库根相对的解包根默认值（P4R Batch 4：不硬编码本机绝对路径）
+static string FindRepoRelativeExtracted()
+{
+    var root = FindRepoRootOrNull();
+    if (root is null)
+    {
+        Console.Error.WriteLine("ERROR: 无法从程序集位置向上定位仓库根（判据：存在 map-compiler/MapCompiler.sln）。");
+        Console.Error.WriteLine("       请显式传 --dir <解包根>，或设置环境变量 ETS2NAV_EXTRACTED。");
+        Environment.Exit(2);
+    }
+    return Path.Combine(root, "vendor", "extracted");
+}
+
+static string? FindRepoRootOrNull()
+{
+    for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)
+        if (File.Exists(Path.Combine(d.FullName, "map-compiler", "MapCompiler.sln")))
+            return d.FullName;
     return null;
 }
 

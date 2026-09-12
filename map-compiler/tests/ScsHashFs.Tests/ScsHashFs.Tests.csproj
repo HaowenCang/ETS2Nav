@@ -1,4 +1,4 @@
-﻿<Project Sdk="Microsoft.NET.Sdk">
+<Project Sdk="Microsoft.NET.Sdk">
 
   <PropertyGroup>
     <TargetFramework>net9.0</TargetFramework>
@@ -20,6 +20,11 @@
 
   <ItemGroup>
     <ProjectReference Include="..\..\src\ScsHashFs\ScsHashFs.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 共享的测试输入路径解析（环境变量 > 仓库根相对路径）。单份实现，避免多处漂移。 -->
+    <Compile Include="..\SharedTestPaths\TestPaths.cs" Link="TestPaths.cs" />
   </ItemGroup>
 
 </Project>

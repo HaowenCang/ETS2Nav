@@ -29,16 +29,32 @@ ETS2 Files ──▶ Map Compiler (C#/TS，离线低频) ──▶ map.db / rout
 
 前置：数据集不入库，须先构建 `data/europe-v5`（约 4 分钟，需已安装 ETS2），或从 [Release `dataset-europe-v5`](https://github.com/HaowenCang/ETS2Nav/releases/tag/dataset-europe-v5) 取得后解压至 `data/europe-v5`。构建命令见 `docs/validation/p5-closeout-2026-08.md` §6。
 
+判定逻辑集中在一处：`scripts/regression.ps1`。四个 `run-p*-tests.bat` 是它的薄包装（只做编码前置检查、转发参数、原样传播退出码）；P2 链内含 P1，P3 链内含 P2。
+
 ```bat
-:: run-p1 不自行设置 ETS2_INSTALL，需先导出（run-p2/p3/p5 内部已设，会链式调用 run-p1）
-set ETS2_INSTALL=E:\SteamLibrary\steamapps\common\Euro Truck Simulator 2
+:: 游戏安装目录必须显式提供：回归入口不猜测本机位置
+set ETS2_INSTALL=<ETS2 游戏根目录>
+:: 以下可选，缺省为 repo 内相对路径
+set ETS2NAV_EXTRACTED=<scs_extractor 解包根，含 base_map\ 与 def\>   :: 缺省 <repo>\vendor\extracted
+set ETS2NAV_DATASET=<数据集目录>                                    :: 缺省 <repo>\data\europe-v5
+set ETS2NAV_OD_BASELINE=<OD 基准文件>                               :: 缺省 <repo>\od-baseline-europe-v5.txt
 
-run-p1-tests.bat        :: P1 Regression Suite（unit / Berlin+Germany gate / determinism / Rust reader / Europe scale）
-run-p2-tests.bat        :: P2 Regression Suite（7 步，含自生成 trace）
-run-p3-tests.bat        :: P3 提醒模块（链内 P1 → P2 → P3）
-run-p5-tests.bat        :: P5 OD corpus（基线生成 + OD 回归 + OD 检查）
+run-p1-tests.bat        :: P1：unit / map-inspector 构建 / Berlin+Germany gate / determinism / Rust reader / Europe scale
+run-p2-tests.bat        :: P2：链内 P1 + cargo 门 + dataset smoke + route regression + match replay + signal link + perf smoke
+run-p3-tests.bat        :: P3：链内 P1 → P2 → P3（speed lookahead + camera verdict）
+run-p5-tests.bat        :: P5：OD 回归 + OD 检查（基准缺失即 PRECONDITION FAIL，绝不自动生成）
 
-cd nav-core && cargo fmt --check && cargo clippy --all-targets && cargo test
+:: 等价的规范入口（与 run-p*.bat 同一实现）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\regression.ps1 -Suite All
+:: 基准更新是独立的维护动作（不是测试）；覆盖已有基准需额外 -Force
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\regression.ps1 -Suite P5 -UpdateBaseline -Force
+:: harness 假绿自检（H1–H6）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\regression.ps1 -Suite SelfTest
+
+:: 退出码：0=PASS 1=TEST FAILURE 3=PRECONDITION FAILURE（外部输入缺失）4=HARNESS FAILURE
+:: 外部输入可改用参数传入：-Ets2Install / -Ets2Extracted / -Dataset / -OdBaseline
+
+cd nav-core && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
 dotnet test map-compiler/MapCompiler.sln
 ```
 

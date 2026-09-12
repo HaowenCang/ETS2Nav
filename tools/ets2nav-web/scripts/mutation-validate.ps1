@@ -8,7 +8,9 @@
 # 'Stop' PowerShell 5.1 turns those native stderr lines into terminating errors.
 # Every step is checked through $LASTEXITCODE instead.
 $ErrorActionPreference = "Continue"
-$web = "E:\Projects\Pi\ETS2Nav\tools\ets2nav-web"
+# P4R Batch 4: derive the web root from this script's own location instead of a
+# hard-coded developer path. $PSScriptRoot is <repo>\tools\ets2nav-web\scripts.
+$web = (Resolve-Path (Join-Path $PSScriptRoot "..")).Path
 $bak = Join-Path $env:TEMP "ets2nav-appjs-bak.js"
 $src = Join-Path $web "app.js"
 $log = Join-Path $env:TEMP "ets2nav-mutation.log"

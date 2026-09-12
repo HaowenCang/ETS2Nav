@@ -1,13 +1,13 @@
 using ScsHashFs;
+using ScsTests;
 
 namespace ScsHashFs.Tests;
 
-// 集成测试使用真实游戏归档（跳过当文件不存在）。
-// 参考路径：E:\SteamLibrary\steamapps\common\Euro Truck Simulator 2\
+// 集成测试使用真实游戏归档（未配置 ETS2_INSTALL 时跳过）。
+// 路径来源：环境变量 ETS2_INSTALL / ETS2NAV_EXTRACTED；不再硬编码开发者本机路径（P4R Batch 4）。
 public class HashFsReaderTests
 {
-    private const string GameDir = @"E:\SteamLibrary\steamapps\common\Euro Truck Simulator 2";
-    private static readonly string DefScs = Path.Combine(GameDir, "def.scs");
+    private static readonly string DefScs = TestPaths.GameFile("def.scs");
 
     [Fact]
     public void OpenDefScs_ReadsV2Header()
@@ -56,7 +56,7 @@ public class HashFsReaderTests
     public void ExtractMatchAgainstOfficialExtractor()
     {
         // 对照：官方 scs_extractor 解包产物必须与直接读取一致
-        var extracted = @"E:\Projects\Pi\ETS2Nav\vendor\extracted\def\def\world\semaphore_profile.sii";
+        var extracted = TestPaths.ExtractedFile("def", "def", "world", "semaphore_profile.sii");
         if (!File.Exists(DefScs) || !File.Exists(extracted)) return;
         using var r = HashFsReader.Open(DefScs);
         var text = r.ExtractText("/def/world/semaphore_profile.sii");

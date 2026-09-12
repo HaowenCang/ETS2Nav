@@ -13,7 +13,13 @@ using ScsMapModel;
 
 var cmdArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
 string? Arg(string k) { for (int i = 0; i < cmdArgs.Length - 1; i++) if (cmdArgs[i] == k) return cmdArgs[i + 1]; return null; }
-var installRoot = Arg("--install") ?? @"E:\SteamLibrary\steamapps\common\Euro Truck Simulator 2";
+var installRoot = Arg("--install") ?? Environment.GetEnvironmentVariable("ETS2_INSTALL");
+if (string.IsNullOrWhiteSpace(installRoot))
+{
+    // P4R Batch 4：原先默认到一名开发者的本机游戏路径；换机器后会静默读错目录。
+    Console.Error.WriteLine("ERROR: 需要 --install <游戏根目录>，或设置环境变量 ETS2_INSTALL");
+    Environment.Exit(2);
+}
 var region = Arg("--region") ?? "germany";
 var durationSec = int.Parse(Arg("--duration") ?? "300");
 var outPath = Arg("--out") ?? "speed-trace.csv";

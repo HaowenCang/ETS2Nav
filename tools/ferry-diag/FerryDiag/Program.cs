@@ -10,7 +10,11 @@ using ScsGraph;
 
 var cmdArgs = Environment.GetCommandLineArgs().Skip(1).ToArray();
 string? installDir = Arg(cmdArgs, "--install");
-string dir = Arg(cmdArgs, "--dir") ?? @"E:\Projects\Pi\ETS2Nav\vendor\extracted";
+// 解包根：--dir > 环境变量 ETS2NAV_EXTRACTED > <仓库根>/vendor/extracted（P4R Batch 4：
+// 不再硬编码开发者本机绝对路径）。
+string dir = Arg(cmdArgs, "--dir")
+    ?? Environment.GetEnvironmentVariable("ETS2NAV_EXTRACTED")
+    ?? Path.Combine(FindRepoRoot(), "vendor", "extracted");
 string mapPrefix = installDir != null ? "/map/europe/" : "/base_map/map/europe/";
 
 using OverlayProvider overlay = installDir != null
@@ -371,4 +375,16 @@ static string? Arg(string[] a, string key)
 {
     for (int i = 0; i < a.Length - 1; i++) if (a[i] == key) return a[i + 1];
     return null;
+}
+
+// 仓库根相对的解包根默认值（P4R Batch 4：不硬编码本机绝对路径）
+static string FindRepoRoot()
+{
+    for (var d = new DirectoryInfo(AppContext.BaseDirectory); d is not null; d = d.Parent)
+        if (File.Exists(Path.Combine(d.FullName, "map-compiler", "MapCompiler.sln")))
+            return d.FullName;
+    Console.Error.WriteLine("ERROR: 无法从程序集位置向上定位仓库根（判据：存在 map-compiler/MapCompiler.sln）。");
+    Console.Error.WriteLine("       请显式传 --dir <解包根>，或设置环境变量 ETS2NAV_EXTRACTED。");
+    Environment.Exit(2);
+    throw new InvalidOperationException("unreachable");
 }

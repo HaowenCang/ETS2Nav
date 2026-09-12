@@ -1,4 +1,5 @@
 using ScsSector;
+using ScsTests;
 
 namespace ScsSector.Tests;
 
@@ -22,10 +23,13 @@ public class ScsBinaryTests
 }
 
 // 集成测试：真实游戏 sector（文件缺失时跳过）
+// 路径来源：环境变量 ETS2NAV_EXTRACTED；不再硬编码开发者本机路径（P4R Batch 4）
 public class SectorFileTests
 {
-    private const string BerlinSector = @"E:\Projects\Pi\ETS2Nav\vendor\extracted\base_map\map\europe\sec-0002-0003.base";
-    private const string BaseMapDir = @"E:\Projects\Pi\ETS2Nav\vendor\extracted\base_map\map\europe";
+    private static readonly string BerlinSector =
+        TestPaths.ExtractedFile("base_map", "map", "europe", "sec-0002-0003.base");
+    private static readonly string BaseMapDir =
+        TestPaths.ExtractedFile("base_map", "map", "europe");
 
     [Fact]
     public void ReadBerlinSector_HeaderAndCounts()

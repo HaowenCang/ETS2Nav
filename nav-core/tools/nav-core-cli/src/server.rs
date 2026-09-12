@@ -351,7 +351,7 @@ pub(crate) fn drain_inbound(r: &mut dyn Read, max_bytes: usize) -> usize {
 
 /// `/api/metadata` 的非敏感投影（纯函数，独立于 socket 以便直接断言隐私性质）。
 ///
-/// 原实现返回 `ctx.dataset_dir` 的**完整绝对路径**（如 `E:\Projects\...`），
+/// 原实现返回 `ctx.dataset_dir` 的**完整绝对路径**（其中含构建机的盘符与目录名），
 /// 会把开发机用户名与目录结构泄露给任何能访问该端点的对端。此处只暴露数据集
 /// 的**目录名**（`data/europe-v5` → `europe-v5`）与图规模统计。`dataset_dir`
 /// 在进程内部照常保留，用于加载与日志。
