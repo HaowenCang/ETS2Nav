@@ -56,9 +56,10 @@ fn main() {
         ("syntrace", _) if args.len() >= 5 => syntrace_cli(&args[2], &args[3], &args[4]),
         ("bench", _) if args.len() >= 3 => {
             // trace 来源：--trace=<path> > 环境变量 ETS2NAV_TRACE > 不提供。
-            // P4R Batch 4 前此处硬编码 `C:/Users/<开发者>/AppData/Local/Temp/real.navtrace`：
+            // P4R Batch 4 前此处硬编码了某台开发机的用户临时目录下的 real.navtrace：
             // 既把开发者本机路径写进了产品二进制，又使匹配段在不同机器上静默出现/消失，
             // 回归判定因此不可复现。改为显式输入，缺省时打印明确的跳过行而不是静默跳过。
+            // （注释本身也不再写出任何盘符绝对路径，避免被路径审计误报成泄漏。）
             let trace = flag_value(&args, "--trace")
                 .map(|v| v.to_string())
                 .or_else(|| std::env::var("ETS2NAV_TRACE").ok())
