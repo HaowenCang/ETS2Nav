@@ -15,6 +15,13 @@ build/
 *.exp
 # 注意：刻意不写 `out/`。out/ 里放的是要分发的插件 DLL，整体忽略会把唯一可用产物挡掉。
 
+# Python 字节码缓存（P4R Batch 5 §36）。仓库内的 Python 是测试 verifier
+# （verify-server-protocol.py / verify-lan-security.py），任何一次 import 或
+# py_compile 都会在源文件旁生成 __pycache__/。它不是源码，且会在干净检出之外引入
+# 无意义差异；本轮做卫生审计时实测它未被忽略，故补上。
+__pycache__/
+*.pyc
+
 # Playwright（P4R Batch 2）：测试产物与失败快照不入库。
 # dist/ 已在上方忽略——前端构建输出（vendor bundle + 可选 map.pmtiles）由
 # `npm run build` 现场生成，不入库。
