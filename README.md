@@ -43,6 +43,8 @@ ETS2 Files ──▶ Map Compiler (C#/TS，离线低频) ──▶ map.db / rout
 
 `Portable` 覆盖 cargo fmt/clippy/test、map-compiler 的 portable dotnet 测试（显式排除 `GameAssetsRequired` 分类并断言执行数）、前端 clean build 两轮哈希比对与 `build-manifest.json` 校验、Desktop 编译门（必须在 `dist/` 生成之后）以及 harness 自检。CI 定义见 `.github/workflows/ci.yml`。
 
+四个 workflow job 的显示名即建议用作 `main` 保护检查的名称：`Source Gates`、`Dataset Gates`、`Web E2E`、`Security Portable`。名称里不含矩阵或版本，可长期稳定引用。`Security Portable` 这个后缀是有意的：协议集成与浏览器回环安全在云端真实验证通过，而完整 S1–S11 局域网矩阵中的 S9（不受允许来源在连接层被拒绝）需要一个非 RFC1918 的真实对端地址，hosted runner 不具备，脚本因此报 `NOT VERIFIED` 并以非零退出。该矩阵在 job 内仍原样运行（`continue-on-error`，不删断言、不改写结论），完整形态属本地/发布门：本机实测 `FAIL=0 NOT_VERIFIED=0 SKIP=0`。
+
 ```bat
 :: 游戏安装目录必须显式提供：回归入口不猜测本机位置
 set ETS2_INSTALL=<ETS2 游戏根目录>

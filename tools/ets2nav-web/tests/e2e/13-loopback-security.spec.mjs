@@ -88,9 +88,17 @@ const near = (d, p) => Array.isArray(d) && d.length === 2
 function openObserver(port, token) {
   const seen = { frames: 0, vehicles: 0, mapStates: [] };
   const sock = new WebSocket(`ws://127.0.0.1:${port}/ws?token=${token}`);
+  // 观测通道的断开必须可见（P4R Batch 5）。BLS-01 的正向对照在远端 runner 上曾超时，
+  // 而当时的失败信息无法区分两种诊断方向完全相反的原因：
+  //   (a) 服务端确实没有广播新的目的地； (b) 观测通道已悄悄断开、后续帧根本没到。
+  // 原实现没有 onclose/onerror 处理，所以 (b) 会伪装成 (a)。这里只增加可观测性，
+  // 不改任何断言与超时。
+  const state = { closed: false, errored: false };
+  sock.onclose = () => { state.closed = true; };
+  sock.onerror = () => { state.errored = true; };
   const ready = new Promise((ok) => {
     sock.onopen = () => ok(true);
-    sock.onerror = () => ok(false);
+    sock.addEventListener("error", () => ok(false), { once: true });
     sock.onmessage = (m) => {
       try {
         const v = JSON.parse(m.data);
@@ -101,7 +109,12 @@ function openObserver(port, token) {
     };
     setTimeout(() => ok(sock.readyState === 1), 8000);
   });
-  return { seen, ready, close: () => { try { sock.close(); } catch { /* 已关 */ } } };
+  return {
+    seen,
+    state,
+    ready,
+    close: () => { try { sock.close(); } catch { /* 已关 */ } },
+  };
 }
 
 /** 带令牌 POST /api/route，返回 HTTP 状态码。 */
@@ -227,7 +240,16 @@ test("BLS-01 跨源 simple POST（text/plain）无法改写导航目的地", asy
 
     // 正向对照：带令牌的请求仍然生效——证明「没有 B」不是观测通道坏掉
     expect(await authedRoute(srv.port, srv.token, A, C)).toBe(200);
-    expect(await waitDest(obs.seen, C), "正向对照必须成功，否则负向断言无区分力").toBe(true);
+    const sawC = await waitDest(obs.seen, C);
+    expect(
+      sawC,
+      sawC
+        ? ""
+        : "正向对照必须成功，否则负向断言无区分力。" +
+          `诊断：观测通道 closed=${obs.state.closed} errored=${obs.state.errored} ` +
+          `frames=${obs.seen.frames} vehicles=${obs.seen.vehicles} ` +
+          `mapStates=${JSON.stringify(obs.seen.mapStates)}`,
+    ).toBe(true);
   } finally {
     obs.close();
   }
