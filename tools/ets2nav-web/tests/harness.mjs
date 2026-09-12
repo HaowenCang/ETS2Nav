@@ -10,7 +10,7 @@
 import { spawn } from "node:child_process";
 import { createServer } from "node:net";
 import { existsSync } from "node:fs";
-import { cp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readdir, rm, writeFile, appendFile } from "node:fs/promises";
 import { networkInterfaces, tmpdir } from "node:os";
 import { dirname, join, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -219,7 +219,18 @@ export async function startServer({
     windowsHide: true,
   });
   let stderr = "";
-  proc.stderr.on("data", (d) => { stderr += d; });
+  // 同时把 stderr 落盘（P4R Batch 5.5 §6）：spec 运行在 Playwright 的 worker 子进程里，
+  // 而服务器进程由 globalSetup 在 runner 进程中建立，worker 拿不到进程句柄，因此
+  // 「服务端是否 panic / 是否还活着」在用例里原本不可观测。落盘后用例可读取尾部并
+  // 区分「产品线程崩了」与「观测通道没收到」——这正是远端 BLS-01 一度无法区分的一对
+  // 方向相反的原因。
+  const stderrLog = join(SESSION_DIR, `server-${chosen}.err.log`);
+  await mkdir(SESSION_DIR, { recursive: true });
+  await writeFile(stderrLog, "", "utf8");
+  proc.stderr.on("data", (d) => {
+    stderr += d;
+    appendFile(stderrLog, d).catch(() => {});
+  });
   proc.stdout.on("data", () => {});
 
   const up = await waitForPort(chosen, SERVER_BOOT_TIMEOUT_MS, () => proc.exitCode);

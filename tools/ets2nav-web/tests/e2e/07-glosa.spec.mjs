@@ -22,7 +22,7 @@
 
 import { expect, test } from "@playwright/test";
 import {
-  collectNavigatingEvidence, collectDiagnostics, deliverFrame, detachStream,
+  assertServerAlive, collectNavigatingEvidence, collectDiagnostics, deliverFrame, detachStream,
   dumpUiState, GLOSA_DEST, gotoApp, installFrameSampler, parseGlosa, readFrameSamples,
   setDestinationViaUi, startFrameSampling, vehicleFrame, waitConnected, waitGlosa,
 } from "./helpers.mjs";
@@ -53,16 +53,19 @@ async function openNavigating(page, origin) {
 }
 
 /** 采集导航中的帧证据并断言窗口完成；失败信息带完整诊断。 */
-async function evidenceOrFail(page, needStates, minCounts = {}) {
+async function evidenceOrFail(page, port, needStates, minCounts = {}) {
   const ev = await collectNavigatingEvidence(page, needStates, GLOSA_DEADLINE_MS, minCounts);
   const samples = await readFrameSamples(page);
-  const diag = JSON.stringify(await dumpUiState(page));
+  const diag = JSON.stringify(await dumpUiState(page, port));
   expect(
     ev.reason,
     `导航中的帧证据窗口未覆盖 ${JSON.stringify(needStates)}`
     + `${Object.keys(minCounts).length ? `（最少帧数 ${JSON.stringify(minCounts)}）` : ""}：`
     + `${JSON.stringify(ev)}；重设目的地次数=${ev.reposts}。诊断：${diag}`,
   ).toBe("states-observed");
+  // 服务端线程 panic 会让帧流静默停止，上面的窗口只会表现为超时——必须单独判定，
+  // 否则产品崩溃会被记成测试同步问题（§6）。
+  await assertServerAlive(port, `E2E-07（need=${JSON.stringify(needStates)}）`);
   return samples.filter((x) => x.session === "NAVIGATING");
 }
 
@@ -71,7 +74,7 @@ test("E2E-07a 真实 §38 计算结果渲染区间 / 无建议", async ({ page }
   const s = await session();
   await openNavigating(page, s.signalOrigin);
 
-  const nav = await evidenceOrFail(page, ["red", "yellow", ""]);
+  const nav = await evidenceOrFail(page, s.signalPort, ["red", "yellow", ""]);
   const reds = nav.filter((x) => x.state === "red");
   const yellows = nav.filter((x) => x.state === "yellow");
   const none = nav.filter((x) => x.state === "");
@@ -126,7 +129,7 @@ test("E2E-07e 已知缺口：绿灯窗口不产生 GLOSA（§38 仅红灯接入�
   const s = await session();
   await openNavigating(page, s.signalOrigin);
 
-  const nav = await evidenceOrFail(page, ["red", "green"], { green: 20 });
+  const nav = await evidenceOrFail(page, s.signalPort, ["red", "green"], { green: 20 });
   const greens = nav.filter((x) => x.state === "green");
   const reds = nav.filter((x) => x.state === "red");
 
@@ -156,7 +159,7 @@ test("E2E-07b 信号消失后旧 GLOSA 不残留", async ({ page }) => {
     .toMatch(RANGE_RE);
   expect(parseGlosa(shown)).not.toBeNull();
 
-  const nav = await evidenceOrFail(page, ["yellow", ""]);
+  const nav = await evidenceOrFail(page, s.signalPort, ["yellow", ""]);
 
   // 有信号但不可行（黄灯）：卡片仍可见，GLOSA 必须清空
   const yellows = nav.filter((x) => x.state === "yellow");

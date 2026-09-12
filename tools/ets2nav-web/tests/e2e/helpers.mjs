@@ -284,16 +284,60 @@ export async function navFrameEvidence(page) {
 }
 
 /**
+ * 读取某个服务器实例的 stderr 尾部（P4R Batch 5.5 §6）。
+ *
+ * 服务器进程由 globalSetup 在 Playwright 的 runner 进程中建立，spec 运行在 worker
+ * 子进程里，因此 worker 拿不到进程句柄、也无法直接读退出码；harness 把 stderr 落盘
+ * 之后，这里至少能回答"服务端有没有崩"。
+ */
+export async function serverStderrTail(port, maxChars = 900) {
+  try {
+    const { readFile } = await import("node:fs/promises");
+    const { join } = await import("node:path");
+    const { tmpdir } = await import("node:os");
+    const p = join(tmpdir(), "ets2nav-e2e", `server-${port}.err.log`);
+    const t = await readFile(p, "utf8");
+    return t.length > maxChars ? `…${t.slice(-maxChars)}` : t;
+  } catch (e) {
+    return `<无法读取 server stderr（port=${port}）：${e?.message ?? String(e)}>`;
+  }
+}
+
+/** 服务端线程是否 panic（`panicked at` 是 Rust 默认 panic 输出的固定前缀）。 */
+export function hasServerPanic(text) {
+  return typeof text === "string" && text.includes("panicked at");
+}
+
+/**
+ * 断言服务器进程没有 panic。
+ *
+ * 这一条必须在**成功路径**上也执行，而不是只出现在失败信息里：数据源线程 panic 后
+ * 服务端不再广播，后续一切"等待状态推进"的断言都只会表现为超时——那会把一个产品
+ * 崩溃记成测试同步问题。远端 BLS-01 的一次失败正是此形态。
+ */
+export async function assertServerAlive(port, label) {
+  const tail = await serverStderrTail(port);
+  if (hasServerPanic(tail)) {
+    throw new Error(
+      `${label}: 服务端进程已 panic（数据源线程终止后不再广播）。stderr 尾部：\n${tail}`,
+    );
+  }
+  return tail;
+}
+
+/**
  * 失败诊断：一次性取回与信号/GLOSA 断言相关的全部可观测上下文。
  *
  * 目的是让失败信息本身能区分诊断方向相反的原因（元素文本没更新 / 卡片可见性
- * 错 / WS 已断开 / 服务端没在推进剧本 / 页面脚本抛错），而不是只给出一句
- * DOM 超时。**不包含任何令牌**：读取的都是页面可见文本、全局连接状态与计数器，
- * 令牌从不进入 DOM 文本。
+ * 错 / WS 已断开 / 服务端没在推进剧本 / 页面脚本抛错 / 服务端线程已崩），而不是只
+ * 给出一句 DOM 超时。`port` 给出时会附上该服务器实例的 stderr 尾部（§6 要求）。
+ * **不包含任何令牌**：读取的都是页面可见文本、全局连接状态、计数器与服务端 stderr，
+ * 令牌从不进入这些文本。
  */
-export async function dumpUiState(page) {
+export async function dumpUiState(page, port) {
+  let ui;
   try {
-    return await page.evaluate(() => {
+    ui = await page.evaluate(() => {
       const t = (id) => {
         const el = document.getElementById(id);
         return el ? el.textContent : `<无 #${id}>`;
@@ -323,8 +367,10 @@ export async function dumpUiState(page) {
       };
     });
   } catch (e) {
-    return { dumpError: String(e) };
+    ui = { dumpError: String(e) };
   }
+  if (port) ui.serverStderrTail = await serverStderrTail(port);
+  return ui;
 }
 
 /** 解析 "建议 A–B km/h" / "建议 A km/h"；非法格式返回 null。 */

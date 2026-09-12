@@ -310,6 +310,9 @@ test("BLS-01 跨源 simple POST（text/plain）无法改写导航目的地", asy
     http,
     snapshot: snap,
     wsBroadcastObservationGap: wsGap,
+    // 服务端线程 panic 会让帧流静默停止，从而使「持久状态没有变成 X」看起来像
+    // 产品没有处理请求。两者必须分开：`panicked at` 是 Rust 默认 panic 输出的固定前缀。
+    serverPanicked: srv.stderr.includes("panicked at"),
     serverStderrTail: redact(srv.stderr.slice(-600)),
   });
 
@@ -414,6 +417,7 @@ test("BLS-02 跨源 JSON POST 不产生导航副作用", async ({ page }) => {
     },
     http,
     snapshot: snap,
+    serverPanicked: srv.stderr.includes("panicked at"),
     serverStderrTail: redact(srv.stderr.slice(-600)),
   });
 

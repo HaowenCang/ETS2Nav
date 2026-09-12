@@ -27,7 +27,7 @@
 
 import { expect, test } from "@playwright/test";
 import {
-  dumpUiState, FAKE_SIGNAL_COVER_FRAMES, gotoApp, installFrameSampler,
+  assertServerAlive, dumpUiState, FAKE_SIGNAL_COVER_FRAMES, gotoApp, installFrameSampler,
   readFrameSamples, startFrameSampling, waitConnected, waitFrameEvidence,
 } from "./helpers.mjs";
 import { session } from "../harness.mjs";
@@ -60,8 +60,11 @@ test("E2E-06 信号卡片覆盖 Red / Yellow / Green / 无信号", async ({ page
   } catch (e) {
     throw new Error(
       `未在 ${FAKE_SIGNAL_COVER_FRAMES} 帧证据窗口内观察到全部灯态。`
-      + `原始错误：${e.message}\n诊断：${JSON.stringify(await dumpUiState(page))}`);
+      + `原始错误：${e.message}\n诊断：${JSON.stringify(await dumpUiState(page, s.signalPort))}`);
   }
+  // 服务端线程若 panic，帧流会静默停止，上面那条等待只会表现为超时——因此这里必须
+  // 单独判定「服务端还活着」，否则产品崩溃会被记成测试同步问题（§6）。
+  await assertServerAlive(s.signalPort, "E2E-06");
 
   const samples = await readFrameSamples(page);
   const diag = JSON.stringify(await dumpUiState(page));

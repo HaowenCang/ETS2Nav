@@ -448,10 +448,35 @@ impl NavigationSession {
             if let (Some(route), Some(tracker)) = (self.route.as_ref(), self.tracker.as_ref()) {
                 let traveled = tracker.travelled_m();
                 let breaks = crate::speed::speed_breaks_ahead(route, &self.graph, 3000.0);
-                if let Some(change) = breaks.iter().find(|b| b.offset_m as f64 > traveled + 0.5) {
+                // 首段所在边：edges[0] → start_virtual → end_virtual。
+                //
+                // 原实现直接索引 `route.edges[0]`，而 `speed_breaks_ahead` 在
+                // 「edges 为空、但存在虚拟段」时**仍会产生断点**（见 speed.rs 的入口判定：
+                // 只有 edges 与两个虚拟段全空才返回空）。该形态是起终点吸附到同一条边时的
+                // 单段路线（search.rs `single_edge_route`），完全可达。
+                //
+                // P4R Batch 5.5 远端实测：BLS-01 把目的地设到车辆当前位置附近即命中该形态，
+                // 数据源线程 panic 并终止——
+                //   `panicked at crates\nav-router\src\session.rs:454:66:
+                //    index out of bounds: the len is 0 but the index is 0`
+                // 服务端随后停止广播，在测试侧表现为「目的地设了但持久状态不变」，
+                // 曾被误读为观测通道问题。
+                //
+                // 取值顺序保持既有语义不变：正常路线仍取 edges[0]，仅在为空时补齐，
+                // 因此这不是行为变更而是补上唯一未设防的索引。
+                let first_edge = route
+                    .edges
+                    .first()
+                    .copied()
+                    .or(route.start_virtual.map(|(eid, _, _)| eid))
+                    .or(route.end_virtual.map(|(eid, _, _)| eid));
+                if let (Some(change), Some(eid)) = (
+                    breaks.iter().find(|b| b.offset_m as f64 > traveled + 0.5),
+                    first_edge,
+                ) {
                     let ahead_m = change.offset_m as f64 - traveled;
                     let v_kmh = (snap.speed * 3.6).abs();
-                    let road_class = self.graph.edges[route.edges[0] as usize].road_class;
+                    let road_class = self.graph.edges[eid as usize].road_class;
                     let ahead =
                         crate::speak::speak_ahead_distance_m(v_kmh, road_class, 0, &speak_cfg);
                     if ahead_m <= ahead as f64
@@ -782,6 +807,97 @@ mod tests {
             SessionState::Navigating,
             "重规划后回到 Navigating"
         );
+    }
+
+    #[test]
+    fn empty_edges_route_does_not_panic_in_speed_limit_reminder() {
+        // 回归（P4R Batch 5.5 §2）：远端 hosted runner 上实测到数据源线程 panic——
+        //   `panicked at crates\nav-router\src\session.rs:454:66:
+        //    index out of bounds: the len is 0 but the index is 0`
+        // 位置是 §40 前方限速变化的提醒分支，它直接索引 `route.edges[0]` 取 road_class，
+        // 而 `speed::speed_breaks_ahead` 在「edges 为空、但存在虚拟段」时**仍会产生断点**
+        // （其入口只在 edges 与两个虚拟段全空时才返回空）。该形态是起终点吸附到不同边、
+        // 而 astar 未产出任何图边的单段路线（search.rs `single_edge_route`）。
+        //
+        // 后果不只是少一条提醒：panic 发生在服务端的数据源线程内，该线程终止后服务端
+        // 完全停止广播，测试侧表现为「目的地设了但持久状态一直不变」，曾被误读为观测
+        // 通道问题。
+        //
+        // 本用例的图刻意做成两条**平行且限速不同**的边，使 start_virtual 与 end_virtual
+        // 落在限速不同的边上——这正是产生 offset > 0 断点、从而进入该分支的条件。
+        let nodes = vec![
+            Node {
+                uid: 1,
+                x: 0.0,
+                y: 0.0,
+                z: 0.0,
+            },
+            Node {
+                uid: 2,
+                x: 1000.0,
+                y: 0.0,
+                z: 0.0,
+            },
+        ];
+        let mk = |from: u32, to: u32, limit: i16| Edge {
+            from,
+            to,
+            kind: EdgeKind::Road,
+            length: 1000.0,
+            source_uid: 0,
+            geometry: vec![
+                (nodes[from as usize].x, 0.0, nodes[from as usize].z),
+                (nodes[to as usize].x, 0.0, nodes[to as usize].z),
+            ],
+            speed_limit: limit,
+            road_class: 1,
+            semaphore_id: -1,
+            flags: 0,
+            movement_id: None,
+        };
+        let g = std::sync::Arc::new(CompactGraph::build(&RoutingGraph {
+            edges: vec![mk(0, 1, 50), mk(0, 1, 80)],
+            nodes: nodes.clone(),
+        }));
+        let sp = std::sync::Arc::new(SpatialIndex::build(&g, 256.0));
+        let mut s = NavigationSession::new(
+            g.clone(),
+            sp.clone(),
+            TurnLookup::new(),
+            SessionConfig::default(),
+        );
+
+        // 退化路线：edges 为空，两个虚拟段分别在限速 50 / 80 的边上。
+        // distance_m 保持足够大，否则会话会在提醒分支之前先转为 Arrived。
+        let degenerate = Route {
+            profile: RouteProfile::Fastest,
+            edges: vec![],
+            start_virtual: Some((0, 0.0, true)),
+            end_virtual: Some((1, 0.0, true)),
+            distance_m: 1000.0,
+            eta_s: 60.0,
+            road_edge_count: 1,
+            junction_count: 0,
+            signal_count: 0,
+            ferry_count: 0,
+            train_count: 0,
+            gps_avoid_distance: 0.0,
+            unknown_speed_distance: 0.0,
+        };
+        assert!(
+            crate::speed::speed_breaks_ahead(&degenerate, &g, 3000.0)
+                .iter()
+                .any(|b| b.offset_m > 0.5),
+            "本用例的前提是存在 offset > 0 的断点，否则它到不了被修复的那一行"
+        );
+        s.state = SessionState::Navigating;
+        s.route = Some(degenerate.clone());
+        s.tracker = Some(RouteTracker::new(&g, degenerate, 4));
+
+        // 修复前：此处 panic。修复后：正常产出快照，road_class 取 start_virtual 所在边。
+        let out = s.on_frame(&telemetry_at(10.0, 20.0));
+        assert_eq!(out.state, SessionState::Navigating);
+        assert_eq!(out.route_distance_m, Some(1000.0));
     }
 
     #[test]
