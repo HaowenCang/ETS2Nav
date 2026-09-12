@@ -1,0 +1,1 @@
+deliberate tracked build output to fail the clean-checkout assertion (P4R Batch 5.5 section 18 probe)
