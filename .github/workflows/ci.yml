@@ -238,8 +238,8 @@ jobs:
             Write-Host 'CI FAILURE: Playwright used retries; that hides flakiness instead of fixing it.'
             exit 1
           }
-          if ($text -notmatch '45 passed') {
-            Write-Host 'CI FAILURE: expected "45 passed" in the Playwright summary.'
+          if ($text -notmatch '46 passed') {
+            Write-Host 'CI FAILURE: expected "46 passed" in the Playwright summary.'
             Write-Host '  If tests were intentionally added or removed, update this assertion in the same commit.'
             exit 1
           }
@@ -260,23 +260,26 @@ jobs:
   # ── Job D ──────────────────────────────────────────────────────────────────
   # 安全与协议集成。
   #
-  # required 部分只声称**云端确实可执行且已多次实测通过**的内容：Server protocol
-  # integration（远端 2/2 success）。完整 S1–S11 局域网矩阵与浏览器回环攻击场景
-  # （BLS-01..09）作为**不设门**的信息性步骤在同一 job 内原样运行。
+  # required 部分（P4R Batch 5.5 §11 起）真实门控两条：Server protocol integration
+  # 与 Browser loopback security（BLS-01..09，真实 Chromium + 真实攻击页面）。
   #
-  # 两条信息性步骤各有实测依据，且原因不同：
-  #   · LAN 矩阵：S9「不受允许来源在连接层被拒绝」需要非 RFC1918 的真实对端地址，
-  #     hosted runner 不具备（S1–S8、S10、S11 在 runner 上全部通过，含对 10.1.0.125
-  #     的实测）；脚本因此报 NOT VERIFIED 并以非零退出。
-  #     曾按 §22 方案 1 尝试给 runner 网卡注入 RFC 5737 文档用地址以真实构造该类别，
-  #     该步骤在 runner 上超过 6 分钟未返回（无 conclusion、取不到输出），且因不响应
-  #     取消而占住并发组，故放弃变更 runner 网络配置，改用方案 2。
-  #   · 浏览器回环攻击场景：BLS-01 的正向对照在远端 1 次失败 / 2 次执行中失败过一次，
-  #     失败落在观测通道对照而非任何安全断言上（详见该步骤注释）。
+  # Batch 5 曾把浏览器回环套件降为信息性步骤，依据是 BLS-01 的正向对照在远端失败
+  # 过一次。Batch 5.5 定位到该失败的性质：BLS-01 当时把**瞬时 map_state 广播**当作
+  # 安全性质的唯一真值来源，而广播丢失与「状态未被改写」在观测上不可分辨；失败因此
+  # 落在观测对照上而不是任何安全断言上。现已改为分层证据——持久会话状态
+  # （`GET /api/snapshot` 的 destination_pos）为主 oracle，WS 广播为次证据，两者
+  # 分歧时记为 WS BROADCAST OBSERVATION GAP 而不判安全回归。问题既已在结构上消除，
+  # 该步骤恢复为普通门控步骤，不再使用 continue-on-error。
   #
-  # 没有删除任何断言，也没有把 NOT_VERIFIED 或 flake 改写为 PASS——两条步骤仍原样报告
-  # 各自的真实结果，只是不再是门。required checks 因此为
-  # Source Gates / Dataset Gates / Web E2E / Security Portable。
+  # 唯一保留的信息性步骤是完整 S1–S11 局域网矩阵：S9「不受允许来源在连接层被拒绝」
+  # 需要非 RFC1918 的真实对端地址，hosted runner 不具备（S1–S8、S10、S11 在 runner
+  # 上全部通过，含对 10.1.0.125 的实测）；脚本因此报 NOT VERIFIED 并以非零退出。
+  # 曾按 §22 方案 1 尝试给 runner 网卡注入 RFC 5737 文档用地址以真实构造该类别，
+  # 该步骤在 runner 上超过 6 分钟未返回（无 conclusion、取不到输出），且因不响应
+  # 取消而占住并发组，故放弃变更 runner 网络配置。这是环境能力边界，非仓库缺陷。
+  #
+  # 因此 `Security Portable` 通过只声称 portable protocol + browser-loopback，
+  # **不**声称完整 S1–S11；没有删除任何断言，也没有把 NOT_VERIFIED 改写为 PASS。
   security:
     name: Security Portable
     runs-on: windows-latest
@@ -342,31 +345,19 @@ jobs:
           npm run test:protocol
           exit $LASTEXITCODE
 
-      - name: Browser loopback security (informational, non-gating)
-        # 不设门，原因与 S9 不同且是实测证据：
-        #   08:34 那次运行该 spec 全绿（8 passed）；09:02 那次 BLS-01 的**正向对照**
-        #   在 25 s 内未观测到目的地 C 而失败（BLS-02 在同一轮里用同一目的地 6.7 s 通过；
-        #   BLS-02..09 全绿）。即失败落在「观测通道是否真的活着」这一对照上，而不是落在
-        #   任何一条安全断言上。远端样本为 1 失败 / 2 次执行，尚不足以宣称稳定，
-        #   因此不把它放进 required。
+      - name: Browser loopback security (gating)
+        # 门控步骤（P4R Batch 5.5 §11）：不再使用 continue-on-error。
+        # 该套件在真实 Chromium 上打开真实攻击页面，覆盖跨源 simple/JSON POST、
+        # 跨站 WebSocket、正确令牌 + 恶意 Origin、原生客户端、同源页面与令牌矩阵。
         #
-        # 该 spec 仍是原样运行、原样报告（没有删断言、没有放宽 near() 的 1 m 判据、
-        # 没有加 retry）。本轮同时补上了它的诊断缺口：openObserver 此前没有
-        # onclose/onerror 处理，通道悄悄断开会伪装成「服务端没有广播」——现已记录
-        # closed/errored 与帧数，下一次发生即可区分两种方向相反的原因。
-        continue-on-error: true
+        # 稳定性依据不是「重跑变绿」，而是判定结构的变化：BLS-01/BLS-02 的副作用
+        # 判据由瞬时广播改为持久会话状态（见 job 注释与 spec 内 evidence 分层说明），
+        # 因此不再存在「广播没收到 ⇒ 判安全失败」这一伪失败路径。
         working-directory: tools/ets2nav-web
         shell: powershell
         run: |
-          # 不吞退出码：真实结果照传，由 continue-on-error 决定它不阻塞 job。
-          # 这样 UI 上这一步仍是失败标记并带 warning 注解，读者不会把「job 绿」
-          # 误读成「这条安全套件通过」——正是本批次要消除的那类误导信号。
           npm run test:browser-loopback
-          $code = $LASTEXITCODE
-          if ($code -ne 0) {
-            Write-Host "::warning title=browser-loopback (informational)::exit=$code —— 该步骤按设计不设门（原因见 ci.yml 注释与 docs/validation/p4r-batch5-2026-09.md §9/§16），完整输出见上方日志。"
-          }
-          exit $code
+          exit $LASTEXITCODE
 
       - name: LAN security matrix (informational, non-gating)
         # 不设门：完整 S1–S11 在本机可执行（本机有 VPN 隧道地址 198.18.0.1，S9 因此
@@ -386,8 +377,8 @@ jobs:
           exit $code
 
       - name: Upload Playwright diagnostics
-        # 该 job 的两条 Playwright/矩阵步骤都是信息性的，continue-on-error 下
-        # failure() 不再可靠，故用 always()：有产物就上传，没有则忽略。
+        # LAN 矩阵那条步骤仍是 continue-on-error，failure() 在其上不可靠，故用
+        # always()：有产物就上传，没有则忽略。
         if: always()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
         with:

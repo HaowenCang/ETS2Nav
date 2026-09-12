@@ -233,6 +233,12 @@ pub(crate) fn snapshot_json(s: &NavigationSnapshot) -> String {
         })
         .collect();
     let (px, _, pz) = s.position.unwrap_or((0.0, 0.0, 0.0));
+    // P4R Batch 5.5 §7：目的地坐标（持久会话状态的身份），与显示名同源同帧。
+    // null 表示当前没有目的地——「从未设过」与「设过又被清除」在契约上不作区分，
+    // 因为会话状态本身不作此区分。
+    let destination_pos = s
+        .destination_pos
+        .map(|(dx, dz)| serde_json::json!([dx, dz]));
     serde_json::json!({
         "type": "vehicle",
         "state": state,
@@ -248,6 +254,7 @@ pub(crate) fn snapshot_json(s: &NavigationSnapshot) -> String {
         "glosa": glosa,
         "reminders": reminders,
         "destination": s.destination,
+        "destination_pos": destination_pos,
         "diagnostics": s.diagnostics,
     })
     .to_string()
@@ -861,6 +868,7 @@ mod tests {
             speed_kmh: 43.2,
             map_limit_kmh: 50,
             destination: Some("test".to_string()),
+            destination_pos: Some((1.0, 2.0)),
             diagnostics: String::new(),
         }
     }
@@ -907,6 +915,29 @@ mod tests {
         let v: serde_json::Value = serde_json::from_str(&snapshot_json(&s)).unwrap();
         assert!(v.get("glosa").is_some(), "glosa 字段必须恒存在");
         assert!(v["glosa"].is_null(), "无建议必须是 null，不得为 0/0 或缺失");
+    }
+
+    /// P4R Batch 5.5 §7：目的地坐标是持久会话状态的身份投影。
+    ///
+    /// 该字段的存在理由是安全性质可判定性，因此锁定三点：①无目的地时字段存在且为
+    /// null（与 glosa 同一契约风格，避免 UI 用 undefined 猜）；②有目的地时给出
+    /// [x, z] 数值对，使 A 与 C 这类同名（「目标」）目的地可区分；③与显示名同源，
+    /// 不引入第二处状态。
+    #[test]
+    fn snapshot_json_destination_pos_is_persistent_identity() {
+        let mut s = snapshot_fixture();
+        assert!(s.destination_pos.is_some());
+        let v: serde_json::Value = serde_json::from_str(&snapshot_json(&s)).unwrap();
+        assert_eq!(v["destination"], "test", "显示名通道保持原样");
+        assert_eq!(v["destination_pos"][0].as_f64(), Some(1.0));
+        assert_eq!(v["destination_pos"][1].as_f64(), Some(2.0));
+
+        // 无目的地：字段必须存在且为 null
+        s.destination = None;
+        s.destination_pos = None;
+        let v: serde_json::Value = serde_json::from_str(&snapshot_json(&s)).unwrap();
+        assert!(v.get("destination_pos").is_some(), "字段必须恒存在");
+        assert!(v["destination_pos"].is_null(), "无目的地必须是 null");
     }
 
     #[test]

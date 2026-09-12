@@ -71,6 +71,14 @@ pub struct NavigationSnapshot {
     pub speed_kmh: f32,
     pub map_limit_kmh: i16,
     pub destination: Option<String>,
+    /// 目的地**坐标**（P4R Batch 5.5 §7）。
+    ///
+    /// 存在的理由：`destination` 只是显示名，坐标目的地一律命名为「目标」，因此它
+    /// 无法区分「当前导航目的地是 A 还是 B」。而「未授权请求不得改写导航目的地」这
+    /// 条安全性质必须落在**持久会话状态**上，不能只靠一次瞬时 `map_state` 广播——
+    /// 广播丢失与状态未改变在观测上不可分辨。暴露坐标使该性质可由
+    /// `GET /api/snapshot` 直接判定。
+    pub destination_pos: Option<(f64, f64)>,
     pub diagnostics: String,
 }
 
@@ -527,6 +535,12 @@ impl NavigationSession {
             speed_kmh: snap.speed * 3.6,
             map_limit_kmh: fake_limit.unwrap_or(matched_limit),
             destination: self.destination.as_ref().map(|d| d.name.clone()),
+            // 目的地坐标与显示名同源同帧（同一个 self.destination），因此不可能出现
+            // 「名字说 A、坐标说 B」的分歧——观测点只有一个。
+            destination_pos: self
+                .destination
+                .as_ref()
+                .map(|d| (d.position.0, d.position.2)),
             diagnostics: diag,
         }
     }

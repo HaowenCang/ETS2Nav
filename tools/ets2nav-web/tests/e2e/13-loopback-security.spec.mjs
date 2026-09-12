@@ -79,6 +79,18 @@ const C = [-57000, 34500]; // 正向对照目的地
 const near = (d, p) => Array.isArray(d) && d.length === 2
   && Math.abs(d[0] - p[0]) < 1 && Math.abs(d[1] - p[1]) < 1;
 
+/**
+ * 把可能出现的会话令牌从诊断文本中抹掉。
+ *
+ * 令牌形态是 64 位十六进制（`/api/bootstrap` 生成），另外 `token=` 查询参数也必须
+ * 一并遮蔽。诊断要能贴进日志与失败信息，因此这一步是硬要求而不是可选的美化。
+ */
+function redact(s) {
+  return String(s)
+    .replace(/[0-9a-fA-F]{64}/g, "<token-已遮蔽>")
+    .replace(/token=[^&\s"']+/g, "token=<已遮蔽>");
+}
+
 // ─── 观察与请求工具 ──────────────────────────────────────────────────────────
 
 /**
@@ -93,7 +105,7 @@ function openObserver(port, token) {
   //   (a) 服务端确实没有广播新的目的地； (b) 观测通道已悄悄断开、后续帧根本没到。
   // 原实现没有 onclose/onerror 处理，所以 (b) 会伪装成 (a)。这里只增加可观测性，
   // 不改任何断言与超时。
-  const state = { closed: false, errored: false };
+  const state = { closed: false, errored: false, readyState: -1 };
   sock.onclose = () => { state.closed = true; };
   sock.onerror = () => { state.errored = true; };
   const ready = new Promise((ok) => {
@@ -106,6 +118,7 @@ function openObserver(port, token) {
         if (v.type === "vehicle") seen.vehicles++;
         if (v.type === "map_state") seen.mapStates.push(v.destination);
       } catch { /* 非 JSON 帧不计入 */ }
+      state.readyState = sock.readyState;
     };
     setTimeout(() => ok(sock.readyState === 1), 8000);
   });
@@ -115,6 +128,83 @@ function openObserver(port, token) {
     ready,
     close: () => { try { sock.close(); } catch { /* 已关 */ } },
   };
+}
+
+/**
+ * 持久会话状态 oracle：带令牌 `GET /api/snapshot` 并取出 `destination_pos`。
+ *
+ * 为什么不能用 `/api/snapshot` 的 `destination` 字段：那是**显示名**，坐标目的地
+ * 一律命名为「目标」，A/B/C 三者取不到区分度。P4R Batch 5.5 §7 因此为该帧增加了
+ * `destination_pos`（与显示名同源同帧，来自 `NavigationSession.destination`），
+ * 使「未授权请求是否改写了导航目的地」这条安全性质可以直接在持久状态上判定。
+ */
+async function snapshotDest(port, token) {
+  const r = await fetch(`http://127.0.0.1:${port}/api/snapshot`, {
+    headers: { Authorization: `Bearer ${token}` },
+  });
+  if (r.status !== 200) return { status: r.status, pos: undefined };
+  let d;
+  try { d = await r.json(); } catch { return { status: 200, pos: "非法 JSON" }; }
+  const p = d.destination_pos;
+  return { status: 200, pos: Array.isArray(p) && p.length === 2 ? p : null };
+}
+
+/**
+ * 在一个观察窗口内连续采样持久状态，检查禁用目的地是否**一次都没有**出现。
+ *
+ * 窗口长度由副作用路径本身给出：被接受的 `POST /api/route` 只把目标写进
+ * `pending_dest` 单槽邮箱，由数据源线程**每帧消费一次**，因此最迟 1 帧生效
+ * （服务端自定帧间隔标称 50 ms）。6 s ≈ 120 个标称帧周期，远超该上界。
+ * 同时统计成功采样次数，使「窗口过去了但 oracle 没被真正使用」无法伪装成通过。
+ */
+async function watchSnapshot(port, token, forbidden, windowMs) {
+  const end = Date.now() + windowMs;
+  let polls = 0;
+  let sawForbidden = false;
+  const samples = [];
+  let last = null;
+  while (Date.now() < end) {
+    const s = await snapshotDest(port, token);
+    polls++;
+    last = s;
+    if (s.status === 200 && Array.isArray(s.pos)) {
+      samples.push(s.pos);
+      if (near(s.pos, forbidden)) sawForbidden = true;
+    }
+    await new Promise((r) => setTimeout(r, 150));
+  }
+  return { polls, sawForbidden, samples, last };
+}
+
+/** 轮询持久状态直到目的地等于 want；期限用尽返回最后一次观测。 */
+async function waitSnapshotDest(port, token, want, timeoutMs = 10_000) {
+  const end = Date.now() + timeoutMs;
+  let last = null;
+  while (Date.now() < end) {
+    last = await snapshotDest(port, token);
+    if (last.status === 200 && near(last.pos, want)) return { ok: true, last };
+    await new Promise((r) => setTimeout(r, 200));
+  }
+  return { ok: false, last };
+}
+
+/**
+ * 经产品路径设定目的地并确认它进入**持久会话状态**。
+ *
+ * 允许多次发起同一条已认证请求，理由不是「重试掉失败」，而是维持前置条件：
+ * 合成 trace 的回放循环每轮重建 session（`server_cli.rs` A2c-M3），目的地随之
+ * 丢失；用例要求的「会话当前导航到 X」因此需要由测试自己维持，否则结论会取决于
+ * 用例开始时车辆处于 cycle 的哪一段——那正是 P4R Batch 5.5 要消除的 wall-time
+ * coupling。每次发起都是真实产品请求，确认判据始终是持久状态本身。
+ */
+async function setAndConfirm(port, token, dest, attempts = 4) {
+  const statuses = [];
+  for (let i = 0; i < attempts; i++) {
+    statuses.push(await authedRoute(port, token, dest, dest));
+    const w = await waitSnapshotDest(port, token, dest, 8_000);
+    if (w.ok) return { ok: true, statuses, last: w.last, attempts: i + 1 };
+  }
+  return { ok: false, statuses, last: await snapshotDest(port, token), attempts };
 }
 
 /** 带令牌 POST /api/route，返回 HTTP 状态码。 */
@@ -127,15 +217,11 @@ async function authedRoute(port, token, from, to) {
   return r.status;
 }
 
-/** 等待某个目的地出现在 map_state 广播中（否则返回 false，由调用方断言）。 */
-async function waitDest(seen, want, timeoutMs = 25_000) {
-  const end = Date.now() + timeoutMs;
-  while (Date.now() < end) {
-    if (seen.mapStates.some((d) => near(d, want))) return true;
-    await new Promise((r) => setTimeout(r, 200));
-  }
-  return false;
-}
+// 原 `waitDest(seen, want)`（等待目的地出现在 map_state 广播中，25 s）在 P4R
+// Batch 5.5 §7 被移除：它把**瞬时广播**当作安全性质的唯一真值来源，因此广播一旦
+// 丢失就会把「状态根本没被改写」误判为失败。取而代之的是 `snapshotDest` /
+// `waitSnapshotDest`（持久会话状态）与 `watchSnapshot`（窗口内连续采样）。
+// map_state 仍被读取，但只作为次证据出现在诊断与观测缺口的分类里。
 
 /**
  * 原始 WS 握手（不经浏览器）：用于断言握手的**字面状态码**。
@@ -202,16 +288,53 @@ test.afterAll(async () => {
 
 test("BLS-01 跨源 simple POST（text/plain）无法改写导航目的地", async ({ page }) => {
   const obs = openObserver(srv.port, srv.token);
+  // 证据分层（P4R Batch 5.5 §7/§9）：
+  //   主 oracle —— 持久会话状态（`GET /api/snapshot` 的 destination_pos）；
+  //   次证据   —— 已认证 WS 观测通道收到的 map_state 广播。
+  // 之所以把瞬时广播降为次证据：广播丢失与「状态未被改写」在观测上不可分辨，
+  // 而安全性质说的是**目的地没有被改写**，属于持久状态。WS 投递本身由
+  // BLS-03..BLS-09 与协议套件专门覆盖，不应由一次瞬时事件充当唯一真值来源。
+  const http = { a: null, attack: null, c: null };
+  const snap = { baseline: null, afterAttack: null, afterPositiveC: null };
+  let wsGap = null;
+  let snapshots = null;
+  const diag = () => JSON.stringify({
+    observer: {
+      closed: obs.state.closed,
+      errored: obs.state.errored,
+      readyState: obs.state.readyState,
+      frames: obs.seen.frames,
+      vehicles: obs.seen.vehicles,
+      mapStates: obs.seen.mapStates,
+    },
+    http,
+    snapshot: snap,
+    wsBroadcastObservationGap: wsGap,
+    serverStderrTail: redact(srv.stderr.slice(-600)),
+  });
+
   try {
     expect(await obs.ready, "已认证观察通道必须建立（否则负向断言无意义）").toBe(true);
     // 观测通道确实在收帧
     await expect.poll(() => obs.seen.vehicles, { timeout: 25_000 }).toBeGreaterThan(0);
 
-    // 基线：合法路径设定目的地 A
-    expect(await authedRoute(srv.port, srv.token, A, A)).toBe(200);
-    expect(await waitDest(obs.seen, A), "带令牌的合法请求必须产生 map_state 广播").toBe(true);
+    // ① 基线：合法路径设定目的地 A，并以持久会话状态确认。判据是状态本身，
+    //    不是某一帧广播——广播只是第二证据。
+    const ra = await setAndConfirm(srv.port, srv.token, A);
+    http.a = ra.statuses;
+    snap.baseline = ra.last;
+    expect(ra.statuses.every((s) => s === 200), `合法请求必须 200：${JSON.stringify(ra.statuses)}`).toBe(true);
+    expect(
+      ra.ok,
+      `合法请求必须把**持久会话目的地**设为 A（尝试 ${ra.attempts} 次）。诊断：${diag()}`,
+    ).toBe(true);
+    // 第二证据：若通道确实在收帧，它也应看到 A 的广播；通道有缺口时记录而不判失败。
+    if (!obs.seen.mapStates.some((d) => near(d, A))) {
+      wsGap = `WS BROADCAST OBSERVATION GAP（基线 A）：持久状态 destination_pos=${JSON.stringify(snap.baseline.pos)}，`
+        + `观测通道未收到 A 的 map_state`;
+    }
 
-    // 攻击：跨源 simple POST（无令牌；text/plain 不触发 preflight）
+    // ② 攻击：跨源 simple POST（无令牌；text/plain 不触发 preflight）
     const responses = [];
     page.on("response", (r) => {
       if (r.url().includes("/api/route")) responses.push(r.status());
@@ -225,32 +348,49 @@ test("BLS-01 跨源 simple POST（text/plain）无法改写导航目的地", asy
     expect(res.ok, `攻击请求未发出: ${JSON.stringify(res)}`).toBe(true);
     expect(res.type, "跨源 no-cors 请求必然是 opaque").toBe("opaque");
 
-    await page.waitForTimeout(6000);
+    // ③ 语义观察窗口：持久状态连续采样，攻击目标 B 一次都不得出现
+    snapshots = await watchSnapshot(srv.port, srv.token, B, 6_000);
+    snap.afterAttack = snapshots.last;
+    http.attack = { opaque: res, routeResponses: responses };
+    expect(
+      snapshots.polls,
+      `观察窗口内持久状态采样次数不足（${snapshots.polls}）——oracle 未被真正使用`,
+    ).toBeGreaterThanOrEqual(20);
+    expect(
+      snapshots.sawForbidden,
+      `攻击目标 B 出现在了持久会话状态中（样本 ${JSON.stringify(snapshots.samples)}）。诊断：${diag()}`,
+    ).toBe(false);
     const after = obs.seen.mapStates.slice(before);
     expect(
       after.filter((d) => near(d, B)),
-      `攻击目标 B 出现在了 map_state 广播中：${JSON.stringify(after)}`,
+      `攻击目标 B 出现在了 map_state 广播中：${JSON.stringify(after)}。诊断：${diag()}`,
     ).toHaveLength(0);
 
     // 服务端确实收到了该请求并明确拒绝（浏览器收到的响应码，非攻击页面可见的 opaque）
     expect(
       responses,
-      `未捕获到 /api/route 的响应码，实际=${JSON.stringify(responses)}`,
+      `未捕获到 /api/route 的响应码，实际=${JSON.stringify(responses)}。诊断：${diag()}`,
     ).toContain(401);
 
-    // 正向对照：带令牌的请求仍然生效——证明「没有 B」不是观测通道坏掉
-    expect(await authedRoute(srv.port, srv.token, A, C)).toBe(200);
-    const sawC = await waitDest(obs.seen, C);
+    // ④ 正向对照：带令牌的请求仍然生效——证明「没有 B」不是产品路径坏掉
+    const rc = await setAndConfirm(srv.port, srv.token, C);
+    http.c = rc.statuses;
+    snap.afterPositiveC = rc.last;
+    expect(rc.statuses.every((s) => s === 200), `正向对照必须 200：${JSON.stringify(rc.statuses)}`).toBe(true);
     expect(
-      sawC,
-      sawC
-        ? ""
-        : "正向对照必须成功，否则负向断言无区分力。" +
-          `诊断：观测通道 closed=${obs.state.closed} errored=${obs.state.errored} ` +
-          `frames=${obs.seen.frames} vehicles=${obs.seen.vehicles} ` +
-          `mapStates=${JSON.stringify(obs.seen.mapStates)}`,
+      rc.ok,
+      `正向对照必须成功，否则负向断言无区分力（尝试 ${rc.attempts} 次）。诊断：${diag()}`,
     ).toBe(true);
+
+    // 第二证据：通道若看见 C 则印证；未见 C 但持久状态已是 C，记为观测缺口，
+    // **不**判安全性质失败——两者是不同的命题，混判会把 WS 投递问题记成安全回归。
+    if (!obs.seen.mapStates.some((d) => near(d, C))) {
+      wsGap = `WS BROADCAST OBSERVATION GAP（正向 C）：持久状态 destination_pos=`
+        + `${JSON.stringify(snap.afterPositiveC.pos)}，观测通道未收到 C 的 map_state`;
+      console.log(`[bls] ${wsGap}；诊断：${diag()}`);
+    }
   } finally {
+    if (wsGap) console.log(`[bls] BLS-01 结束：${wsGap}`);
     obs.close();
   }
 });
@@ -259,11 +399,31 @@ test("BLS-01 跨源 simple POST（text/plain）无法改写导航目的地", asy
 
 test("BLS-02 跨源 JSON POST 不产生导航副作用", async ({ page }) => {
   const obs = openObserver(srv.port, srv.token);
+  // 与 BLS-01 同一分层：持久会话状态为主 oracle，WS 广播为次证据。
+  const http = { baseline: null, attack: null, positive: null };
+  const snap = { baseline: null, afterAttack: null };
+  let snapshots = null;
+  const diag = () => JSON.stringify({
+    observer: {
+      closed: obs.state.closed,
+      errored: obs.state.errored,
+      readyState: obs.state.readyState,
+      frames: obs.seen.frames,
+      vehicles: obs.seen.vehicles,
+      mapStates: obs.seen.mapStates,
+    },
+    http,
+    snapshot: snap,
+    serverStderrTail: redact(srv.stderr.slice(-600)),
+  });
+
   try {
     expect(await obs.ready).toBe(true);
     await expect.poll(() => obs.seen.vehicles, { timeout: 25_000 }).toBeGreaterThan(0);
-    expect(await authedRoute(srv.port, srv.token, A, A)).toBe(200);
-    expect(await waitDest(obs.seen, A)).toBe(true);
+    const ra = await setAndConfirm(srv.port, srv.token, A);
+    http.baseline = ra.statuses;
+    snap.baseline = ra.last;
+    expect(ra.ok, `基线必须把持久会话目的地设为 A。诊断：${diag()}`).toBe(true);
 
     const preflights = [];
     const posts = [];
@@ -276,13 +436,24 @@ test("BLS-02 跨源 JSON POST 不产生导航副作用", async ({ page }) => {
     await page.goto(`${attackerOrigin}/`, { waitUntil: "domcontentloaded" });
     const before = obs.seen.mapStates.length;
     const res = await page.evaluate(([p, f, t]) => window.__csrfJson(p, f, t), [srv.port, A, B]);
-    await page.waitForTimeout(6000);
 
-    // 无论被 preflight 拦下还是真实请求被拒，最终都不得有副作用
+    // 无论被 preflight 拦下还是真实请求被拒，最终都不得有副作用。
+    // 判据是持久状态在整个观察窗口内都没有变成 B。
+    snapshots = await watchSnapshot(srv.port, srv.token, B, 6_000);
+    snap.afterAttack = snapshots.last;
+    http.attack = { ok: res.ok, preflights, posts };
+    expect(
+      snapshots.polls,
+      `观察窗口内持久状态采样次数不足（${snapshots.polls}）——oracle 未被真正使用`,
+    ).toBeGreaterThanOrEqual(20);
+    expect(
+      snapshots.sawForbidden,
+      `跨源 JSON POST 改写了持久会话目的地（样本 ${JSON.stringify(snapshots.samples)}）。诊断：${diag()}`,
+    ).toBe(false);
     const after = obs.seen.mapStates.slice(before);
     expect(
       after.filter((d) => near(d, B)),
-      `跨源 JSON POST 产生了副作用：${JSON.stringify(after)}`,
+      `跨源 JSON POST 产生了广播副作用：${JSON.stringify(after)}。诊断：${diag()}`,
     ).toHaveLength(0);
     // 攻击页面的 fetch 必须失败（浏览器因缺少 ACAO 而拒绝交出响应）
     expect(res.ok, `跨源 JSON POST 竟然成功: ${JSON.stringify(res)}`).toBe(false);
@@ -294,9 +465,10 @@ test("BLS-02 跨源 JSON POST 不产生导航副作用", async ({ page }) => {
       expect([401, 403, 415], "POST 不得成功").toContain(st);
     }
 
-    // 正向对照
-    expect(await authedRoute(srv.port, srv.token, A, C)).toBe(200);
-    expect(await waitDest(obs.seen, C)).toBe(true);
+    // 正向对照：证明「没有 B」不是产品路径或 oracle 坏掉
+    const rc = await setAndConfirm(srv.port, srv.token, C);
+    http.positive = rc.statuses;
+    expect(rc.ok, `正向对照必须成功。诊断：${diag()}`).toBe(true);
   } finally {
     obs.close();
   }
