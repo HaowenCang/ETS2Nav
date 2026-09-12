@@ -37,6 +37,16 @@ import struct
 import sys
 import time
 
+# 输出通道编码：与 verify-server-protocol.py 同一处修正（P4R Batch 5 §31）。
+# 本脚本同样打印中文结论行，在 ANSI 代码页为 cp1252 的 runner 上会抛
+# UnicodeEncodeError 而不是给出判定结论。在仓库内修掉，使脚本在任何 locale
+# 下都可运行，而不是只在流水线里设置 PYTHONIOENCODING 掩盖。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 FAIL = []
 NOT_VERIFIED = []
 SKIP = []

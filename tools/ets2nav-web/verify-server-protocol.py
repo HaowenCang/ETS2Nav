@@ -21,6 +21,18 @@ import struct
 import sys
 import time
 
+# 输出通道编码（P4R Batch 5 §31：远端首次运行的失败即由此暴露）。
+# Windows 上 Python 的 stdout/stderr 编码取自 ANSI 代码页：中文 locale（本机 936）
+# 能编码中文，英文 locale 的 CI runner 是 cp1252，于是下面 check() 打印含中文与
+# 「—」的结论行时抛 UnicodeEncodeError，脚本以 exit 1 结束——判定逻辑本身没有问题，
+# 失败的是输出通道的编码假设。在仓库内修掉，使脚本在任何 locale 下都可运行，
+# 而不是只在流水线里设置 PYTHONIOENCODING 掩盖。
+for _stream in (sys.stdout, sys.stderr):
+    try:
+        _stream.reconfigure(encoding="utf-8", errors="replace")
+    except (AttributeError, ValueError):
+        pass
+
 # 「剩余里程推进」判定的最小连续递减步数。取 5 而非 1：单步递减可能来自噪声或
 # 单帧抖动，连续 5 步（20 Hz 下约 0.25 s）才构成真实推进证据。
 MIN_DECREASING_RUN = 5
