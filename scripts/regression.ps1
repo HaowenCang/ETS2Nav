@@ -1263,24 +1263,33 @@ function Invoke-SelfTest {
 
     # H4 产物缺失 → 必须自动重建并可通过新鲜度检查，而不是 file-not-found
     $probe = Join-Path $script:RepoRoot 'tools/dataset-reader-smoke/target/release/dataset-reader-smoke.exe'
+    $smokeManifest = Join-Path $script:RepoRoot 'tools/dataset-reader-smoke/Cargo.toml'
     $h4ok = $false; $h4detail = ''
+    $cargo = Resolve-Tool 'cargo'
+    if (-not (Test-Path -LiteralPath $probe)) {
+        # 干净检出中该产物本来就不存在（target/ 不入库）。H4 验的是「删除后必须自动重建」，
+        # 因此先构建一次取得前置条件——否则本项在干净检出上会因「无可删除之物」而误判失败，
+        # 与自检自身的可复现性相矛盾（Batch 4 封板后的全新 clone 验证发现并修正）。
+        Write-Log '  H4 前置：干净检出中产物不存在，先构建一次以取得前置条件'
+        [void](Invoke-NativeStep -Suite H4 -Name 'prebuild-artifact' -FilePath $cargo `
+            -Arguments @('build', '--release', '--manifest-path', $smokeManifest) `
+            -WorkingDirectory $script:RepoRoot -ProbeOnly)
+    }
     if (Test-Path -LiteralPath $probe) {
         Remove-Item -LiteralPath $probe -Force
-        $cargo = Resolve-Tool 'cargo'
         $r = Invoke-NativeStep -Suite H4 -Name 'rebuild-after-delete' -FilePath $cargo `
-            -Arguments @('build', '--release', '--manifest-path',
-                (Join-Path $script:RepoRoot 'tools/dataset-reader-smoke/Cargo.toml')) `
+            -Arguments @('build', '--release', '--manifest-path', $smokeManifest) `
             -WorkingDirectory $script:RepoRoot -ProbeOnly
         if ($r.Result -eq 'PASS') {
             $a = Assert-ArtifactFresh -Suite H4 -Name 'rebuilt-artifact' -Artifact $probe `
                 -SourceRoots @((Join-Path $script:RepoRoot 'tools/dataset-reader-smoke')) -ProbeOnly
             $h4ok = ($a.Result -eq 'PASS')
-            $h4detail = if ($h4ok) { '产物被自动重建并通过新鲜度检查' } else { $a.Detail }
+            $h4detail = if ($h4ok) { '产物被删除后自动重建并通过新鲜度检查' } else { $a.Detail }
         } else {
             $h4detail = "重建失败 exit=$($r.ExitCode)"
         }
     } else {
-        $h4detail = "产物预先不存在，无法验证删除后重建: $probe"
+        $h4detail = "产物不存在且构建后仍未出现: $probe"
     }
 
     # H5 含空格路径：参数转义单元检查 + 真实夹具在带空格路径下运行
