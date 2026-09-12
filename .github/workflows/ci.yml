@@ -1,0 +1,330 @@
+name: CI
+
+# P4R Batch 5：可复现的 GitHub Actions CI。
+#
+# 设计边界（务必与本仓库的完整门区分开）：
+#   云端 required CI  ≠  本地/发布完整回归
+#
+#   Full local release gate : P1 / P2 / P3 / P5 —— P1 需要正版 ETS2 游戏资源。
+#                             游戏资源不得下载、不得以伪造的 ETS2_INSTALL 顶替、
+#                             也不得以空 fixture 代替，因此 P1/P2/P3 **不在**云端执行。
+#   Cloud CI               : 源码门 + 数据集门 + 浏览器/运行时门。
+#
+# 因此本工作流不会出现「Full Regression」这类名不副实的 job 名。
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+# 最小权限：只读仓库内容。下载公共 Release 附件不需要任何 secret，也不需要写权限。
+permissions:
+  contents: read
+
+# 同一 PR 的新提交取消仍在进行的旧运行；main 的正式 push 记录永不被取消。
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  # harness 的 dotnet 语义断言依赖英文汇总行（"Passed!  - Failed: 0, ..."）。
+  # 本机 zh-CN 会打印「已通过! - 失败: 0」，断言即失效——这也是把它固定在 CI 环境里的原因。
+  DOTNET_CLI_UI_LANGUAGE: en
+  DOTNET_NOLOGO: '1'
+  CARGO_TERM_COLOR: never
+  RUST_BACKTRACE: '0'
+
+jobs:
+  # ── Job A ──────────────────────────────────────────────────────────────────
+  # 不依赖 ETS2 游戏资源、不依赖 released dataset：全新检出、空缓存、无 vendor/、
+  # 无 data/ 即可成功。
+  source-gates:
+    name: Source Gates
+    runs-on: windows-latest
+    timeout-minutes: 60
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+
+      - name: Verify clean checkout (no build inputs/outputs, no tracked artifacts)
+        shell: powershell
+        run: scripts\ci\verify-clean-checkout.ps1
+
+      - name: Harness encoding guard (UTF-8 BOM contract)
+        shell: cmd
+        run: scripts\harness-encoding-guard.bat
+
+      - name: Set up Node.js (pinned by .nvmrc)
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Set up .NET SDK (pinned by global.json)
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68  # v6
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Verify toolchain contract
+        shell: powershell
+        run: |
+          # 工具链版本是判定的一部分：clippy 的新 lint 会改变 -D warnings 的结果。
+          # 这里显式断言 CI 实际用的是被固定的版本，而不是"runner 今天预装了什么"。
+          $fail = @()
+          $rustc = (& rustc --version)
+          Write-Host "rustc : $rustc"
+          if ($rustc -notmatch '^rustc 1\.96\.0 ') { $fail += "rustc is not 1.96.0 (rust-toolchain.toml not honoured)" }
+          $cargo = (& cargo --version); Write-Host "cargo : $cargo"
+          Write-Host "rustfmt: $(& cargo fmt --version)"
+          Write-Host "clippy : $(& cargo clippy --version)"
+          $want = (Get-Content -LiteralPath .nvmrc -Raw).Trim()
+          $node = (& node --version).Trim(); Write-Host "node  : $node (want v$want)"
+          if ($node -ne "v$want") { $fail += "node $node != v$want (.nvmrc)" }
+          $sdk = (& dotnet --version).Trim(); Write-Host "dotnet: $sdk (want 9.0.x per global.json)"
+          if (-not $sdk.StartsWith('9.0.')) { $fail += "dotnet SDK $sdk is not 9.0.x (global.json not honoured)" }
+          Write-Host "powershell: $($PSVersionTable.PSVersion)"
+          if ($PSVersionTable.PSVersion.Major -ne 5) { $fail += 'harness requires Windows PowerShell 5.1' }
+          if ($fail.Count -gt 0) { $fail | ForEach-Object { Write-Host "CI FAILURE: $_" }; exit 4 }
+          exit 0
+
+      - name: Portable regression suite
+        # 单条命令覆盖：cargo fmt/clippy/test、portable dotnet 测试（显式排除
+        # GameAssetsRequired 分类并断言执行数）、前端 clean build 两轮哈希比对与
+        # manifest 校验、Desktop 编译门（含 dist 顺序前提）、harness 自检 H1-H6。
+        shell: powershell
+        run: |
+          scripts\regression.ps1 -Suite Portable -LogDir "${{ runner.temp }}\harness-logs"
+          exit $LASTEXITCODE
+
+      - name: Upload harness logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: source-gates-logs
+          path: ${{ runner.temp }}/harness-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ── Job B ──────────────────────────────────────────────────────────────────
+  # 依赖 released dataset（固定 tag + filename + SHA-256）。不运行 P2/P3 包装，
+  # 因为它们会链入需要游戏资源的 P1。
+  dataset-gates:
+    name: Dataset Gates
+    runs-on: windows-latest
+    timeout-minutes: 45
+    env:
+      ETS2NAV_DATASET: ${{ runner.temp }}\ets2nav-dataset\europe-v5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+
+      - name: Verify clean checkout
+        shell: powershell
+        run: scripts\ci\verify-clean-checkout.ps1
+
+      - name: Prepare dataset (exact release asset + SHA-256 verification)
+        shell: powershell
+        run: |
+          scripts\ci\prepare-dataset.ps1 -Dest "${{ runner.temp }}\ets2nav-dataset\europe-v5"
+          exit $LASTEXITCODE
+
+      - name: P5 canonical regression (od-corpus gate + baseline diff)
+        shell: powershell
+        run: |
+          # 基准永不自动更新：CI 只做比对，baseline mismatch 一律 FAIL 交人审查。
+          scripts\regression.ps1 -Suite P5 -Dataset "${{ runner.temp }}\ets2nav-dataset\europe-v5" -LogDir "${{ runner.temp }}\harness-logs"
+          exit $LASTEXITCODE
+
+      - name: Dataset-backed CLI machine contracts
+        shell: powershell
+        run: |
+          scripts\regression.ps1 -Suite CLI -Dataset "${{ runner.temp }}\ets2nav-dataset\europe-v5" -LogDir "${{ runner.temp }}\harness-logs"
+          exit $LASTEXITCODE
+
+      - name: Upload harness logs on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: dataset-gates-logs
+          path: ${{ runner.temp }}/harness-logs
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ── Job C ──────────────────────────────────────────────────────────────────
+  # 真实 Chromium 上的浏览器 E2E。禁止 jsdom / mock MapLibre / mock nav-server 顶替。
+  web-e2e:
+    name: Web E2E
+    runs-on: windows-latest
+    timeout-minutes: 75
+    env:
+      ETS2NAV_DATASET: ${{ runner.temp }}\ets2nav-dataset\europe-v5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+
+      - name: Verify clean checkout
+        shell: powershell
+        run: scripts\ci\verify-clean-checkout.ps1
+
+      - name: Set up Node.js (pinned by .nvmrc)
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Set up .NET SDK (PmtilesFixture is generated by dotnet run)
+        uses: actions/setup-dotnet@a98b56852c35b8e3190ac28c8c2271da59106c68  # v6
+        with:
+          dotnet-version: 9.0.x
+
+      - name: Prepare dataset
+        shell: powershell
+        run: |
+          scripts\ci\prepare-dataset.ps1 -Dest "${{ runner.temp }}\ets2nav-dataset\europe-v5"
+          exit $LASTEXITCODE
+
+      - name: Build nav-core-cli (debug; the E2E harness drives this binary)
+        shell: powershell
+        run: |
+          cargo build --manifest-path nav-core/tools/nav-core-cli/Cargo.toml
+          exit $LASTEXITCODE
+
+      - name: Install frontend dependencies and build
+        working-directory: tools/ets2nav-web
+        shell: powershell
+        run: |
+          npm ci --no-fund --no-audit
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build
+          exit $LASTEXITCODE
+
+      - name: Install pinned Playwright Chromium
+        # 只装 Chromium：本仓库不使用 Firefox/WebKit，装它们只会拖长运行时间。
+        # 不传 --with-restore-deps：Windows runner 无对应语义。
+        working-directory: tools/ets2nav-web
+        shell: powershell
+        run: |
+          npx playwright install chromium
+          exit $LASTEXITCODE
+
+      - name: Browser E2E (real Chromium, retries must stay 0)
+        working-directory: tools/ets2nav-web
+        shell: powershell
+        run: |
+          # playwright.config.mjs 已设 retries: 0 与 workers: 1；这里进一步断言运行
+          # 输出里没有 retry，也没有测试数缩水——否则"绿"可能只是放弃了一部分用例。
+          $log = Join-Path $env:RUNNER_TEMP 'e2e.log'
+          & npm run test:e2e 2>&1 | Tee-Object -FilePath $log
+          $code = $LASTEXITCODE
+          Write-Host "playwright exit=$code"
+          $text = Get-Content -LiteralPath $log -Raw
+          if ($text -match 'retry #\d') {
+            Write-Host 'CI FAILURE: Playwright used retries; that hides flakiness instead of fixing it.'
+            exit 1
+          }
+          if ($text -notmatch '45 passed') {
+            Write-Host 'CI FAILURE: expected "45 passed" in the Playwright summary.'
+            Write-Host '  If tests were intentionally added or removed, update this assertion in the same commit.'
+            exit 1
+          }
+          exit $code
+
+      - name: Upload Playwright diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: web-e2e-playwright
+          path: |
+            tools/ets2nav-web/test-results
+            tools/ets2nav-web/playwright-report
+            ${{ runner.temp }}/e2e.log
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # ── Job D ──────────────────────────────────────────────────────────────────
+  # 安全与协议集成。运行 npm run test:security 原样版本，不删断言、不把
+  # NOT_VERIFIED 当 PASS。实际能覆盖到哪些来源类别由 runner 的真实网络能力决定，
+  # 结论见 docs/validation/p4r-batch5-2026-09.md §9。
+  security:
+    name: Security
+    runs-on: windows-latest
+    timeout-minutes: 60
+    env:
+      ETS2NAV_DATASET: ${{ runner.temp }}\ets2nav-dataset\europe-v5
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
+
+      - name: Verify clean checkout
+        shell: powershell
+        run: scripts\ci\verify-clean-checkout.ps1
+
+      - name: Set up Node.js (pinned by .nvmrc)
+        uses: actions/setup-node@820762786026740c76f36085b0efc47a31fe5020  # v7
+        with:
+          node-version-file: .nvmrc
+
+      - name: Set up Python (protocol/security verifiers are stdlib-only)
+        uses: actions/setup-python@5fda3b95a4ea91299a34e894583c3862153e4b97  # v7
+        with:
+          python-version: '3.13'
+
+      - name: Prepare dataset
+        shell: powershell
+        run: |
+          scripts\ci\prepare-dataset.ps1 -Dest "${{ runner.temp }}\ets2nav-dataset\europe-v5"
+          exit $LASTEXITCODE
+
+      - name: Build nav-core-cli (debug; the server harness drives this binary)
+        shell: powershell
+        run: |
+          cargo build --manifest-path nav-core/tools/nav-core-cli/Cargo.toml
+          exit $LASTEXITCODE
+
+      - name: Install frontend dependencies and build
+        working-directory: tools/ets2nav-web
+        shell: powershell
+        run: |
+          npm ci --no-fund --no-audit
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run build
+          exit $LASTEXITCODE
+
+      - name: Install pinned Playwright Chromium
+        working-directory: tools/ets2nav-web
+        shell: powershell
+        run: |
+          npx playwright install chromium
+          exit $LASTEXITCODE
+
+      - name: Server protocol integration
+        working-directory: tools/ets2nav-web
+        shell: powershell
+        run: |
+          npm run test:protocol
+          exit $LASTEXITCODE
+
+      - name: Browser loopback security
+        working-directory: tools/ets2nav-web
+        shell: powershell
+        run: |
+          npm run test:browser-loopback
+          exit $LASTEXITCODE
+
+      - name: LAN security matrix (unmodified)
+        working-directory: tools/ets2nav-web
+        shell: powershell
+        run: |
+          npm run test:security
+          exit $LASTEXITCODE
+
+      - name: Upload Playwright diagnostics on failure
+        if: failure()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
+        with:
+          name: security-playwright
+          path: |
+            tools/ets2nav-web/test-results
+            tools/ets2nav-web/playwright-report
+          if-no-files-found: ignore
+          retention-days: 7

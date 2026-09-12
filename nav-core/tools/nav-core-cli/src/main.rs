@@ -19,6 +19,8 @@ fn usage() {
     eprintln!("  nav-core-cli bench <dataset-dir> [--trace=<trace>] —— 性能基准（trace 可选，缺省跳过匹配段）");
     eprintln!("  nav-core-cli server <dataset-dir> [--replay=<trace>] [--port=<N>] [--web=<dir>] [--fake-signal] [--lan]");
     eprintln!("      —— 默认只监听 127.0.0.1；--lan 才监听局域网并要求私网对端携带会话令牌");
+    // P4R Batch 5 §16：机器契约写在用法里，调用方不必读源码才能知道退出码含义。
+    eprintln!("退出码: 0 成功；1 业务失败（如 route 无路线）；2 用法或参数错误");
 }
 
 fn main() {
@@ -1243,14 +1245,28 @@ fn route_cli(xz: &str, dataset_dir: &str) {
     let parts: Vec<&str> = xz.split(':').collect();
     if parts.len() != 2 {
         eprintln!("格式: <x1,z1:x2,z2> 如 -58456,32832:-52925,36510");
-        std::process::exit(1);
+        std::process::exit(2);
     }
-    let parse = |s: &str| -> (f64, f64) {
+    // P4R Batch 5 §16：参数错误必须是干净的用法错误（exit 2），不能是索引越界或
+    // `parse().unwrap()` 触发的 panic（exit 101）。二者都非零，但 panic 把「用法错误」
+    // 在形态上伪装成「程序缺陷」，机器无法据退出码区分，人也要读 stderr 才能判断。
+    let parse = |s: &str| -> Option<(f64, f64)> {
         let v: Vec<&str> = s.split(',').collect();
-        (v[0].trim().parse().unwrap(), v[1].trim().parse().unwrap())
+        if v.len() != 2 {
+            return None;
+        }
+        let x = v[0].trim().parse::<f64>().ok()?;
+        let z = v[1].trim().parse::<f64>().ok()?;
+        Some((x, z))
     };
-    let (x1, z1) = parse(parts[0]);
-    let (x2, z2) = parse(parts[1]);
+    let (x1, z1) = parse(parts[0]).unwrap_or_else(|| {
+        eprintln!("起点坐标解析失败: '{}'（期望 <x,z>）", parts[0]);
+        std::process::exit(2);
+    });
+    let (x2, z2) = parse(parts[1]).unwrap_or_else(|| {
+        eprintln!("终点坐标解析失败: '{}'（期望 <x,z>）", parts[1]);
+        std::process::exit(2);
+    });
     let (routing, junctions) = nav_dataset::load_dataset(std::path::Path::new(dataset_dir))
         .unwrap_or_else(|e| {
             eprintln!("加载 dataset 失败: {e}");
@@ -1314,17 +1330,21 @@ fn route_cli(xz: &str, dataset_dir: &str) {
             println!("  ... 共 {} 条", ms.len());
         }
     }
-    for profile in [
+    let profiles = [
         nav_router::cost::RouteProfile::Fastest,
         nav_router::cost::RouteProfile::Shortest,
         nav_router::cost::RouteProfile::Balanced,
-    ] {
+    ];
+    let profiles_total = profiles.len();
+    let mut profiles_found = 0usize;
+    for profile in profiles {
         let t0 = std::time::Instant::now();
         let start = nav_router::snap::VirtualEndpoint::start(&s1, true);
         let goal = nav_router::snap::VirtualEndpoint::goal(&s2);
         let req = nav_router::search::RouteRequest::new(&graph, start, goal, profile);
         match router.astar(&req) {
             Some(r) => {
+                profiles_found += 1;
                 let ms = t0.elapsed().as_secs_f64() * 1000.0;
                 println!("[{}] {:>6.0}m {:>7.0}s（{:.0} min）{} 边（road {} / jct {} / sig {} / ferry {} / train {}）{:.1} ms",
                     profile.name(), r.distance_m, r.eta_s, r.eta_s / 60.0, r.edges.len(),
@@ -1332,6 +1352,30 @@ fn route_cli(xz: &str, dataset_dir: &str) {
             }
             None => println!("[{}] 无路线", profile.name()),
         }
+    }
+    // P4R Batch 5 §16：route 的机器契约。此前 `[Shortest] 无路线` 只打印一行文本，
+    // 进程退出码仍是 0，「产出路线」与「无路线」在机器语义上不可区分（Batch 4 §9 登记）。
+    // 现在把该判定提升为退出码：任一 canonical profile 产不出路线即业务失败。
+    let code = route_exit_code(profiles_total, profiles_found);
+    if code != 0 {
+        eprintln!(
+            "无路线：{}/{} 个 profile 未产出该 OD 对的路线",
+            profiles_total - profiles_found,
+            profiles_total
+        );
+        std::process::exit(code);
+    }
+}
+
+/// route 子命令的机器契约（P4R Batch 5 §16）：全部 canonical profile 产出路线才算成功。
+///
+/// 抽成纯函数使「无路线 ⇒ 非零」这一判定能在没有 dataset 的条件下做确定性测试；
+/// 端到端的退出码由回归 harness 在真实 dataset 上另行断言。
+fn route_exit_code(profiles_total: usize, profiles_found: usize) -> i32 {
+    if profiles_total > 0 && profiles_found == profiles_total {
+        0
+    } else {
+        1
     }
 }
 
@@ -1690,6 +1734,21 @@ mod tests {
         // 形如 ets2nav-live-YYYYMMDD-HHMMSS.navtrace（长度固定，便于多轮采集区分）
         assert_eq!(name.len(), "ets2nav-live-YYYYMMDD-HHMMSS.navtrace".len());
         assert!(name.starts_with("ets2nav-live-"), "{name}");
+    }
+
+    #[test]
+    fn route_exit_code_requires_every_profile_to_produce_a_route() {
+        // P4R Batch 5 §16：route 的机器契约。全部 canonical profile 出路线才算业务成功；
+        // 「无路线」必须由退出码表达，不能与成功同为 0（Batch 4 §9 登记的缺陷）。
+        assert_eq!(super::route_exit_code(3, 3), 0);
+        assert_eq!(
+            super::route_exit_code(3, 2),
+            1,
+            "少一个 profile 即为业务失败"
+        );
+        assert_eq!(super::route_exit_code(3, 0), 1, "全部无路线");
+        // 防御：一个 profile 都没跑过时不得判为成功——「没有检查」不等于「检查通过」。
+        assert_eq!(super::route_exit_code(0, 0), 1);
     }
 
     #[test]

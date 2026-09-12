@@ -6,6 +6,15 @@ node_modules/
 dist/
 build/
 
+# C++ 构建中间产物（P4R Batch 5 §19）。telemetry-plugin 的两个插件 DLL 由
+# build.bat 现场编译；.obj/.lib/.exp 只对构建本机有意义，且 .obj/.exp 内嵌构建机的
+# 绝对路径（实测 E:\Projects\Pi\ETS2Nav\... 与 E:\Program Files\Microsoft Visual
+# Studio\...）。唯一对外有意义的是 out/*.dll，故只忽略中间产物。
+*.obj
+*.lib
+*.exp
+# 注意：刻意不写 `out/`。out/ 里放的是要分发的插件 DLL，整体忽略会把唯一可用产物挡掉。
+
 # Playwright（P4R Batch 2）：测试产物与失败快照不入库。
 # dist/ 已在上方忽略——前端构建输出（vendor bundle + 可选 map.pmtiles）由
 # `npm run build` 现场生成，不入库。

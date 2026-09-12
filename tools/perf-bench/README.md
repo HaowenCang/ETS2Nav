@@ -7,7 +7,10 @@
 
 ## 工具
 
-- PresentMon v2.5.1（已安装）：`C:\Program Files\Intel\PresentMon\PresentMonApplication\PresentMon.exe`
+- PresentMon v2.5.1：控制台版本由 `run-bench.bat` 自动查找（可用环境变量
+  `PRESENTMON` 指定完整路径，例如
+  `%ProgramFiles%\Intel\PresentMon\PresentMonConsoleApplication\PresentMon-2.5.1-x64.exe`）。
+  路径不再硬编码进脚本（P4R Batch 5 §36）。
 - 记录脚本：`run-bench.bat`（自动提权，输出 CSV 到 `data\`）
 
 ## 操作步骤（约 15 分钟）

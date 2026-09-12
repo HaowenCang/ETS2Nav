@@ -4,18 +4,16 @@ using ScsTests;
 
 namespace ScsGraph.Tests;
 
+// 集成测试：需要官方 scs_extractor 解包产物（ETS2NAV_EXTRACTED）。
+//
+// P4R Batch 5 §17：本类全部测试归入 GameAssetsRequired 分类。这些测试原本就是
+// 输入缺失即失败（ReadSector 抛 FileNotFoundException），行为正确；补上 Trait
+// 是为了让 CI 能够显式排除整个分类，而不是靠"某个类恰好会失败"来间接表达依赖。
+[Trait("Category", TestPaths.GameAssetsCategory)]
 public class RoadGraphTests
 {
-    // 解包根不再硬编码开发者本机路径（P4R Batch 4）：见 TestPaths
-    private static readonly string BerlinDir =
-        TestPaths.ExtractedFile("base_map", "map", "europe");
-
-    private static SectorFile ReadSector(string name)
-    {
-        var p = Path.Combine(BerlinDir, name + ".base");
-        if (!File.Exists(p)) throw new FileNotFoundException(p);
-        return SectorFile.Read(p);
-    }
+    private static SectorFile ReadSector(string name) =>
+        SectorFile.Read(TestPaths.RequireExtractedFile("base_map", "map", "europe", name + ".base"));
 
     private static readonly string[] BerlinCore =
         ["sec+0002-0002", "sec+0002-0003", "sec+0003-0002", "sec+0003-0003"];

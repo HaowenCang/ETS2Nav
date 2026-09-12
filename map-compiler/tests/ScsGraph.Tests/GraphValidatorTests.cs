@@ -4,18 +4,13 @@ using ScsTests;
 
 namespace ScsGraph.Tests;
 
+// 集成测试：需要官方 scs_extractor 解包产物（ETS2NAV_EXTRACTED）。
+// P4R Batch 5 §17：归入 GameAssetsRequired 分类，理由见 RoadGraphTests。
+[Trait("Category", TestPaths.GameAssetsCategory)]
 public class GraphValidatorTests
 {
-    // 解包根不再硬编码开发者本机路径（P4R Batch 4）：见 TestPaths
-    private static readonly string BerlinDir =
-        TestPaths.ExtractedFile("base_map", "map", "europe");
-
-    private static SectorFile ReadSector(string name)
-    {
-        var p = Path.Combine(BerlinDir, name + ".base");
-        if (!File.Exists(p)) throw new FileNotFoundException(p);
-        return SectorFile.Read(p);
-    }
+    private static SectorFile ReadSector(string name) =>
+        SectorFile.Read(TestPaths.RequireExtractedFile("base_map", "map", "europe", name + ".base"));
 
     private static readonly string[] BerlinRegion =
     [

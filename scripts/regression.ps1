@@ -21,8 +21,21 @@
            4 = HARNESS FAILURE      harness 自身无法可信执行（参数误用、构建产物不可信）
 
 .PARAMETER Suite
-  P1 / P2 / P3 / P5 / All / SelfTest。P2 链内含 P1，P3 链内含 P2（与原 run-p*-tests.bat 一致）；
-  同一次调用内已执行过的链会在日志中标记为 reused，不重复执行，但结果沿用首次执行的真实退出码。
+  P1 / P2 / P3 / P5 / All / SelfTest / Portable / CLI。P2 链内含 P1，P3 链内含 P2（与原
+  run-p*-tests.bat 一致）；同一次调用内已执行过的链会在日志中标记为 reused，不重复执行，
+  但结果沿用首次执行的真实退出码。
+
+  Batch 5 起，云端可执行的门与本地完整门明确分离：
+
+    Portable  不依赖游戏资源、不依赖导航数据集。含 cargo fmt/clippy/test、
+              map-compiler 的 portable dotnet 测试（显式排除 GameAssetsRequired 分类）、
+              前端 clean build 两轮哈希比对与 manifest 校验、Desktop 编译门，
+              以及 harness 自检 SelfTest。
+    CLI       只依赖导航数据集。含 nav-core-cli 的 route 退出码机器契约
+              （有路线=0 / 无路线=1 / 用法错误=2）。
+
+  P1/P2/P3 需要正版 ETS2 游戏资源，因此**不得**在 GitHub hosted CI 中执行：
+  游戏资源不得下载、不得以伪造的 ETS2_INSTALL 顶替、也不得以空 fixture 代替。
 
 .PARAMETER Ets2Install
   游戏安装根目录。优先级：本参数 > $env:ETS2_INSTALL > （无 repo 内默认值，缺失即 PRECONDITION FAIL）。
@@ -65,7 +78,7 @@
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
-    [ValidateSet('P1', 'P2', 'P3', 'P5', 'All', 'SelfTest')]
+    [ValidateSet('P1', 'P2', 'P3', 'P5', 'All', 'SelfTest', 'Portable', 'CLI')]
     [string[]]$Suite = @('All'),
 
     [string]$Ets2Install,
@@ -99,6 +112,17 @@ $script:StepResults = @{}          # stepKey -> result（用于同一次调用�
 $script:RunStartUtc = [datetime]::UtcNow
 $script:TempRoot = $null
 $script:StepLogDir = $null
+
+# map-compiler 测试的外部输入分类名（Batch 5 §17）。必须与
+# map-compiler/tests/SharedTestPaths/TestPaths.cs 的 GameAssetsCategory 常量一致：
+# 若二者漂移，--filter 会排除 0 个测试而 portable 步骤仍然"全绿"。下面
+# $script:DotnetPortableTests 的执行数断言就是这条一致性约束的判据。
+$script:GameAssetsCategory = 'GameAssetsRequired'
+# 测试总数与其补集（Batch 5 §17/§18）。写死而非"算出来的"，使「排除了多少个、
+# 为什么排除」成为可核对的数字：109 = 93 portable + 16 GameAssetsRequired。
+$script:DotnetAllTests = 109
+$script:DotnetGameAssetsTests = 16
+$script:DotnetPortableTests = 93
 
 class PreconditionException : System.Exception {
     PreconditionException([string]$m) : base($m) { }
@@ -142,8 +166,9 @@ function Resolve-Tool {
 
 $script:SessionTools = New-Object System.Collections.ArrayList
 function Set-SessionTools {
-    # 允许执行的外部工具（不在仓库内）：全部按名字从 PATH 解析，绝不硬编码路径
-    foreach ($n in @('dotnet', 'cargo', 'python', 'cmd', 'powershell')) {
+    # 允许执行的外部工具（不在仓库内）：全部按名字从 PATH 解析，绝不硬编码路径。
+    # node/npm 是 Batch 5 加入的：Portable 套件需要在 clean checkout 上执行 npm ci / npm run build。
+    foreach ($n in @('dotnet', 'cargo', 'python', 'cmd', 'powershell', 'node', 'npm')) {
         try { [void]$script:SessionTools.Add((Resolve-Tool $n)) } catch { }
     }
 }
@@ -158,7 +183,7 @@ function Assert-ExecutableAllowed {
     if ($script:TempRoot -and $full.StartsWith($script:TempRoot, [StringComparison]::OrdinalIgnoreCase)) { return $full }
     throw [HarnessException]::new(
         "HARNESS FAILURE: 步骤 $StepName 试图执行仓库外部的文件 '$full'。" +
-        "回归步骤只允许执行本仓库构建产物或 PATH 上的标准工具（dotnet/cargo/python/cmd/powershell）。")
+        "回归步骤只允许执行本仓库构建产物或 PATH 上的标准工具（dotnet/cargo/python/cmd/powershell/node/npm）。")
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -559,6 +584,12 @@ function Test-Match {
     $hit = $Text -and ([regex]::IsMatch($Text, $Pattern))
     return @{ Ok = [bool]$hit; Detail = if ($hit) { '' } else { "stdout 未匹配 /$Pattern/（$Label）" } }
 }
+# 反向断言：Batch 5 的负向用例（「无路线必须非零」）需要断言输出里**不出现**某段文本。
+function Test-NotContains {
+    param([string]$Text, [string]$Needle, [string]$Label)
+    $hit = $Text -and $Text.Contains($Needle)
+    return @{ Ok = (-not $hit); Detail = if ($hit) { "输出出现了不应出现的内容 '$Needle'（$Label）" } else { '' } }
+}
 function Test-All {
     param([object[]]$Checks)
     foreach ($c in $Checks) { if (-not $c.Ok) { return $c } }
@@ -642,6 +673,12 @@ function Get-CSharpSourceRoots {
 }
 
 $script:CargoMetadataCache = @{}
+
+# 新鲜度闭包的平台三元组。本项目只支持 Windows/MSVC：nav-telemetry 直接
+# #[link(name = "kernel32")] 且未做 cfg 门控，Windows 之外根本链接不过。
+# 该常量只用于 cargo metadata --filter-platform，决定「哪些源码参与本产物的构建」。
+$script:RustHostTriple = 'x86_64-pc-windows-msvc'
+
 function Get-RustSourceRoots {
     <#
       用 `cargo metadata` 计算某包的依赖闭包（只取仓库内的路径依赖），作为产物新鲜度的
@@ -658,9 +695,33 @@ function Get-RustSourceRoots {
     try {
         if (-not $script:CargoMetadataCache.ContainsKey($WorkspaceManifest)) {
             $cargo = Resolve-Tool 'cargo'
-            $json = & $cargo metadata --format-version 1 --locked --manifest-path $WorkspaceManifest 2>$null | Out-String
-            $code = $LASTEXITCODE
-            if ($code -ne 0) { throw "cargo metadata exited $code" }
+            # 两点都是必需的，缺一不可（Batch 5 在 desktop 上实测踩到）：
+            #
+            # 1) --filter-platform：不加它时 cargo 会解析并**下载所有平台**的依赖
+            #    （实测 desktop 会拉 android_system_properties 等），既慢又必然往 stderr
+            #    写 "Downloading crates ..." 进度行。新鲜度闭包本来就只应覆盖本平台构建
+            #    用到的源码，本平台限定同时也更准确。
+            #
+            # 2) 临时降级 $ErrorActionPreference：本脚本全局设了 'Stop'，而该模式下令
+            #    PowerShell 5.1 把原生命令写 stderr 视为 NativeCommandError 终止错误。
+            #    此前正是它让本函数在 desktop 上抛异常并**静默退化**为「包目录」比较根，
+            #    而调用方仍报 PASS——正是 Batch 4 要求消除的「harness 自己降级却仍然全绿」。
+            $errFile = Join-Path $script:StepLogDir 'cargo-metadata.err.txt'
+            $prevEap = $ErrorActionPreference
+            $ErrorActionPreference = 'Continue'
+            try {
+                $json = & $cargo metadata --format-version 1 --locked `
+                    --filter-platform $script:RustHostTriple `
+                    --manifest-path $WorkspaceManifest 2>$errFile | Out-String
+                $code = $LASTEXITCODE
+            } finally {
+                $ErrorActionPreference = $prevEap
+            }
+            if ($code -ne 0) {
+                $errText = ''
+                if (Test-Path -LiteralPath $errFile) { $errText = (Get-Content -LiteralPath $errFile -Raw).Trim() }
+                throw "cargo metadata exited $code (stderr: $errText)"
+            }
             $script:CargoMetadataCache[$WorkspaceManifest] = ($json | ConvertFrom-Json)
         }
         $md = $script:CargoMetadataCache[$WorkspaceManifest]
@@ -1369,6 +1430,411 @@ function Invoke-SelfTest {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# 前端构建产物判定辅助（Batch 5 §11 / §38）
+# ─────────────────────────────────────────────────────────────────────────────
+
+# 前端构建的必需产物。可选运行期资源（map.pmtiles、fonts/）不在其中：它们缺失时
+# build.mjs 只告警，属「离线视觉完整性」，留给 Batch 6 的发布收尾，不由构建门判定。
+$script:FrontendArtifacts = @(
+    'index.html', 'app.js', 'style.css',
+    'vendor/maplibre-gl.js', 'vendor/maplibre-gl.css', 'vendor/pmtiles.js',
+    'vendor/qrcode.min.js', 'build-manifest.json'
+)
+
+# 仓库侧（非 harness 侧）的检查：判定失败是 TEST FAILURE（exit 1），不是 HARNESS FAILURE。
+# Detail 只描述**失败**原因，因此 PASS 时显示 OkDetail：否则汇总行会在 PASS 行下面
+# 打印一句「缺失或为空的必需产物: 」这类失败文案，读者会把成功读成失败。
+function Add-RepoCheck {
+    param(
+        [string]$Suite, [string]$Name, [bool]$Ok,
+        [string]$Detail, [string]$SemanticText, [string]$OkDetail = ''
+    )
+    $result = if ($Ok) { 'PASS' } else { 'TEST FAILURE' }
+    $shown = if ($Ok) { $OkDetail } else { $Detail }
+    Write-Log "[$Suite`:$Name] $result (repo check)"
+    if ($shown) { Write-Log "[$Suite`:$Name] $shown" }
+    return (Add-StepResult -Suite $Suite -Name $Name -Result $result -ExitCode $null `
+            -SemanticPassed $Ok -Duration 0 -Detail $shown -SemanticText $SemanticText)
+}
+
+# StrictMode 2.0 下访问 PSCustomObject 上不存在的属性会抛异常，故先探测再取值。
+# 同时兼容两种解析结果：ConvertFrom-Json 给 PSCustomObject，JavaScriptSerializer 给字典。
+function Get-JsonMember {
+    param($Object, [string]$Name)
+    if ($null -eq $Object) { return $null }
+    if ($Object -is [System.Collections.IDictionary]) {
+        # 经键集合判断，不用 $Object.Contains()：Dictionary<TKey,TValue> 只**显式**实现
+        # IDictionary.Contains，PowerShell 的方法解析看不到该实现（实测
+        # "Cannot find an overload for Contains and the argument count: 1"），
+        # 强转成 IDictionary 变量也不解决问题——解析仍按实体类型进行。
+        # ConvertFrom-Json 走下面的 PSCustomObject 分支，字典分支只来自
+        # JavaScriptSerializer，其实体类型为 Dictionary[string,object]，键集合即字符串。
+        $keys = @($Object.Keys)
+        if ($keys -contains $Name) { return $Object[$Name] }
+        return $null
+    }
+    if (-not ($Object.PSObject.Properties.Name -contains $Name)) { return $null }
+    return $Object.$Name
+}
+
+# 读取 JSON 文件。默认走 ConvertFrom-Json；失败时回退到 .NET Framework 自带的
+# JavaScriptSerializer。
+#
+# 回退不是"以防万一"：package-lock.json 的 packages 对象以**空字符串**为键
+# （npm v3 锁文件用 "" 表示根包，本仓库实测恰好 1 处），而 Windows PowerShell 5.1
+# 的 ConvertFrom-Json 在为空名构造属性时抛
+#   Cannot process argument because the value of argument "name" is not valid.
+# 这是 5.1 的解析器限制而非数据问题（PowerShell 7 已修正，故 7 上不会走到回退）。
+# 若在此处直接失败，CI 会把"读不懂锁文件"报成"前端构建不可复现"，两者含义完全不同。
+function Read-JsonFile {
+    param([Parameter(Mandatory)][string]$Path)
+    $raw = Get-Content -LiteralPath $Path -Raw -Encoding UTF8
+    try {
+        return ($raw | ConvertFrom-Json)
+    } catch {
+        Write-Log "  ConvertFrom-Json 无法解析 $(Split-Path -Leaf $Path)：$($_.Exception.Message)"
+        Write-Log '  回退到 JavaScriptSerializer（空键 JSON 的 5.1 限制）'
+    }
+    Add-Type -AssemblyName System.Web.Extensions
+    $ser = New-Object System.Web.Script.Serialization.JavaScriptSerializer
+    $ser.MaxJsonLength = [int]::MaxValue
+    return $ser.DeserializeObject($raw)
+}
+
+function Get-FrontendArtifactHashes {
+    param([Parameter(Mandatory)][string]$DistRoot)
+    $map = @{}
+    foreach ($rel in $script:FrontendArtifacts) {
+        $p = Join-Path $DistRoot ($rel -replace '/', '\')
+        if (Test-Path -LiteralPath $p -PathType Leaf) {
+            $map[$rel] = @{
+                Sha256 = (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant()
+                Bytes  = (Get-Item -LiteralPath $p).Length
+            }
+        } else {
+            $map[$rel] = @{ Sha256 = ''; Bytes = -1 }
+        }
+    }
+    return $map
+}
+
+function Get-ShortHash {
+    param([string]$Hash)
+    if (-not $Hash) { return '(missing)' }
+    if ($Hash.Length -le 16) { return $Hash }
+    return $Hash.Substring(0, 16)
+}
+
+# build-manifest.json 的结构校验：依赖版本必须等于 lockfile 锁定的版本，各产物的
+# sha256/bytes 必须与实际文件一致。前者防「manifest 记录了另一套依赖」，后者防
+# 「manifest 与 dist 不同步」——两者都足以让"构建成功"变成不可信的成功。
+function Assert-FrontendManifest {
+    param([Parameter(Mandatory)][string]$WebDir, [Parameter(Mandatory)][string]$DistRoot,
+        [string]$Suite = 'Portable')
+    $problems = @()
+    $lock = $null; $manifest = $null
+    try {
+        $lock = Read-JsonFile -Path (Join-Path $WebDir 'package-lock.json')
+        $manifest = Read-JsonFile -Path (Join-Path $DistRoot 'build-manifest.json')
+    } catch {
+        return (Add-RepoCheck -Suite $Suite -Name 'frontend-manifest' -Ok $false `
+                -Detail "解析 package-lock.json / build-manifest.json 失败: $($_.Exception.Message)" `
+                -SemanticText 'manifest 可解析且与 lockfile 一致')
+    }
+    $lockPackages = Get-JsonMember $lock 'packages'
+    foreach ($name in @('maplibre-gl', 'pmtiles', 'qrcode')) {
+        $locked = Get-JsonMember (Get-JsonMember $lockPackages "node_modules/$name") 'version'
+        $recorded = Get-JsonMember (Get-JsonMember (Get-JsonMember $manifest 'dependencies') $name) 'version'
+        if (-not $locked) { $problems += "lockfile 未记录 $name 的版本" }
+        elseif ($recorded -ne $locked) { $problems += "$name 版本不符：manifest=$recorded lock=$locked" }
+    }
+    $lockedEsbuild = Get-JsonMember (Get-JsonMember $lockPackages 'node_modules/esbuild') 'version'
+    $recordedEsbuild = Get-JsonMember (Get-JsonMember (Get-JsonMember $manifest 'devDependencies') 'esbuild') 'version'
+    if ($recordedEsbuild -ne $lockedEsbuild) {
+        $problems += "esbuild 版本不符：manifest=$recordedEsbuild lock=$lockedEsbuild"
+    }
+
+    $artifacts = Get-JsonMember $manifest 'artifacts'
+    foreach ($rel in $script:FrontendArtifacts) {
+        if ($rel -eq 'build-manifest.json') { continue }   # manifest 不自我引用
+        $entry = Get-JsonMember $artifacts $rel
+        if ($null -eq $entry) { $problems += "manifest 缺少产物条目 $rel"; continue }
+        $sha = [string](Get-JsonMember $entry 'sha256')
+        if ($sha -notmatch '^[0-9a-f]{64}$') { $problems += "$rel 的 sha256 形态非法: '$sha'"; continue }
+        $p = Join-Path $DistRoot ($rel -replace '/', '\')
+        if (-not (Test-Path -LiteralPath $p -PathType Leaf)) { $problems += "$rel 的实际文件不存在"; continue }
+        $actual = (Get-FileHash -LiteralPath $p -Algorithm SHA256).Hash.ToLowerInvariant()
+        if ($actual -ne $sha) { $problems += "$rel 实际 sha256 与 manifest 记录不一致" }
+        $bytes = [int64](Get-JsonMember $entry 'bytes')
+        if ($bytes -ne (Get-Item -LiteralPath $p).Length) { $problems += "$rel 的 bytes 与 manifest 记录不一致" }
+    }
+    if ($problems.Count -eq 0) {
+        Write-Log '  manifest 校验通过：3 个运行依赖 + esbuild 版本与 lockfile 一致，7 项产物哈希与实体一致'
+    }
+    return (Add-RepoCheck -Suite $Suite -Name 'frontend-manifest' -Ok ($problems.Count -eq 0) `
+            -Detail ("manifest 校验问题: " + ($problems -join '; ')) `
+            -OkDetail '依赖版本与 lockfile 一致，产物 sha256/bytes 与实体一致' `
+            -SemanticText 'manifest 依赖版本与 lockfile 一致、产物 sha256 与实体一致')
+}
+
+# dotnet test 的 portable 汇总判定：不仅要求 Failed: 0，还要求**执行数恰为常量**。
+# 只检查 Failed: 0 无法区分「排除了 16 个」与「filter 写错、一个都没排除」。
+function Assert-PortableDotnetSummary {
+    param([string]$Out)
+    $total = 0; $passed = 0; $failed = 0; $skipped = 0
+    foreach ($m in [regex]::Matches($Out, 'Total:\s+(\d+)')) { $total += [int]$m.Groups[1].Value }
+    foreach ($m in [regex]::Matches($Out, 'Passed:\s+(\d+)')) { $passed += [int]$m.Groups[1].Value }
+    foreach ($m in [regex]::Matches($Out, 'Failed:\s+(\d+)')) { $failed += [int]$m.Groups[1].Value }
+    foreach ($m in [regex]::Matches($Out, 'Skipped:\s+(\d+)')) { $skipped += [int]$m.Groups[1].Value }
+    # 注意：-f 的优先级高于 +，格式串必须先拼接再整体格式化，否则占位符不会被替换。
+    Write-Log (("  portable dotnet: executed={0} passed={1} failed={2} skipped={3}；" +
+            "按设计排除 {4} 个 {5} 测试（全量 {6}）") -f @(
+            $total, $passed, $failed, $skipped, $script:DotnetGameAssetsTests,
+            $script:GameAssetsCategory, $script:DotnetAllTests))
+    $checks = @()
+    $checks += (Test-Contains $Out 'Passed!' 'dotnet test 汇总行')
+    $checks += @{ Ok = ($failed -eq 0); Detail = "失败数 $failed ≠ 0" }
+    $checks += @{ Ok = ($skipped -eq 0); Detail = "出现 $skipped 个 skipped（本项目不允许以 skip 掩盖未执行）" }
+    $checks += @{ Ok = ($total -eq $script:DotnetPortableTests);
+        Detail = ("执行数 $total ≠ 预期 $($script:DotnetPortableTests)。" +
+            "要么 filter 失效（分类名漂移），要么测试集合变化——两种情况都必须显式更新常量后再判定。")
+    }
+    $checks += @{ Ok = ($passed -eq $script:DotnetPortableTests); Detail = "通过数 $passed ≠ $($script:DotnetPortableTests)" }
+    return (Test-All $checks)
+}
+
+# cargo test 的汇总判定：每个 "test result:" 行都必须 ok，failed 合计为 0，
+# 并设有防真空下限（测试目标数与通过数），避免「整包未执行」被判为成功。
+function Assert-CargoTestSummary {
+    param([string]$Out)
+    $results = [regex]::Matches($Out, 'test result: (ok|FAILED)\.\s+(\d+) passed; (\d+) failed')
+    if ($results.Count -lt 1) {
+        return @{ Ok = $false; Detail = 'stdout 中没有任何 "test result:" 汇总行' }
+    }
+    $passed = 0; $failed = 0
+    foreach ($m in $results) {
+        $passed += [int]$m.Groups[2].Value
+        $failed += [int]$m.Groups[3].Value
+    }
+    Write-Log "  cargo test: targets=$($results.Count) passed=$passed failed=$failed"
+    if ($failed -ne 0) { return @{ Ok = $false; Detail = "有 $failed 个测试失败" } }
+    if ($results.Count -lt 15) { return @{ Ok = $false; Detail = "仅 $($results.Count) 个测试目标，低于防真空下限 15" } }
+    if ($passed -lt 100) { return @{ Ok = $false; Detail = "通过数 $passed 低于防真空下限 100" } }
+    return @{ Ok = $true; Detail = "targets=$($results.Count) passed=$passed failed=0" }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Portable 套件（Batch 5 §4 Job A）
+#
+# 定义：不依赖正版 ETS2 游戏资源、不依赖导航数据集，在全新 GitHub checkout 上
+# 仅凭 Cargo.lock / package-lock.json / 本仓库源码即可执行的门。
+#
+# 与 P1/P2/P3 的关系是刻意分离的：cloud required CI ≠ full local regression。
+# P1 需要正版游戏资源，而游戏资源不得下载、不得用伪造的 ETS2_INSTALL 顶替、
+# 也不得用空 fixture 代替；因此 P1/P2/P3 只属于本地与发布的完整门。
+# ─────────────────────────────────────────────────────────────────────────────
+function Invoke-PortableSuite {
+    param([hashtable]$Cfg)
+    Write-Rule 'Portable Suite（源码门：无 ETS2 资源、无导航数据集）'
+    $cargo = Resolve-Tool 'cargo'
+    $npm = Resolve-Tool 'npm'
+    $dotnet = Resolve-Tool 'dotnet'
+    $navCore = Join-Path $script:RepoRoot 'nav-core'
+    $web = Join-Path $script:RepoRoot 'tools/ets2nav-web'
+    $dist = Join-Path $web 'dist'
+
+    # [1..3] Rust 源码门
+    [void](Invoke-NativeStep -Suite Portable -Name 'cargo-fmt' -FilePath $cargo `
+        -Arguments @('fmt', '--all', '--', '--check') -WorkingDirectory $navCore `
+        -SemanticText 'exit 0 且 stdout 不含 "Diff in"' `
+        -Semantic { param($out, $err) Test-NotContains $out 'Diff in' 'rustfmt 差异行' })
+    [void](Invoke-NativeStep -Suite Portable -Name 'cargo-clippy' -FilePath $cargo `
+        -Arguments @('clippy', '--all-targets', '--', '-D', 'warnings') -WorkingDirectory $navCore)
+    [void](Invoke-NativeStep -Suite Portable -Name 'cargo-test' -FilePath $cargo `
+        -Arguments @('test', '--workspace') -WorkingDirectory $navCore `
+        -SemanticText 'exit 0 且全部 "test result:" 行为 ok、failed 合计 0，且不低于防真空下限' `
+        -Semantic { param($out, $err) Assert-CargoTestSummary $out })
+
+    # [4] portable dotnet 门：显式排除 GameAssetsRequired 分类，并断言执行数
+    [void](Invoke-NativeStep -Suite Portable -Name 'dotnet-test-portable' -FilePath $dotnet `
+        -Arguments @('test', 'map-compiler/MapCompiler.sln', '-v', 'q', '--nologo',
+            '--filter', "Category!=$($script:GameAssetsCategory)") `
+        -SemanticText ("exit 0、Failed: 0、Skipped: 0，且执行数恰为 {0}（按设计排除 {1} 个 {2} 测试）" -f `
+                $script:DotnetPortableTests, $script:DotnetGameAssetsTests, $script:GameAssetsCategory) `
+        -Semantic { param($out, $err) Assert-PortableDotnetSummary $out })
+
+    # [5][6] 前端 clean build 两轮：产物完整性、manifest 一致性、两次构建哈希一致
+    Write-Log ''
+    Write-Log '--- 前端 clean build（两轮，比较产物哈希）---'
+    # 源码 vendor（tools/ets2nav-web/vendor）不是构建输入：build.mjs 只从 node_modules
+    # 复制 upstream bundle。它在干净检出中不存在必须仍能构建；本地若残留历史手工复制的
+    # 文件也不得被读取。这里显式记录其存在性，避免"本地恰好有"被当成依赖。
+    $srcVendor = Join-Path $web 'vendor'
+    Write-Log "  源码 vendor 存在: $(Test-Path -LiteralPath $srcVendor)（不是构建输入，仅记录）"
+
+    $snaps = @{}
+    $roundsOk = $true
+    foreach ($round in @(1, 2)) {
+        if ($round -eq 2) {
+            foreach ($d in @($dist, (Join-Path $web 'node_modules'))) {
+                if (Test-Path -LiteralPath $d) { Remove-Item -LiteralPath $d -Recurse -Force }
+            }
+            Write-Log '  第 2 轮：已删除 dist/ 与 node_modules/，由 lockfile 重新恢复后重建'
+        }
+        # npm 解析为 npm.cmd，Windows 会经 cmd.exe 承载；本步骤的参数均为无空格的
+        # 子命令与标志，不触发 cmd 的引号剥离（Batch 4 H5 记录的边界）。
+        $r = Invoke-NativeStep -Suite Portable -Name "frontend-npm-ci-r$round" -FilePath $npm `
+            -Arguments @('ci', '--no-fund', '--no-audit') -WorkingDirectory $web `
+            -SemanticText 'exit 0（依赖由 package-lock.json 现场恢复）'
+        if ($r.Result -ne 'PASS') { $roundsOk = $false; break }
+        $r = Invoke-NativeStep -Suite Portable -Name "frontend-build-r$round" -FilePath $npm `
+            -Arguments @('run', 'build') -WorkingDirectory $web `
+            -SemanticText 'exit 0 且 stdout 的产物清单列出全部必需产物' `
+            -Semantic {
+                param($out, $err)
+                Test-All @(
+                    (Test-Contains $out '[build] dist/ 生成完成' '构建完成行'),
+                    (Test-Contains $out 'index.html' '产物清单 index.html'),
+                    (Test-Contains $out 'app.js' '产物清单 app.js'),
+                    (Test-Contains $out 'style.css' '产物清单 style.css'),
+                    (Test-Contains $out 'vendor/maplibre-gl.js' '产物清单 maplibre-gl.js'),
+                    (Test-Contains $out 'vendor/maplibre-gl.css' '产物清单 maplibre-gl.css'),
+                    (Test-Contains $out 'vendor/pmtiles.js' '产物清单 pmtiles.js'),
+                    (Test-Contains $out 'vendor/qrcode.min.js' '产物清单 qrcode.min.js')
+                )
+            }
+        if ($r.Result -ne 'PASS') { $roundsOk = $false; break }
+        $snaps[$round] = Get-FrontendArtifactHashes -DistRoot $dist
+    }
+    if (-not $roundsOk) { return }
+
+    $missing = @()
+    foreach ($rel in $script:FrontendArtifacts) {
+        $h = $snaps[1][$rel]
+        if ($h.Sha256 -eq '') { $missing += $rel }
+        elseif ($h.Bytes -le 0) { $missing += "$rel(0 B)" }
+    }
+    [void](Add-RepoCheck -Suite Portable -Name 'frontend-artifacts' -Ok ($missing.Count -eq 0) `
+        -Detail "缺失或为空的必需产物: $($missing -join ', ')" `
+        -OkDetail "$($script:FrontendArtifacts.Count) 个必需产物全部存在且字节数非零" `
+        -SemanticText ("$($script:FrontendArtifacts.Count) 个必需产物全部存在且字节数非零"))
+
+    [void](Assert-FrontendManifest -WebDir $web -DistRoot $dist)
+
+    $diff = @()
+    foreach ($rel in $script:FrontendArtifacts) {
+        $a = $snaps[1][$rel]; $b = $snaps[2][$rel]
+        if ($a.Sha256 -ne $b.Sha256) {
+            $diff += ("$rel ($(Get-ShortHash $a.Sha256) → $(Get-ShortHash $b.Sha256))")
+        }
+    }
+    [void](Add-RepoCheck -Suite Portable -Name 'frontend-reproducibility' -Ok ($diff.Count -eq 0) `
+        -Detail "两次独立构建的产物哈希不同: $($diff -join '; ')" `
+        -OkDetail '两轮独立构建的 8 个必需产物 sha256 逐字节一致' `
+        -SemanticText 'npm ci + npm run build 连续两轮，8 个必需产物 sha256 逐字节一致')
+    if ($diff.Count -eq 0) {
+        Write-Log ("  两轮一致: index.html={0} app.js={1} qrcode.min.js={2} manifest={3}" -f `
+                (Get-ShortHash $snaps[1]['index.html'].Sha256), (Get-ShortHash $snaps[1]['app.js'].Sha256),
+            (Get-ShortHash $snaps[1]['vendor/qrcode.min.js'].Sha256), (Get-ShortHash $snaps[1]['build-manifest.json'].Sha256))
+    }
+
+    # [7] Desktop 源码门。tauri.conf.json 的 frontendDist 指向 ../tools/ets2nav-web/dist，
+    # 因此编译必须在 dist/ 生成之后进行；否则会把「前端未构建」误报成「Desktop 源码失败」（§20）。
+    Write-Log ''
+    Write-Log '--- Desktop（dist/ 已就绪之后才编译）---'
+    $distReady = Test-Path -LiteralPath (Join-Path $dist 'index.html') -PathType Leaf
+    [void](Add-RepoCheck -Suite Portable -Name 'desktop-frontend-dist-ready' -Ok $distReady `
+        -Detail 'tools/ets2nav-web/dist/index.html 不存在，Desktop 的编译顺序前提不成立' `
+        -OkDetail 'dist/index.html 已由前端构建生成，Desktop 编译顺序前提成立' `
+        -SemanticText 'Desktop 编译前 dist/ 必须已由前端构建生成')
+    [void](Invoke-NativeStep -Suite Portable -Name 'cargo-fmt-desktop' -FilePath $cargo `
+        -Arguments @('fmt', '--manifest-path', 'desktop/Cargo.toml', '--', '--check') `
+        -WorkingDirectory $script:RepoRoot `
+        -SemanticText 'exit 0 且 stdout 不含 "Diff in"' `
+        -Semantic { param($out, $err) Test-NotContains $out 'Diff in' 'rustfmt 差异行' })
+    [void](Invoke-NativeStep -Suite Portable -Name 'cargo-clippy-desktop' -FilePath $cargo `
+        -Arguments @('clippy', '--manifest-path', 'desktop/Cargo.toml', '--all-targets', '--', '-D', 'warnings') `
+        -WorkingDirectory $script:RepoRoot)
+    # 本批次只要求 desktop 的编译门；完整 Tauri bundle 与 nav-server sidecar 生命周期
+    # 不在范围内（§20）。
+    $r = Invoke-NativeStep -Suite Portable -Name 'cargo-build-desktop' -FilePath $cargo `
+        -Arguments @('build', '--manifest-path', 'desktop/Cargo.toml') -WorkingDirectory $script:RepoRoot
+    if ($r.Result -eq 'PASS') {
+        $roots = Get-RustSourceRoots -WorkspaceManifest (Join-Path $script:RepoRoot 'desktop/Cargo.toml') `
+            -PackageName 'ets2nav-desktop' -FallbackRoot (Join-Path $script:RepoRoot 'desktop')
+        [void](Assert-ArtifactFresh -Suite Portable -Name 'cargo-build-desktop-artifact' `
+            -Artifact (Join-Path $script:RepoRoot 'desktop/target/debug/ets2nav-desktop.exe') -SourceRoots $roots)
+    }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# CLI 套件（Batch 5 §4 Job B 的「dataset-backed CLI 门」）
+#
+# 只放**数据集支持的命令行机器契约**：需要 dataset、不需要游戏资源，因此云端可执行。
+# 它不做 od-baseline 比对（那是 P5 的职责），也不链入 P1。
+# ─────────────────────────────────────────────────────────────────────────────
+function Invoke-CliSuite {
+    param([hashtable]$Cfg)
+    Write-Rule 'CLI Suite（数据集支持的命令行机器契约）'
+    $cargo = Resolve-Tool 'cargo'
+    $navCore = Join-Path $script:RepoRoot 'nav-core'
+    $dataset = $Cfg.Dataset.Path
+    $cliExe = Join-Path $navCore 'target/release/nav-core-cli.exe'
+
+    $roots = Get-RustSourceRoots -WorkspaceManifest (Join-Path $navCore 'Cargo.toml') `
+        -PackageName 'nav-core-cli' -FallbackRoot (Join-Path $navCore 'tools/nav-core-cli')
+    $r = Invoke-NativeStep -Suite CLI -Name 'build-nav-core-cli' -FilePath $cargo `
+        -Arguments @('build', '--release', '-p', 'nav-core-cli') -WorkingDirectory $navCore
+    if ($r.Result -eq 'PASS') {
+        [void](Assert-ArtifactFresh -Suite CLI -Name 'build-nav-core-cli-artifact' -Artifact $cliExe `
+            -SourceRoots $roots)
+    }
+
+    # 正向：有路线 ⇒ exit 0（§16）。语义上还要求三个 canonical profile 各有一行，
+    # 否则「exit 0」可能只是某个 profile 侥幸成功。
+    [void](Invoke-NativeStep -Suite CLI -Name 'route-valid-od' -FilePath $cliExe `
+        -Arguments @('route', '-58456,32832:-52925,36510', $dataset) `
+        -SemanticText 'exit 0 且 fastest/shortest/balanced 三个 profile 各输出一行路线' `
+        -Semantic {
+            param($out, $err)
+            Test-All @(
+                (Test-Match $out '\[fastest\]\s+[\d.]+m' 'fastest 路线行'),
+                (Test-Match $out '\[shortest\]\s+[\d.]+m' 'shortest 路线行'),
+                (Test-Match $out '\[balanced\]\s+[\d.]+m' 'balanced 路线行'),
+                (Test-NotContains $out '无路线' '不应出现无路线')
+            )
+        })
+
+    # 反向：业务失败 ⇒ 非零（§16）。构造方式是取大西洋坐标——离任何可路由边都远超
+    # 300 m 的吸附半径，因此必然失败。这是由数据集内容决定的确定性事实，不依赖网络
+    # 或时序。断言退出码**恰为 1**（业务失败），并要求不是 panic(101)。
+    [void](Invoke-NativeStep -Suite CLI -Name 'route-outside-mapped-area' -FilePath $cliExe `
+        -Arguments @('route', '-200000,100000:-190000,110000', $dataset) `
+        -AcceptExitCodes @(1) `
+        -SemanticText 'exit 1（业务失败）且 stderr 给出吸附失败诊断、无 panic' `
+        -Semantic {
+            param($out, $err)
+            Test-All @(
+                (Test-Match $err '300m 内无可路由边' '吸附失败诊断行'),
+                (Test-NotContains $err 'panicked' '不得以 panic 表达业务失败')
+            )
+        })
+
+    # 用法错误 ⇒ exit 2（参数在读取数据集之前就被拒绝，故传入不存在的目录也应得 2）。
+    [void](Invoke-NativeStep -Suite CLI -Name 'route-bad-arguments' -FilePath $cliExe `
+        -Arguments @('route', 'nonsense', $dataset) `
+        -AcceptExitCodes @(2) `
+        -SemanticText 'exit 2（用法错误）且 stderr 给出格式提示' `
+        -Semantic {
+            param($out, $err)
+            Test-All @(
+                (Test-Match $err '格式:' '用法提示行'),
+                (Test-NotContains $err 'panicked' '不得以 panic 表达用法错误')
+            )
+        })
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 主流程
 # ─────────────────────────────────────────────────────────────────────────────
 function Get-FailedSteps {
@@ -1446,6 +1912,39 @@ try {
     } elseif ($Suite -contains 'SelfTest') {
         Invoke-SelfTest
         Write-Summary 'Harness SelfTest'
+        $exit = Get-ExitCode
+    } elseif (($Suite -contains 'Portable') -or ($Suite -contains 'CLI')) {
+        # Portable / CLI 是 Batch 5 引入的**云端可执行门**，与 P1/P2/P3 的完整门分离。
+        # 二者都不需要游戏资源：Portable 连数据集都不需要，CLI 只需要 released dataset。
+        $wantPortable = $Suite -contains 'Portable'
+        $wantCli = $Suite -contains 'CLI'
+        $Cfg = @{ Dataset = $null }
+
+        Write-Log ''
+        Write-Log '--- preflight ---'
+        if ($wantPortable) {
+            Write-Log 'portable    : 不需要 ETS2 游戏资源、不需要导航数据集（源码门）'
+        }
+        if ($wantCli) {
+            $Cfg.Dataset = Get-DatasetPath -Explicit $Dataset
+            Write-Log "dataset     : $($Cfg.Dataset.Path)  [$($Cfg.Dataset.Source)]"
+            # 与 P 系列一致：把解析结果导出给子进程，避免「参数传了一个、环境变量是另一个」。
+            $env:ETS2NAV_DATASET = $Cfg.Dataset.Path
+        }
+        foreach ($t in @('cargo', 'dotnet', 'npm')) {
+            $p = Resolve-Tool $t
+            Write-Log ("tool {0,-7}: {1}" -f $t, $p)
+        }
+        Write-Log '--- preflight OK ---'
+
+        if ($wantPortable) {
+            Invoke-PortableSuite -Cfg $Cfg
+            # §27：mutation 套件不进 required CI；SelfTest 是轻量的 harness 反假绿检查。
+            Invoke-SelfTest
+        }
+        if ($wantCli) { Invoke-CliSuite -Cfg $Cfg }
+
+        Write-Summary ($Suite -join '+')
         $exit = Get-ExitCode
     } else {
         $wantP1 = ($Suite -contains 'P1') -or ($Suite -contains 'All')

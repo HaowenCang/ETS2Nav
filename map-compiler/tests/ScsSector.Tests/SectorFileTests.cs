@@ -3,6 +3,7 @@ using ScsTests;
 
 namespace ScsSector.Tests;
 
+// 纯二进制工具函数，无外部输入依赖——portable 分类（P4R Batch 5 §17）。
 public class ScsBinaryTests
 {
     [Theory]
@@ -22,20 +23,22 @@ public class ScsBinaryTests
     }
 }
 
-// 集成测试：真实游戏 sector（文件缺失时跳过）
+// 集成测试：需要官方 scs_extractor 解包产物（ETS2NAV_EXTRACTED）。
+//
+// P4R Batch 5 §17：本类全部测试归入 GameAssetsRequired 分类。此前以
+// `if (!File.Exists(BerlinSector)) return;` 静默通过；同一仓库的 ScsGraph.Tests
+// 在同等缺失条件下却是 FAIL——同一前置条件两种相反结论，读者无从判断
+// `dotnet test` 的 PASS 覆盖了什么。现在缺失即抛前置条件异常。
+//
 // 路径来源：环境变量 ETS2NAV_EXTRACTED；不再硬编码开发者本机路径（P4R Batch 4）
+[Trait("Category", TestPaths.GameAssetsCategory)]
 public class SectorFileTests
 {
-    private static readonly string BerlinSector =
-        TestPaths.ExtractedFile("base_map", "map", "europe", "sec-0002-0003.base");
-    private static readonly string BaseMapDir =
-        TestPaths.ExtractedFile("base_map", "map", "europe");
-
     [Fact]
     public void ReadBerlinSector_HeaderAndCounts()
     {
-        if (!File.Exists(BerlinSector)) return;
-        var f = SectorFile.Read(BerlinSector);
+        var f = SectorFile.Read(
+            TestPaths.RequireExtractedFile("base_map", "map", "europe", "sec-0002-0003.base"));
         Assert.Equal(907u, f.CoreMapVersion);
         Assert.Equal("euro2", f.GameId);
         Assert.Equal(3u, f.GameMapVersion);
@@ -46,8 +49,8 @@ public class SectorFileTests
     [Fact]
     public void ReadBerlinSector_KnownNodePosition()
     {
-        if (!File.Exists(BerlinSector)) return;
-        var f = SectorFile.Read(BerlinSector);
+        var f = SectorFile.Read(
+            TestPaths.RequireExtractedFile("base_map", "map", "europe", "sec-0002-0003.base"));
         // 与 TruckLib 对照：uid 27d6a3fc3554000d pos=(-6786.65,35.15,-11983.65)
         var n = f.Nodes.FirstOrDefault(x => x.Uid == 0x27d6a3fc3554000dUL);
         Assert.NotNull(n);
@@ -58,8 +61,8 @@ public class SectorFileTests
     [Fact]
     public void ReadBerlinSector_HasRoadsPrefabsAndCity()
     {
-        if (!File.Exists(BerlinSector)) return;
-        var f = SectorFile.Read(BerlinSector);
+        var f = SectorFile.Read(
+            TestPaths.RequireExtractedFile("base_map", "map", "europe", "sec-0002-0003.base"));
         Assert.True(f.Roads.Count() > 100);
         Assert.True(f.Prefabs.Count() > 30);
         var city = f.Items.OfType<CityItem>().FirstOrDefault();
@@ -71,9 +74,9 @@ public class SectorFileTests
     [Fact]
     public void ReadAllSectors_NoExceptions()
     {
-        if (!Directory.Exists(BaseMapDir)) return;
+        var baseMapDir = TestPaths.RequireExtractedDirectory("base_map", "map", "europe");
         int items = 0, nodes = 0;
-        foreach (var secFile in Directory.GetFiles(BaseMapDir, "*.base"))
+        foreach (var secFile in Directory.GetFiles(baseMapDir, "*.base"))
         {
             var f = SectorFile.Read(secFile);
             items += f.Items.Count;

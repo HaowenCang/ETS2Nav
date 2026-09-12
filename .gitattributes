@@ -1,0 +1,28 @@
+# 行尾规范化契约（P4R Batch 5 §7/§36）。
+#
+# 为什么需要这个文件：仓库此前把行尾交给开发者本机的 core.autocrlf 决定，而
+# core.autocrlf 是**本地配置**，不是可复现的仓库属性——换一台机器、换一个检出工具，
+# 同一个文件就可能拿到不同的行尾。
+#
+# 实测依据（2026-09-12，Windows PowerShell 5.1 → cmd.exe 10.0.26100）：
+# telemetry-plugin/*/build.bat 以 LF-only 写入后无法执行，cmd 把 rem 行的首字符吞掉，
+# 于是 `rem Build ... (requires ...) + SCS ...` 被解析成 `em Build ... (` 并进一步把
+# 后续行吃进未闭合的括号块，报 `'em' is not recognized`；同一批次里不含元字符的简单
+# 批处理（run-p1-tests.bat 等）恰好仍能跑，风险因此长期未被触发。批处理里的
+# `(` `)` `|` `&` 是 cmd 元字符，一旦行被解析错位就会级联。
+#
+# 因此：仓库内一律以 LF 入库（与既有 index 内容一致，不产生重写），但 .bat/.cmd
+# 在检出时强制写回 CRLF，使「批处理文件在磁盘上是 CRLF」成为仓库保证的性质，
+# 而不是某台机器恰好配对了 core.autocrlf。
+
+* text=auto
+
+# Windows 批处理：cmd.exe 要求 CRLF，LF-only 会引发上述误解析。
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# 二进制资源：禁止任何行尾转换。
+*.dll  binary
+*.ico  binary
+*.zip  binary
+*.png  binary

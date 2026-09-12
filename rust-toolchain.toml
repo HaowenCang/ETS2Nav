@@ -1,0 +1,15 @@
+# Rust toolchain 契约（P4R Batch 5 §7）。
+#
+# 版本取自已验证的本机成功环境：rustc 1.96.0 / cargo 1.96.0
+# （stable-x86_64-pc-windows-msvc）。文件放在仓库根，使 nav-core 与 desktop
+# 两个独立 workspace 都解析到同一把工具链——rustup 从当前目录向上查找。
+#
+# 为什么要固定到具体版本而不是 stable：clippy 的新 lint 会随 stable 前进而增加，
+# 而本仓库以 `cargo clippy --all-targets -- -D warnings` 作为硬门。若跟随 stable，
+# 同一次提交在不同日期会得到不同的判定，CI 的 PASS 就不再指向一个确定的输入。
+#
+# 升级是有意动作：改这里的版本号，并在本地重跑 `-Suite Portable` 与受影响套件。
+[toolchain]
+channel = "1.96.0"
+components = ["rustfmt", "clippy"]
+profile = "minimal"

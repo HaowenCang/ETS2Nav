@@ -22,7 +22,11 @@ import { chromium } from "@playwright/test";
 const WEB_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 const REPO_ROOT = resolve(WEB_DIR, "..", "..");
 const NAV_CLI = join(REPO_ROOT, "nav-core", "target", "debug", "nav-core-cli.exe");
-const DATASET = join(REPO_ROOT, "data", "europe-v5");
+// 数据集解析与 tests/harness.mjs 保持同一套契约（ETS2NAV_DATASET > repo 默认值），
+// 避免同一次运行里两个脚本各用一个数据集（P4R Batch 5 §14）。
+const DATASET = process.env.ETS2NAV_DATASET && process.env.ETS2NAV_DATASET.trim()
+  ? resolve(process.env.ETS2NAV_DATASET.trim())
+  : join(REPO_ROOT, "data", "europe-v5");
 const WORK = join(tmpdir(), "ets2nav-repro-loopback");
 
 const A = [-58456, 32832]; // 目的地 A（合法路径设定）

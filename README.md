@@ -31,6 +31,18 @@ ETS2 Files ──▶ Map Compiler (C#/TS，离线低频) ──▶ map.db / rout
 
 判定逻辑集中在一处：`scripts/regression.ps1`。四个 `run-p*-tests.bat` 是它的薄包装（只做编码前置检查、转发参数、原样传播退出码）；P2 链内含 P1，P3 链内含 P2。
 
+**云端门与本地完整门是两件事。** P1/P2/P3 需要正版 ETS2 游戏资源，而游戏资源不得下载、不得以伪造的 `ETS2_INSTALL` 顶替、也不得以空 fixture 代替，因此它们只属于本地与发布的完整门。GitHub Actions 执行的是可诚实复现的那一部分：
+
+| 门 | 需要游戏资源 | 需要数据集 | 云端 |
+| --- | --- | --- | --- |
+| `-Suite Portable` | 否 | 否 | 是 |
+| `-Suite CLI` | 否 | 是 | 是 |
+| `-Suite P5` | 否 | 是 | 是 |
+| `-Suite P1` / `P2` / `P3` | 是 | P2/P3 是 | 否 |
+| `-Suite SelfTest` | 否 | 否 | 是 |
+
+`Portable` 覆盖 cargo fmt/clippy/test、map-compiler 的 portable dotnet 测试（显式排除 `GameAssetsRequired` 分类并断言执行数）、前端 clean build 两轮哈希比对与 `build-manifest.json` 校验、Desktop 编译门（必须在 `dist/` 生成之后）以及 harness 自检。CI 定义见 `.github/workflows/ci.yml`。
+
 ```bat
 :: 游戏安装目录必须显式提供：回归入口不猜测本机位置
 set ETS2_INSTALL=<ETS2 游戏根目录>
@@ -46,6 +58,9 @@ run-p5-tests.bat        :: P5：OD 回归 + OD 检查（基准缺失即 PRECONDI
 
 :: 等价的规范入口（与 run-p*.bat 同一实现）
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\regression.ps1 -Suite All
+:: 云端可执行门（不需要游戏资源）
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\regression.ps1 -Suite Portable
+powershell -NoProfile -ExecutionPolicy Bypass -File scripts\regression.ps1 -Suite P5,CLI -Dataset <数据集目录>
 :: 基准更新是独立的维护动作（不是测试）；覆盖已有基准需额外 -Force
 powershell -NoProfile -ExecutionPolicy Bypass -File scripts\regression.ps1 -Suite P5 -UpdateBaseline -Force
 :: harness 假绿自检（H1–H6）
@@ -53,10 +68,17 @@ powershell -NoProfile -ExecutionPolicy Bypass -File scripts\regression.ps1 -Suit
 
 :: 退出码：0=PASS 1=TEST FAILURE 3=PRECONDITION FAILURE（外部输入缺失）4=HARNESS FAILURE
 :: 外部输入可改用参数传入：-Ets2Install / -Ets2Extracted / -Dataset / -OdBaseline
+:: CI 永不使用 -UpdateBaseline；基准不一致一律 FAIL 交人审查。
 
 cd nav-core && cargo fmt --check && cargo clippy --all-targets -- -D warnings && cargo test
+:: portable 子集（排除需要游戏资源的 GameAssetsRequired 分类）：
+dotnet test map-compiler/MapCompiler.sln --filter "Category!=GameAssetsRequired"
+:: 完整门（需 ETS2_INSTALL + ETS2NAV_EXTRACTED，缺失即 FAIL 而不是静默通过）：
 dotnet test map-compiler/MapCompiler.sln
 ```
+
+工具链契约固定在仓库内，不依赖"runner 今天预装了什么"：`rust-toolchain.toml`（Rust 1.96.0 + rustfmt/clippy）、`global.json`（.NET SDK 9.0.x）、`.nvmrc`（Node 24.13.0）。行尾契约见 `.gitattributes`：文本一律 LF 入库，`.bat`/`.cmd` 检出为 CRLF（cmd.exe 对 LF-only 批处理的解析不可靠）。
+
 
 ### Web UI（正式前端）
 

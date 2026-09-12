@@ -18,7 +18,22 @@ import { fileURLToPath } from "node:url";
 export const WEB_DIR = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 export const REPO_ROOT = resolve(WEB_DIR, "..", "..");
 export const NAV_CLI = join(REPO_ROOT, "nav-core", "target", "debug", "nav-core-cli.exe");
-export const DATASET = join(REPO_ROOT, "data", "europe-v5");
+
+/**
+ * 导航数据集根目录。
+ *
+ * 优先级与仓库其余部分保持同一套契约（P4R Batch 4 建立，Batch 5 §14 接入本文件）：
+ *   环境变量 ETS2NAV_DATASET  >  repo 相对默认值 data/europe-v5
+ *
+ * 之所以必须读环境变量：CI 在 checkout 之外准备数据集（166 MB 归档解压 356 MB，
+ * 写进工作区既慢又会污染"干净检出"的判定），再把绝对路径经 ETS2NAV_DATASET 传入。
+ * 若此处另立一套优先级（例如再加一个 ETS2NAV_DATA_DIR），同一次运行就可能出现
+ * "PowerShell harness 用一个数据集、浏览器 E2E 用另一个"的静默分歧。
+ */
+export const DATASET = process.env.ETS2NAV_DATASET && process.env.ETS2NAV_DATASET.trim()
+  ? resolve(process.env.ETS2NAV_DATASET.trim())
+  : join(REPO_ROOT, "data", "europe-v5");
+
 const FIXTURE_PROJ = join(
   REPO_ROOT, "map-compiler", "tools", "PmtilesFixture", "PmtilesFixture.csproj");
 
