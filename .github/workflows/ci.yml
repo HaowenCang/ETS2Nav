@@ -113,8 +113,6 @@ jobs:
     name: Dataset Gates
     runs-on: windows-latest
     timeout-minutes: 45
-    env:
-      ETS2NAV_DATASET: ${{ runner.temp }}\ets2nav-dataset\europe-v5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
@@ -123,23 +121,35 @@ jobs:
         shell: powershell
         run: scripts\ci\verify-clean-checkout.ps1
 
+      # 数据集路径在步骤内解析并写入 GITHUB_ENV，供后续所有步骤继承。
+      # 不能写在 job 级 env：可用上下文不含 runner（只有 github/inputs/matrix/
+      # needs/secrets/strategy/vars），实测该写法会让整个 workflow 文件被判为无效，
+      # 运行以 0 个 job 失败。
+      - name: Resolve dataset path
+        shell: powershell
+        run: |
+          $p = Join-Path $env:RUNNER_TEMP 'ets2nav-dataset\europe-v5'
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "ETS2NAV_DATASET=$p`n", (New-Object Text.UTF8Encoding($false)))
+          Write-Host "ETS2NAV_DATASET=$p"
+          exit 0
+
       - name: Prepare dataset (exact release asset + SHA-256 verification)
         shell: powershell
         run: |
-          scripts\ci\prepare-dataset.ps1 -Dest "${{ runner.temp }}\ets2nav-dataset\europe-v5"
+          scripts\ci\prepare-dataset.ps1 -Dest "$env:ETS2NAV_DATASET"
           exit $LASTEXITCODE
 
       - name: P5 canonical regression (od-corpus gate + baseline diff)
         shell: powershell
         run: |
           # 基准永不自动更新：CI 只做比对，baseline mismatch 一律 FAIL 交人审查。
-          scripts\regression.ps1 -Suite P5 -Dataset "${{ runner.temp }}\ets2nav-dataset\europe-v5" -LogDir "${{ runner.temp }}\harness-logs"
+          scripts\regression.ps1 -Suite P5 -Dataset "$env:ETS2NAV_DATASET" -LogDir "$env:RUNNER_TEMP\harness-logs"
           exit $LASTEXITCODE
 
       - name: Dataset-backed CLI machine contracts
         shell: powershell
         run: |
-          scripts\regression.ps1 -Suite CLI -Dataset "${{ runner.temp }}\ets2nav-dataset\europe-v5" -LogDir "${{ runner.temp }}\harness-logs"
+          scripts\regression.ps1 -Suite CLI -Dataset "$env:ETS2NAV_DATASET" -LogDir "$env:RUNNER_TEMP\harness-logs"
           exit $LASTEXITCODE
 
       - name: Upload harness logs on failure
@@ -157,8 +167,6 @@ jobs:
     name: Web E2E
     runs-on: windows-latest
     timeout-minutes: 75
-    env:
-      ETS2NAV_DATASET: ${{ runner.temp }}\ets2nav-dataset\europe-v5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
@@ -177,10 +185,18 @@ jobs:
         with:
           dotnet-version: 9.0.x
 
+      - name: Resolve dataset path
+        shell: powershell
+        run: |
+          $p = Join-Path $env:RUNNER_TEMP 'ets2nav-dataset\europe-v5'
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "ETS2NAV_DATASET=$p`n", (New-Object Text.UTF8Encoding($false)))
+          Write-Host "ETS2NAV_DATASET=$p"
+          exit 0
+
       - name: Prepare dataset
         shell: powershell
         run: |
-          scripts\ci\prepare-dataset.ps1 -Dest "${{ runner.temp }}\ets2nav-dataset\europe-v5"
+          scripts\ci\prepare-dataset.ps1 -Dest "$env:ETS2NAV_DATASET"
           exit $LASTEXITCODE
 
       - name: Build nav-core-cli (debug; the E2E harness drives this binary)
@@ -249,8 +265,6 @@ jobs:
     name: Security
     runs-on: windows-latest
     timeout-minutes: 60
-    env:
-      ETS2NAV_DATASET: ${{ runner.temp }}\ets2nav-dataset\europe-v5
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7
@@ -269,10 +283,18 @@ jobs:
         with:
           python-version: '3.13'
 
+      - name: Resolve dataset path
+        shell: powershell
+        run: |
+          $p = Join-Path $env:RUNNER_TEMP 'ets2nav-dataset\europe-v5'
+          [IO.File]::AppendAllText($env:GITHUB_ENV, "ETS2NAV_DATASET=$p`n", (New-Object Text.UTF8Encoding($false)))
+          Write-Host "ETS2NAV_DATASET=$p"
+          exit 0
+
       - name: Prepare dataset
         shell: powershell
         run: |
-          scripts\ci\prepare-dataset.ps1 -Dest "${{ runner.temp }}\ets2nav-dataset\europe-v5"
+          scripts\ci\prepare-dataset.ps1 -Dest "$env:ETS2NAV_DATASET"
           exit $LASTEXITCODE
 
       - name: Build nav-core-cli (debug; the server harness drives this binary)
