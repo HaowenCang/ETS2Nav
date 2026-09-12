@@ -46,9 +46,35 @@ test("E2E-09 拖拽暂停跟随、暂停期不恢复、到期后自动恢复", a
   expect(paused.hintHidden, "暂停后必须显示提示条").toBe(false);
   expect(paused.pausedAt).toBeGreaterThan(0);
 
-  // 暂停期判定：暂停起点是刚才，未达 8 s，车辆在行驶也不得恢复
+  // 暂停期判定：暂停起点是刚才，未达 8 s，车辆在行驶也不得恢复。
+  //
+  // P4R Batch 5.5：这里原先隐式假设"前面几步花掉的时间很短"。`followPausedAt` 是在
+  // `dragstart` 时写入的，而此后还要派发 8 步 mousemove、mouseup、一次 expect.poll 与
+  // 两次 evaluate；负载高时这些累计可以超过 `FOLLOW_RESUME_MS`（8000 ms），于是生产
+  // 代码的自动恢复分支**合法**触发，本断言把它读成"未到时间就恢复了"。
+  // hosted runner 上实测到过一次：该运行的 Web E2E 步骤耗时 448 s（同批典型约 280 s），
+  // 同一套件 7.4m（典型 4.6m）。
+  //
+  // 修法是把"未到时间"变成由测试确定的量：显式把暂停起点重置为当下（与下面折叠等待
+  // 用的是同一手法），并在同一次求值里同时取回 `following` 与已过时间，使断言能与
+  // "机器太慢以致本判据无意义"区分开。生产阈值与恢复条件均未改动。
+  //
+  // 计时基准必须是**测试自己记下的时刻**，不能读 `followPausedAt`：生产代码的
+  // `resumeFollow()` 会把它清成 0，于是"产品提前恢复"会被算成
+  // `Date.now() - 0`（一个天文数字）而被误判为环境问题——本用例的 mutation 验证
+  // （把阈值改成 500 ms）第一次就命中了这个误判，故此处以 armedAt 为准。
+  const armedAt = await page.evaluate(() => {
+    followPausedAt = Date.now();
+    return followPausedAt;
+  });
   await page.waitForTimeout(1200);
-  expect((await followState(page)).following, "未到恢复时间不得自动恢复").toBe(false);
+  const mid = await page.evaluate((t0) => ({ following, elapsed: Date.now() - t0 }), armedAt);
+  expect(
+    mid.elapsed,
+    `暂停起点被重置后已过 ${mid.elapsed} ms；若该值接近或超过 4000 ms，说明本机慢到使`
+    + `本判据不再有区分力，应作为环境问题报告而不是产品提前恢复`,
+  ).toBeLessThan(4000);
+  expect(mid.following, "未到恢复时间不得自动恢复").toBe(false);
 
   // 折叠墙钟等待：把暂停起点前移 9 s，随后由生产代码在下一帧真实数据上自行恢复
   await page.evaluate(() => { followPausedAt = Date.now() - 9000; });
