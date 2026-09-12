@@ -333,6 +333,46 @@ jobs:
           npm run test:browser-loopback
           exit $LASTEXITCODE
 
+      - name: Provide a non-private local address so the S9 peer class is real
+        shell: powershell
+        run: |
+          # S9「不受允许来源在连接层被拒绝」要求服务端 peer_addr() 看到**非 RFC1918**
+          # 地址。hosted runner 默认只有私网地址（实测 10.1.0.125），该分支因此报
+          # NOT VERIFIED 并使 test:security 以非零退出。
+          #
+          # 这里给活动网卡加一个 RFC 5737 文档用地址（203.0.113.0/24，永不路由）：
+          # 从该地址连到本机服务时，内核选用的源地址就是它，服务端看到的**确实是**
+          # 非私网地址——与 PrivateLan 用的是同一机制，不是伪造 peer，也没有 monkey
+          # patch classify_peer。加完立刻用 Node 复验它确实以「非 internal」形态出现，
+          # 否则以 CI ENVIRONMENT FAILURE 退出，绝不静默降级为"跳过"。
+          #
+          # 该地址不会污染服务端的局域网候选集：discover_lan_candidates() 只收
+          # PeerClass::PrivateLan 的地址（security.rs:510），故 LAN_IP 与二维码逻辑
+          # 不受影响。
+          $addr = '203.0.113.10'
+          $cfg = Get-NetIPConfiguration |
+            Where-Object { $_.IPv4DefaultGateway -and $_.NetAdapter.Status -eq 'Up' } |
+            Select-Object -First 1
+          if (-not $cfg) {
+            Write-Host 'CI ENVIRONMENT FAILURE: no active adapter with a default gateway'
+            exit 4
+          }
+          Write-Host "adapter: $($cfg.InterfaceAlias) ($($cfg.InterfaceDescription))"
+          netsh interface ipv4 add address "$($cfg.InterfaceAlias)" $addr 255.255.255.0 | Out-Null
+          if ($LASTEXITCODE -ne 0) {
+            Write-Host "CI ENVIRONMENT FAILURE: netsh add address exited $LASTEXITCODE"
+            exit 4
+          }
+          $js = "const os=require('os');const o=[];for(const l of Object.values(os.networkInterfaces()))for(const n of l||[]){if(n.family==='IPv4'&&!n.internal)o.push(n.address)}console.log(o.join(','))"
+          $seen = ((& node -e $js) -join '').Trim()
+          Write-Host "node sees non-internal IPv4: $seen"
+          if ($seen -notmatch [regex]::Escape($addr)) {
+            Write-Host "CI ENVIRONMENT FAILURE: $addr was added but Node does not report it as a non-internal IPv4 address"
+            exit 4
+          }
+          Write-Host "OK: $addr is a real, non-internal, non-RFC1918 local address"
+          exit 0
+
       - name: LAN security matrix (unmodified)
         working-directory: tools/ets2nav-web
         shell: powershell
