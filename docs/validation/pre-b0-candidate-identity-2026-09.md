@@ -345,9 +345,11 @@ Pre-B0 candidate gate             = PASS
 ```text
 分支        pre-b0-candidate-identity-fix
 PR          #8  https://github.com/HaowenCang/ETS2Nav/pull/8
-修订提交    d348db1e7bc008fc7df9651363adc811275516ad（首次推送；本段所述 CI 即针对该 head 之上的提交）
+实质修订    d348db1e7bc008fc7df9651363adc811275516ad
 运行        https://github.com/HaowenCang/ETS2Nav/actions/runs/34760013796
 ```
+
+下表是该运行的结果，针对**实质修订** `d348db1e`（即上表、代码与 runbook 的实际改动）：
 
 | required check | 结论 | 时长 |
 | --- | --- | --- |
@@ -360,6 +362,12 @@ PR          #8  https://github.com/HaowenCang/ETS2Nav/pull/8
 GitHub PR merge，未使用 admin bypass、未临时关闭保护、未 force push。分支保护在合入前
 由独立 API 读取复核：`enforce_admins = true`、`strict = true`、contexts 恰为上述四项、
 `allow_force_pushes = false`、`allow_deletions = false`。
+
+**为何只引用一次运行编号。** 本报告自身的每一次回填都是一个新提交，而 `strict = true`
+要求该 head 上重新跑完四项检查——逐次把运行编号写回报告会产生新的提交，从而需要新的运行。
+因此这里的规则是：引用**实质修订**的那次运行作为内容有效性的证据，并声明其后每个 docs-only
+提交都由同一组 required checks 在同一 PR 上重新验证，运行编号见 PR #8 的 checks 页；
+**合入前的最后一次运行**即该 head 的有效证据。这不是省略验证，而是拒绝递归。
 
 **关于「current docs HEAD」这一字段的取值方式。** 本报告在合入前无法知道合入提交的哈希，
 而钉住一个写入时即会过期的值正是本轮要修的缺陷类型（§5.1）。因此该字段按可核对的形式记录：
