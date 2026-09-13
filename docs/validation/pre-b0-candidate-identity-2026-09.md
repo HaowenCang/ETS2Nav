@@ -319,7 +319,7 @@ Runbook stale identity            = FIXED
 Runbook control-character hygiene = PASS   （CONTROL_CHARS = 0）
 Workspace binary ambiguity        = CLOSED
 Candidate source unchanged        = PASS
-Required CI                       = PASS
+Required CI                       = PASS   （run 34760013796，四项 success，无 retry）
 Pre-B0 candidate gate             = PASS
 ```
 
@@ -339,18 +339,43 @@ Pre-B0 candidate gate             = PASS
 
 ## §11 远端 required CI 与合入
 
-本文件的初版先于 CI 观察写成，因此下面这一段在首次推送后按实际观察填入；填写本身也是一次
-提交，仍走同一 PR、同一组 required checks。
+本文件的初版先于 CI 观察写成，因此这一段在首次推送后按实际观察填入；填入本身也是一次提交，
+走同一个 PR、同一组 required checks，未使用任何绕过手段。
 
 ```text
 分支        pre-b0-candidate-identity-fix
-PR          （首次推送后填入）
-required checks  Source Gates / Dataset Gates / Web E2E / Security Portable —— （首次运行后填入）
-合入方式    GitHub PR merge（不使用 admin bypass、不临时关闭保护、不 force push）
-合入后 HEAD （合入后填入）
+PR          #8  https://github.com/HaowenCang/ETS2Nav/pull/8
+修订提交    d348db1e7bc008fc7df9651363adc811275516ad（首次推送；本段所述 CI 即针对该 head 之上的提交）
+运行        https://github.com/HaowenCang/ETS2Nav/actions/runs/34760013796
 ```
+
+| required check | 结论 | 时长 |
+| --- | --- | --- |
+| `Source Gates` | success | 6m19s |
+| `Dataset Gates` | success | 2m35s |
+| `Web E2E` | success | 7m21s |
+| `Security Portable` | success | 18m19s |
+
+四项 success，**无 retry、未新增 `continue-on-error`、未放宽任何既有检查**；合入经正常
+GitHub PR merge，未使用 admin bypass、未临时关闭保护、未 force push。分支保护在合入前
+由独立 API 读取复核：`enforce_admins = true`、`strict = true`、contexts 恰为上述四项、
+`allow_force_pushes = false`、`allow_deletions = false`。
+
+**关于「current docs HEAD」这一字段的取值方式。** 本报告在合入前无法知道合入提交的哈希，
+而钉住一个写入时即会过期的值正是本轮要修的缺陷类型（§5.1）。因此该字段按可核对的形式记录：
+
+```text
+当前文档 HEAD = main 上的最新提交，取值方式：
+                 git -C <repo> log -1 --format=%H main
+写入时的观察值 = d1df485225a143c699986e980ea1795637f9afa8（本轮修订之前）
+```
+
+`b-session-runbook-2026-08.md` §0.1 用同样的方式表达该字段（`d1df485…` 或本次 docs-only
+修订合入后的更新 HEAD）。**产品身份不依赖这个值**：B1–B6 绑定的是
+Artifact source commit `c7e0c522…` 与 artifact SHA `20a3307b…f3b`。
 
 合入后复核 `git diff --name-only c7e0c5227cdc3d378c188eff5ee19c90f22c98a3..<new main HEAD>`：
 输出必须全部落在 `docs/` 与 `scripts/verify-b-candidate.ps1`，出现
 `nav-core/`、`desktop/`、`telemetry-plugin/`、`tools/ets2nav-web/`、`data/` 之下的任何路径
 即表示候选已被另一个代码代数取代，届时 `Candidate source unchanged` 必须改判 `INVALIDATED`。
+该复核的结果记录在下节。
