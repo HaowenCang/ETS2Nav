@@ -1,4 +1,4 @@
-# ETS2Nav — Euro Truck Simulator 2 外部智能导航系统
+﻿# ETS2Nav — Euro Truck Simulator 2 外部智能导航系统
 
 独立于游戏原生 Route Advisor 的外部智能导航系统：自行解析 ETS2 地图资源建立导航数据库，提供独立路径规划、实时地图匹配、转向导航、红绿灯倒计时（±1 s 目标）、限速与测速提示、POI 搜索、中文语音导航，PC 核心 + PC/移动端双前端。
 
@@ -124,7 +124,7 @@ npm run build          :: 生成 dist\（vendor 库 + 页面 + build-manifest.js
 ```
 
 产物为 `tools/ets2nav-web/dist/`，即 nav-server 的默认 web root（可用 `--web=` 覆盖），也是桌面 bundle 的 `web/` 来源。
-`maplibre-gl` 精确钉在 `6.4.1`（修复 critical advisory GHSA-jrc7-96c5-q579 / CVE-2026-85061，影响 `<= 6.4.0`）。MapLibre 6 只发布 ESM，且打包后库无法自行定位 worker，因此构建额外产出 `vendor/maplibre-gl-worker.js`，由 `app.js` 以 `setWorkerUrl` 显式指向；该文件缺失时地图不会进入 loaded 状态，故它属必需产物。`tools/graph-debugger` 是独立的开发工具，**未**随之升级（其自引用仍固定在受影响范围内的 unpkg 4.7.1，且该工具当前无法运行）——它是既有遗留项，不属于发布运行时。
+`maplibre-gl` 精确钉在 `6.4.1`（修复 critical advisory GHSA-jrc7-96c5-q579 / CVE-2026-85061，影响 `<= 6.4.0`）。MapLibre 6 只发布 ESM，且打包后库无法自行定位 worker，因此构建额外产出 `vendor/maplibre-gl-worker.js`，由 `app.js` 以 `setWorkerUrl` 显式指向；该文件缺失时地图不会进入 loaded 状态，故它属必需产物。`tools/graph-debugger` 是独立的开发工具，**不进入任何 release artifact**。P4R Batch 6B 已把它从 unpkg 的 `maplibre-gl@4.7.1`（落在同一 advisory 的受影响区间内）改为引用本地构建产物，并修复了它自身的语法错误与并不存在的 `{type:'pmtiles'}` source；运行期公共 CDN 引用已完全移除，由真实 Chromium 冒烟门 `npm run verify:graph-debugger` 断言「零非回环请求」。
 
 `map.pmtiles` 与 `fonts/` 属运行期可选资源：缺失时前端降级（无底图 / 跳过 city 文字层），并在 console 输出 INFO/WARN，不静默失败。**它们当前尚未随发布包分发**，因此不得把本产品描述为"完整离线地图"；发布契约见 `docs/validation/p4r-batch6a-2026-09.md` §10（组装脚本已支持 `-MapPmtiles` / `-FontsDir`，并把有无如实记入 `bundle-manifest.json`）。
 依赖版本、来源与产物 SHA-256 记录于 `dist/build-manifest.json`；打包产物的整体身份记录于 bundle 的 `bundle-manifest.json`（桌面壳与 sidecar 的 SHA-256、前端与数据集的树摘要、数据集自身的 content fingerprint）。

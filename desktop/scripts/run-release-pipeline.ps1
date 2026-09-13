@@ -73,13 +73,21 @@ if (-not $RepoRoot) { $RepoRoot = Split-Path -Parent (Split-Path -Parent $PSScri
 if (-not $WorkDir) { $WorkDir = Join-Path $env:TEMP 'ets2nav-rc-pipeline' }
 if (-not $WebRoot) { $WebRoot = Join-Path $RepoRoot 'tools/ets2nav-web/dist' }
 if (-not $AssembleScript) { $AssembleScript = Join-Path $RepoRoot 'desktop/scripts/assemble-bundle.ps1' }
-if (-not $ReleaseNotesPath) { $ReleaseNotesPath = Join-Path $built['A'].Dir 'release-notes-rc.md' }
 $scriptsDir = Join-Path $RepoRoot 'desktop/scripts'
 $testsDir = Join-Path $RepoRoot 'desktop/tests'
 
 . (Join-Path $scriptsDir 'BundleCommon.ps1')
 
 $hostExe = [System.Diagnostics.Process]::GetCurrentProcess().MainModule.FileName
+# 报告与发布说明是**流水线输出**，默认写在发布目录（与 ZIP 同级），不写进仓库：写进仓库
+# 会让打包过程用自己的产物把工作树弄脏，使 dirty=false 永远不可达。
+# 必须在 $built['A'] 被填充**之后**才能解析默认值——$built 由 A/B 循环创建。
+function Resolve-ReportPath {
+    param([string]$Spec, [string]$Default)
+    if (-not $Spec) { return $Default }
+    if ([IO.Path]::IsPathRooted($Spec)) { return $Spec }
+    return (Join-Path $RepoRoot ($Spec -replace '/', '\'))
+}
 $script:Stages = New-Object System.Collections.ArrayList
 $pipelineSw = [System.Diagnostics.Stopwatch]::StartNew()
 $inputDrift = @()
@@ -358,6 +366,12 @@ try {
         }
     }
 
+    # $built 现已填充：在此解析两个输出路径的默认值（此处是它们的最早可用点）。
+    if (-not $ReleaseNotesPath) { $ReleaseNotesPath = Join-Path $built['A'].Dir 'release-notes-rc.md' }
+    if (-not $reportPath) { $reportPath = Join-Path $built['A'].Dir 'release-validation-report.md' }
+    # 清单里记录的是**相对指针**（与 ZIP 同级），不是任何机器的绝对路径。
+    $validationPointer = if ($ValidationReport) { $ValidationReport } else { 'release-validation-report.md' }
+
     if ($null -eq $built['A'].Zip -or $null -eq $built['B'].Zip) {
         Write-Host ''
         Write-Host 'PIPELINE: FAIL（至少一份产物未生成，A/B 比较无法进行）'
@@ -380,7 +394,7 @@ try {
     $null = Invoke-Step -Name 'A/write-release-manifest' -FilePath $hostExe `
         -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $scriptsDir 'write-release-manifest.ps1'),
                      '-ZipPath', $built['A'].ZipPath, '-ExtractDir', $built['A'].ExtractRoot,
-                     '-OutDir', $built['A'].Dir, '-ValidationReport', $reportPath,
+                     '-OutDir', $built['A'].Dir, '-ValidationReport', $validationPointer,
                      '-ReleaseNotesPath', $ReleaseNotesPath, '-SourceDateEpoch', "$SourceDateEpoch")
     $releaseManifestPath = Join-Path $built['A'].Dir 'release-manifest.json'
     $null = Invoke-Step -Name 'A/release-artifact.mjs' -FilePath 'node' `
@@ -445,14 +459,7 @@ try {
     $failedStages = @($script:Stages | Where-Object { $_.Code -ne 0 })
 
     # ── 验证报告 ─────────────────────────────────────────────────────────────
-# 报告是**流水线输出**，默认写在发布目录里（与 ZIP 同级），不写进仓库：
-# 写进仓库会让「干净树」在打包过程中被自己的产物破坏，从而令 dirty=false 永远不可达。
-function Resolve-ReportPath {
-    param([string]$Spec, [string]$Default)
-    if (-not $Spec) { return $Default }
-    if ([IO.Path]::IsPathRooted($Spec)) { return $Spec }
-    return (Join-Path $RepoRoot ($Spec -replace '/', '\'))
-}
+
     $reportDir = Split-Path -Parent $reportPath
     if (-not (Test-Path -LiteralPath $reportDir)) { $null = New-Item -ItemType Directory -Path $reportDir -Force }
     $sb = New-Object System.Text.StringBuilder
@@ -536,12 +543,12 @@ function Resolve-ReportPath {
     $null = Invoke-Step -Name 'final/write-release-manifest' -FilePath $hostExe `
         -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $scriptsDir 'write-release-manifest.ps1'),
                      '-ZipPath', $built['A'].ZipPath, '-ExtractDir', $built['A'].ExtractRoot,
-                     '-OutDir', $built['A'].Dir, '-ValidationReport', $reportPath,
+                     '-OutDir', $built['A'].Dir, '-ValidationReport', $validationPointer,
                      '-ReleaseNotesPath', $ReleaseNotesPath, '-SourceDateEpoch', "$SourceDateEpoch")
     $null = Invoke-Step -Name 'final/release-manifest-check' -FilePath $hostExe `
         -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', (Join-Path $scriptsDir 'write-release-manifest.ps1'),
                      '-ZipPath', $built['A'].ZipPath, '-ExtractDir', $built['A'].ExtractRoot,
-                     '-OutDir', $built['A'].Dir, '-ValidationReport', $reportPath,
+                     '-OutDir', $built['A'].Dir, '-ValidationReport', $validationPointer,
                      '-Check', '-SourceDateEpoch', "$SourceDateEpoch")
 
     $failedStages = @($script:Stages | Where-Object { $_.Code -ne 0 })

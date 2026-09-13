@@ -1,4 +1,4 @@
-# P4R Batch 6B —— City Glyph Coverage Inventory（2026-09-13）
+﻿# P4R Batch 6B —— City Glyph Coverage Inventory（2026-09-13）
 
 本轮解决的问题是一个**判据层级错误**：RC 不得以「存在 `0-255.pbf`」推得「city 标签完整」。存在性只证明某一块字形分片被放置过，既不证明该分片来自预期字体，也不证明它覆盖了 city 图层实际要渲染的字符集。
 
@@ -56,7 +56,7 @@ const TILE_FONT_STACK = "Open Sans Regular";
 | --- | --- | --- |
 | `tools/ets2nav-web/app.js:161` | 常量 `TILE_FONT_STACK` | 正式前端，唯一权威来源 |
 | `tools/ets2nav-web/tests/e2e/02-map.spec.mjs:78` | 字面量 `vendor/fonts/Open%20Sans%20Regular/0-255.pbf` | E2E 断言，硬编码同一取值（独立佐证目录名含空格） |
-| `tools/graph-debugger/index.html:54` | 字面量 `'Open Sans Regular'` | 调试工具，另起一套：其 `glyphs` 指向 `https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf`（同文件 `:36`），**不遵守** §1 所述的离线同源约束 |
+| `tools/graph-debugger/index.html` | 字面量 `'Open Sans Regular'` | 调试工具，另起一套。**该行记录的是修复前的状态**：当时其 `glyphs` 指向 `https://demotiles.maplibre.org/...`，不遵守 §1 所述的离线同源约束。P4R Batch 6B 已把它改为同源 `vendor/fonts`（缺失即跳过 city 文字层），同批移除了全部运行期 CDN 引用 |
 
 `tools/graph-debugger/**` 属本轮禁止修改范围，此处仅登记差异，不作为本轮结论的一部分。
 

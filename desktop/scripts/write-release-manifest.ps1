@@ -450,7 +450,18 @@ if ($Check) {
     foreach ($d in $diffs) { [void]$script:Failures.Add($d); Write-Host "  [FAIL] $d" }
     if ($diffs.Count -eq 0) { Write-Host '  [PASS] 已提交清单与产物重算结果逐键一致' }
 
-    $reportPath = if (-not $ValidationReport) { Join-Path $OutDir 'release-validation-report.md' } elseif ([IO.Path]::IsPathRooted($ValidationReport)) { $ValidationReport } else { Join-Path $RepoRoot ($ValidationReport -replace '/', '\') }
+    # 指针允许三种形态：空（默认名，写在本目录）、绝对路径、或**相对指针**。
+    # 相对指针优先在本目录（与 ZIP 同级）解析——报告是流水线输出，不是仓库文件；
+    # 这样清单里记录的是「artifact 旁边的那个文件」，而不是任何机器的绝对路径。
+    $reportPath = if (-not $ValidationReport) {
+        Join-Path $OutDir 'release-validation-report.md'
+    } elseif ([IO.Path]::IsPathRooted($ValidationReport)) {
+        $ValidationReport
+    } else {
+        $candidate = Join-Path $OutDir ($ValidationReport -replace '/', '\')
+        if (Test-Path -LiteralPath $candidate -PathType Leaf) { $candidate }
+        else { Join-Path $RepoRoot ($ValidationReport -replace '/', '\') }
+    }
     Check 'validation_report 指向的报告存在' (Test-Path -LiteralPath $reportPath -PathType Leaf) $ValidationReport
 
     Write-Host ''
@@ -531,7 +542,7 @@ $notes = @"
 ## 验证入口
 
 外层清单：``release-manifest.json``；校验和：``SHA256SUMS.txt``；
-验证报告：``$ValidationReport``（仓库相对路径）。
+验证报告：``$ValidationReport``（与 ZIP 同级）。
 "@
 if ($notes -match '(?i)\b(stable|production-ready|latest)\b') {
     Write-Host 'RELEASE NOTES: FAIL（草稿含被禁用的措辞：stable / production-ready / latest）'
