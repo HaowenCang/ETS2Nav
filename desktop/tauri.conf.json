@@ -3,18 +3,9 @@
   "productName": "ETS2Nav",
   "version": "0.1.0",
   "identifier": "dev.ets2nav.desktop",
-  "build": {
-    "frontendDist": "../tools/ets2nav-web/dist"
-  },
+  "build": {},
   "app": {
-    "windows": [
-      {
-        "title": "ETS2Nav",
-        "width": 1280,
-        "height": 800,
-        "resizable": true
-      }
-    ],
+    "windows": [],
     "security": {
       "csp": null
     }

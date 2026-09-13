@@ -633,9 +633,10 @@ def main():
           "dataset_dir" not in mv and "\\" not in body and "/" not in body,
           f"keys={sorted(mv.keys())}")
     check("S7 metadata 只提供非敏感元信息",
-          set(mv.keys()) == {"nodes", "edges", "dataset"}
+          set(mv.keys()) == {"nodes", "edges", "dataset", "ws_clients"}
           and isinstance(mv.get("nodes"), int) and isinstance(mv.get("edges"), int)
-          and isinstance(mv.get("dataset"), str) and ":" not in mv.get("dataset", ":"),
+          and isinstance(mv.get("dataset"), str) and ":" not in mv.get("dataset", ":")
+          and isinstance(mv.get("ws_clients"), int) and mv.get("ws_clients") >= 0,
           f"keys={sorted(mv.keys())} dataset={mv.get('dataset')!r}")
     check("S7 metadata 的 dataset 为目录名而非路径",
           mv.get("dataset") == DATASET_DIR_HINT, f"got={mv.get('dataset')!r}")

@@ -10,6 +10,16 @@ tauri-build = { version = "2", features = [] }
 tauri = { version = "2", features = [] }
 serde_json = "1"
 
+# P4R Batch 6A §8：作业对象（KILL_ON_JOB_CLOSE）与进程句柄。
+# 只声明本目标平台，避免在其它平台上引入无用的编译单元。
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_System_JobObjects",
+    "Win32_System_Threading",
+] }
+
 [profile.release]
 panic = "abort"
 codegen-units = 1

@@ -359,6 +359,29 @@ jobs:
           npm run test:browser-loopback
           exit $LASTEXITCODE
 
+      - name: Server fault containment (data-source worker fatal)
+        # P4R Batch 6A §3/§4。门控步骤：主动注入数据源 worker 故障，验证进程不会停在
+        # 「listener 还活着、状态永久冻结」的 zombie 形态（FC-01…FC-06）。
+        # 用 debug 二进制：注入钩子由 cfg(debug_assertions) 门控，release 里不存在。
+        # 「release 不含钩子」由 Dataset Gates 的 CLI 套件以字节扫描断言。
+        shell: powershell
+        run: |
+          scripts\regression.ps1 -Suite FaultContainment -Dataset "$env:ETS2NAV_DATASET" -LogDir "$env:RUNNER_TEMP\harness-logs"
+          exit $LASTEXITCODE
+
+      - name: Desktop bundle and lifecycle
+        # P4R Batch 6A §5-§9/§19。判据不是「编译通过」而是打包产物在运行时成立：
+        # release 二进制 → 组装 bundle（含前端与数据集）→ 独立复核身份 → 用 bundle 内的
+        # Desktop 真实跑生命周期（身份校验、端口协商、可服务、退出回收、无孤儿）。
+        #
+        # 窗口形态（真实 WebView 渲染）不在本步骤内：hosted runner 无交互式桌面，
+        # 该部分在本机以 `node desktop/tests/desktop-lifecycle.mjs --bundle <dir> --windowed`
+        # 验证，报告里明确记录它在哪里被验证。
+        shell: powershell
+        run: |
+          scripts\regression.ps1 -Suite Desktop -Dataset "$env:ETS2NAV_DATASET" -LogDir "$env:RUNNER_TEMP\harness-logs"
+          exit $LASTEXITCODE
+
       - name: LAN security matrix (informational, non-gating)
         # 不设门：完整 S1–S11 在本机可执行（本机有 VPN 隧道地址 198.18.0.1，S9 因此
         # 可真实构造，实测 FAIL=0 NOT_VERIFIED=0 SKIP=0），但 hosted runner 无非

@@ -2,6 +2,7 @@ use std::io::{Read, Write};
 use std::net::{TcpListener, TcpStream};
 use std::sync::Arc;
 
+use crate::fault;
 use crate::security::{
     self, request_path, AuthOutcome, ExposureMode, LanCandidate, PeerClass, ServerAuthorities,
     SessionToken,
@@ -136,6 +137,11 @@ pub struct ServerCtx {
     /// POI 表（/api/search 用；启动时从 search.db 加载——内存过滤）。
     pub pois: Vec<nav_dataset::PoiRecord>,
     pub security: SecurityCtx,
+    /// 数据源 worker 的致命状态（P4R Batch 6A §3）。
+    ///
+    /// 作为**唯一**的「服务已失能」真值来源：置位后 listener 仍在，但一律 503，
+    /// 且进程随后以非零码退出。刻意不另设一个布尔副本——两处状态必然漂移。
+    pub fatal: Arc<fault::FatalBus>,
 }
 
 impl ServerCtx {
@@ -447,6 +453,13 @@ fn handle_http(
             ctx.graph.node_count(),
             ctx.graph.edges.len(),
             &ctx.dataset_dir,
+            // P4R Batch 6A §19：已连接的 WS 客户端数。
+            //
+            // 存在的理由是**可观测性**：桌面形态下 WebView 的页面是由 sidecar 自己
+            // 提供的，因此「界面真的跑起来了」在服务端就等价于「有一个 WS 客户端」。
+            // 没有这个数字，外部检查只能看到「端口在监听」，无法区分「UI 已连接」
+            // 与「端口开着但没人用」。它是非敏感计数，与节点/边数同类。
+            ctx.shared.ws_clients.lock().map(|c| c.len()).unwrap_or(0),
         );
         return http_reply_full(
             stream,
@@ -582,6 +595,8 @@ pub fn server_cli(opts: &ServerOptions) {
     drop(junctions); // 运行时不需要 junction.graph 数据（~54MB，bench 同口径）
 
     let shared = ServerShared::new();
+    // P4R Batch 6A §3：worker 终止的单向传播通道（见 fault.rs 模块文档）。
+    let fatal = fault::FatalBus::new();
 
     // 数据源线程：回放或实时 → session.on_frame → 广播（Arc 跨线程共享只读图）。
     let g2 = graph.clone();
@@ -591,118 +606,186 @@ pub fn server_cli(opts: &ServerOptions) {
     let thread_shared = shared.clone();
     let thread_trace = trace_path.clone();
     let turns_src = turns.clone();
-    std::thread::spawn(move || {
-        // A2a-M4 / P4R Batch 2：`--fake-signal` 由 session 层注入合成灯态剧本，
-        // 使 reminders 与结构化 glosa 都经真实 §36/§37/§38 计算，而非事后改写 JSON。
-        let cfg = nav_router::session::SessionConfig {
-            fake_signal,
-            ..nav_router::session::SessionConfig::default()
-        };
-        // 消费 UI 目的地请求（§60：POST /api/route → 导航启动）——回放/实时共用（A2c-M4）
-        let consume_dest = |session: &mut nav_router::session::NavigationSession| {
-            let pending = *thread_shared.pending_dest.lock().unwrap();
-            if let Some((tx, tz)) = pending {
-                *thread_shared.pending_dest.lock().unwrap() = None;
-                if let Some(snap_pt) =
-                    nav_router::snap::snap_nearest(&thread_graph, &thread_spatial, tx, tz, 300.0)
-                {
-                    let dest = nav_router::destination::Destination {
-                        kind: nav_router::destination::DestKind::Coordinate,
-                        name: "目标".to_string(),
-                        position: (tx, 0.0, tz),
-                        access_snap: snap_pt,
-                    };
-                    if session.set_destination(dest).is_ok() {
-                        eprintln!("[server] 目的地已设置 ({tx:.0},{tz:.0})");
-                        // A2a-M2：map_state 事件（§60）——路线 polyline 一次推送（UI 绘制地图层）
-                        if let Some(route) = session.route() {
-                            let mut polyline: Vec<[f64; 2]> = Vec::new();
-                            for &eid in &route.edges {
-                                let e = &thread_graph.edges[eid as usize];
-                                let pts = thread_graph.edge_geometry(e);
-                                for pt in pts {
-                                    polyline.push([pt.0, pt.2]);
+    // 用 Builder 而非 `thread::spawn`：命名线程使 panic 消息自带 `thread 'nav-source'`
+    // 前缀，且保留 `JoinHandle`——丢弃它正是 zombie-service 的成因（线程死了没有人知道）。
+    let source_worker = std::thread::Builder::new()
+        .name("nav-source".to_string())
+        .spawn(move || {
+            // A2a-M4 / P4R Batch 2：`--fake-signal` 由 session 层注入合成灯态剧本，
+            // 使 reminders 与结构化 glosa 都经真实 §36/§37/§38 计算，而非事后改写 JSON。
+            let cfg = nav_router::session::SessionConfig {
+                fake_signal,
+                ..nav_router::session::SessionConfig::default()
+            };
+            // P4R Batch 6A §4：测试专用故障注入的取值。
+            // 整个 `inject` 模块由 `#[cfg(debug_assertions)]` 门控，故这两行在 release
+            // 构建中一并消失——连环境变量名字面量都不进入 release 二进制。
+            #[cfg(debug_assertions)]
+            let injected = fault::inject::requested();
+            #[cfg(debug_assertions)]
+            let mut frames_broadcast: u64 = 0;
+            // 消费 UI 目的地请求（§60：POST /api/route → 导航启动）——回放/实时共用（A2c-M4）
+            let consume_dest = |session: &mut nav_router::session::NavigationSession| {
+                let pending = *thread_shared.pending_dest.lock().unwrap();
+                if let Some((tx, tz)) = pending {
+                    *thread_shared.pending_dest.lock().unwrap() = None;
+                    if let Some(snap_pt) = nav_router::snap::snap_nearest(
+                        &thread_graph,
+                        &thread_spatial,
+                        tx,
+                        tz,
+                        300.0,
+                    ) {
+                        let dest = nav_router::destination::Destination {
+                            kind: nav_router::destination::DestKind::Coordinate,
+                            name: "目标".to_string(),
+                            position: (tx, 0.0, tz),
+                            access_snap: snap_pt,
+                        };
+                        if session.set_destination(dest).is_ok() {
+                            eprintln!("[server] 目的地已设置 ({tx:.0},{tz:.0})");
+                            // A2a-M2：map_state 事件（§60）——路线 polyline 一次推送（UI 绘制地图层）
+                            if let Some(route) = session.route() {
+                                let mut polyline: Vec<[f64; 2]> = Vec::new();
+                                for &eid in &route.edges {
+                                    let e = &thread_graph.edges[eid as usize];
+                                    let pts = thread_graph.edge_geometry(e);
+                                    for pt in pts {
+                                        polyline.push([pt.0, pt.2]);
+                                    }
                                 }
+                                let ev = serde_json::json!({
+                                    "type": "map_state",
+                                    "distance_m": route.distance_m,
+                                    "polyline": polyline,
+                                    "destination": [tx, tz],
+                                });
+                                let json = ev.to_string();
+                                thread_shared.broadcast(&json); // 仅广播（latest_json 保持 vehicle 语义）
                             }
-                            let ev = serde_json::json!({
-                                "type": "map_state",
-                                "distance_m": route.distance_m,
-                                "polyline": polyline,
-                                "destination": [tx, tz],
-                            });
-                            let json = ev.to_string();
-                            thread_shared.broadcast(&json); // 仅广播（latest_json 保持 vehicle 语义）
                         }
                     }
                 }
-            }
-        };
-        let mut session = nav_router::session::NavigationSession::new(
-            g2.clone(),
-            s2.clone(),
-            turns_src.clone(),
-            cfg.clone(),
-        );
-        if let Some(tp) = thread_trace {
-            let frames: Vec<nav_telemetry::TraceFrame> =
-                nav_telemetry::replay(std::path::Path::new(&tp))
-                    .unwrap_or_else(|e| {
-                        eprintln!("读取 trace 失败: {e}");
-                        std::process::exit(1);
-                    })
-                    .collect();
-            if frames.is_empty() {
-                eprintln!("trace 为空");
-                std::process::exit(1);
-            }
-            // 循环回放（UI 演示/验证用——帧间按 sim time 节流）。
-            // A2c-M3：每轮重建 session（Arrived 分支为 no-op——不重置则首轮到达后永久卡死）。
-            loop {
-                let mut last_sim: Option<u64> = None;
-                for f in frames.iter() {
-                    consume_dest(&mut session);
-                    if let Some(ls) = last_sim {
-                        let dt = f.snap.simulation_time.saturating_sub(ls);
-                        if dt > 0 {
-                            std::thread::sleep(std::time::Duration::from_micros(dt.min(200_000)));
-                        }
-                    }
-                    last_sim = Some(f.snap.simulation_time);
-                    let snap = session.on_frame(&f.snap);
-                    let json = snapshot_json(&snap);
-                    *thread_shared.latest_json.lock().unwrap() = json.clone();
-                    thread_shared.broadcast(&json);
+            };
+            let mut session = nav_router::session::NavigationSession::new(
+                g2.clone(),
+                s2.clone(),
+                turns_src.clone(),
+                cfg.clone(),
+            );
+            if let Some(tp) = thread_trace {
+                let frames: Vec<nav_telemetry::TraceFrame> =
+                    nav_telemetry::replay(std::path::Path::new(&tp))
+                        .unwrap_or_else(|e| {
+                            eprintln!("读取 trace 失败: {e}");
+                            std::process::exit(1);
+                        })
+                        .collect();
+                if frames.is_empty() {
+                    eprintln!("trace 为空");
+                    std::process::exit(1);
                 }
-                // 重建 session（新导航周期）
-                session = nav_router::session::NavigationSession::new(
-                    g2.clone(),
-                    s2.clone(),
-                    turns_src.clone(),
-                    cfg.clone(),
-                );
-                eprintln!("[server] 回放循环重启（session 已重置）");
-            }
-        } else {
-            let mut src = nav_telemetry::TelemetrySource::new(std::time::Duration::from_secs(2));
-            loop {
-                consume_dest(&mut session);
-                match src.poll() {
-                    nav_telemetry::TelemetryState::Fresh(snap) => {
-                        let snap2 = session.on_frame(&snap);
-                        let json = snapshot_json(&snap2);
+                // 循环回放（UI 演示/验证用——帧间按 sim time 节流）。
+                // A2c-M3：每轮重建 session（Arrived 分支为 no-op——不重置则首轮到达后永久卡死）。
+                loop {
+                    let mut last_sim: Option<u64> = None;
+                    for f in frames.iter() {
+                        consume_dest(&mut session);
+                        if let Some(ls) = last_sim {
+                            let dt = f.snap.simulation_time.saturating_sub(ls);
+                            if dt > 0 {
+                                std::thread::sleep(std::time::Duration::from_micros(
+                                    dt.min(200_000),
+                                ));
+                            }
+                        }
+                        last_sim = Some(f.snap.simulation_time);
+                        let snap = session.on_frame(&f.snap);
+                        let json = snapshot_json(&snap);
                         *thread_shared.latest_json.lock().unwrap() = json.clone();
                         thread_shared.broadcast(&json);
+                        #[cfg(debug_assertions)]
+                        if fault::inject::after_frame_broadcast(&mut frames_broadcast, injected) {
+                            return;
+                        }
                     }
-                    nav_telemetry::TelemetryState::Stale => {
-                        std::thread::sleep(std::time::Duration::from_millis(50));
-                    }
-                    nav_telemetry::TelemetryState::Disconnected => {
-                        std::thread::sleep(std::time::Duration::from_millis(200));
+                    // 重建 session（新导航周期）
+                    session = nav_router::session::NavigationSession::new(
+                        g2.clone(),
+                        s2.clone(),
+                        turns_src.clone(),
+                        cfg.clone(),
+                    );
+                    eprintln!("[server] 回放循环重启（session 已重置）");
+                }
+            } else {
+                let mut src =
+                    nav_telemetry::TelemetrySource::new(std::time::Duration::from_secs(2));
+                loop {
+                    consume_dest(&mut session);
+                    match src.poll() {
+                        nav_telemetry::TelemetryState::Fresh(snap) => {
+                            let snap2 = session.on_frame(&snap);
+                            let json = snapshot_json(&snap2);
+                            *thread_shared.latest_json.lock().unwrap() = json.clone();
+                            thread_shared.broadcast(&json);
+                            #[cfg(debug_assertions)]
+                            if fault::inject::after_frame_broadcast(&mut frames_broadcast, injected)
+                            {
+                                return;
+                            }
+                        }
+                        nav_telemetry::TelemetryState::Stale => {
+                            std::thread::sleep(std::time::Duration::from_millis(50));
+                        }
+                        nav_telemetry::TelemetryState::Disconnected => {
+                            std::thread::sleep(std::time::Duration::from_millis(200));
+                        }
                     }
                 }
             }
-        }
-    });
+        })
+        .unwrap_or_else(|e| {
+            eprintln!("[server] 数据源线程创建失败: {e}");
+            std::process::exit(1);
+        });
+
+    // ── 监督线程（P4R Batch 6A §3）────────────────────────────────────────────
+    // `join` 在 worker 结束前阻塞，因此监督线程本身不轮询；worker 一旦终止，
+    // 无论原因是 panic 还是「意外正常返回」，都在这里被观察并上报。
+    {
+        let bus = fatal.clone();
+        // 令牌只在监督线程内用于**抹除**（redact_secret），绝不输出：
+        // 诊断文本的内容在构造上不受本模块控制，因此输出路径做无条件替换，
+        // 使「stderr 不含令牌」成为结构性性质而不是一次审计结论。
+        let secret = token.as_str().to_string();
+        std::thread::Builder::new()
+            .name("nav-supervisor".to_string())
+            .spawn(move || {
+                let report = match source_worker.join() {
+                    Ok(()) => fault::FatalReport {
+                        kind: fault::FatalKind::WorkerExitedUnexpectedly,
+                        detail: "数据源循环在无致命信号的情况下返回".to_string(),
+                    },
+                    Err(payload) => fault::FatalReport {
+                        kind: fault::FatalKind::WorkerPanic,
+                        detail: fault::describe_panic(&*payload),
+                    },
+                };
+                let report = fault::FatalReport {
+                    detail: fault::redact_secret(&report.detail, &secret),
+                    ..report
+                };
+                // 上报即同时完成两件事：所有后续请求一律 503（handle_conn 读同一
+                // 真值来源），以及主线程被唤醒开始退出。顺序上不存在「还在按健康
+                // 语义回答问题」的窗口，因为置位与唤醒是同一次 report。
+                bus.report(report);
+            })
+            .unwrap_or_else(|e| {
+                eprintln!("[server] 监督线程创建失败: {e}");
+                std::process::exit(1);
+            });
+    }
 
     // HTTP listener（accept + 每连接线程；graph 经 gate 锁访问）
     // P4R Batch 3：默认只绑回环；`--lan` 才绑 0.0.0.0，且来源由 classify_peer 限制。
@@ -721,6 +804,7 @@ pub fn server_cli(opts: &ServerOptions) {
         shared,
         pois,
         security: SecurityCtx::new(mode, token, actual_port, candidates),
+        fatal: fatal.clone(),
     });
     let web_root = web_root.to_string();
     // 启动横幅刻意**不含**令牌本体：stdout/stderr 会进入终端回滚、日志与
@@ -738,19 +822,71 @@ pub fn server_cli(opts: &ServerOptions) {
     if lan && candidate_count == 0 {
         eprintln!("[server] 未发现 RFC1918 私网地址——二维码将不可用（服务仍可经回环使用）");
     }
-    for stream in listener.incoming() {
-        let Ok(mut stream) = stream else { continue };
+    // P4R Batch 6A §7：机器可读的端口通道。
+    //
+    // Desktop 以 `--port=0` 启动本进程，由内核分配实际端口，调用方必须能知道它是
+    // 多少——否则「端口被占用」只能表现为「窗口打开了但永远连不上」。
+    //
+    // 走 stdout 而不是 stderr：stderr 是诊断流（中文、人类可读、可能被日志系统改写
+    // 或缓冲），stdout 是机器通道。契约精确到 `[server] port=<十进制>`，由 desktop 侧
+    // `sidecar::parse_port_line` 与本 crate 的单测共同锁定，两侧都拒绝宽松匹配。
+    //
+    // 令牌**不**经此通道：它只经回环 `/api/bootstrap` 交付，与普通浏览器同一路径。
+    println!("[server] port={actual_port}");
+    let _ = std::io::stdout().flush();
+    // ── accept 线程（nav-http）────────────────────────────────────────────────
+    // 主线程**不得**阻塞在 `listener.incoming()`：它必须能观察数据源 worker 的
+    // 终止。因此 accept 循环移入独立线程，主线程阻塞在 fatal bus 上。
+    //
+    // 这里刻意保持 `incoming()` 的阻塞语义（而不是 set_nonblocking + 有界轮询）：
+    // 阻塞式 accept 不为连接接入引入任何额外延迟，而「停止正常业务」由**每请求**
+    // 的降级判定保证——listener 在降级期间照常 accept，但每个请求都得到显式 503。
+    // 这样做的理由是可判定性：若降级时直接关闭 listener，客户端只会看到「连接被
+    // 拒绝」，与「服务没起来」不可区分，而降级分支本身也就无法被任何测试触达，
+    // 等于发布一条未经验证的代码路径。相比之下，30 ms 的窗口里多接几个连接、
+    // 每个都回 503，是明确且可诊断的行为。
+    {
         let ctx = ctx.clone();
         let web_root = web_root.clone();
-        // 来源判定用**实际**对端地址，不用任何请求内容或启动期候选表。
-        let peer = stream
-            .peer_addr()
-            .map(|a| security::classify_peer(a.ip()))
-            .unwrap_or(PeerClass::Disallowed);
-        std::thread::spawn(move || {
-            let _ = handle_conn(&mut stream, &ctx, &web_root, peer);
-        });
+        std::thread::Builder::new()
+            .name("nav-http".to_string())
+            .spawn(move || {
+                for stream in listener.incoming() {
+                    let Ok(mut stream) = stream else { continue };
+                    let ctx = ctx.clone();
+                    let web_root = web_root.clone();
+                    // 来源判定用**实际**对端地址，不用任何请求内容或启动期候选表。
+                    let peer = stream
+                        .peer_addr()
+                        .map(|a| security::classify_peer(a.ip()))
+                        .unwrap_or(PeerClass::Disallowed);
+                    std::thread::spawn(move || {
+                        let _ = handle_conn(&mut stream, &ctx, &web_root, peer);
+                    });
+                }
+            })
+            .unwrap_or_else(|e| {
+                eprintln!("[server] accept 线程创建失败: {e}");
+                std::process::exit(1);
+            });
     }
+
+    // ── 主线程：等待数据源致命，然后以确定的顺序停机 ──────────────────────────
+    // `fatal.wait()` 由 Condvar 唤醒，不是轮询：worker 终止与该调用返回之间不存在
+    // 轮询周期。此后进程不再对外提供任何「看起来健康」的服务。
+    let report = fatal.wait();
+    eprintln!("{}", report.diagnostic_line());
+    let closed = ctx
+        .shared
+        .close_all_clients("data source failed", std::time::Duration::from_secs(1));
+    eprintln!(
+        "[server] 已显式断开 {closed} 个 WS 客户端；进程以 {} 退出",
+        fault::EXIT_SOURCE_FATAL
+    );
+    // 测试专用延迟（仅 debug 构建有实现；release 中是空函数）。位置刻意在
+    // 「降级置位 + 客户端断开 + 致命诊断」之后：延迟不得掩盖任何判定顺序。
+    fault::inject::apply_shutdown_hold();
+    std::process::exit(fault::EXIT_SOURCE_FATAL);
 }
 
 fn handle_conn(
@@ -772,6 +908,25 @@ fn handle_conn(
         // 写响应后再有界排空并不解析地丢弃入站字节：否则关闭连接时 Windows 会因
         // 存在未读数据而发 RST，把刚写出的 403 一并丢掉（实测复现 WinError 10053），
         // 使客户端只看到「连接中止」而非明确的拒绝状态。
+        let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(250)));
+        crate::server::drain_inbound(stream, 8192);
+        return Ok(());
+    }
+
+    // 数据源已致命终止（P4R Batch 6A §3）：不再按健康语义回答任何业务请求。
+    //
+    // 放在解析请求**之前**，与上面的来源拒绝同一形态——降级状态下不解析对端输入，
+    // 也就不存在「降级后响应仍被请求内容影响」这一可能。用 503 而非 401/403：这不是
+    // 鉴权结果而是服务能力状态，客户端据此可区分「凭据错误」与「服务端数据源已死」。
+    if ctx.fatal.is_fatal() {
+        let _ = http_reply_full(
+            stream,
+            "503 Service Unavailable",
+            "application/json",
+            b"{\"error\":\"data source failed\",\"retryable\":false}",
+            &[],
+            &no_store(),
+        );
         let _ = stream.set_read_timeout(Some(std::time::Duration::from_millis(250)));
         crate::server::drain_inbound(stream, 8192);
         return Ok(());
