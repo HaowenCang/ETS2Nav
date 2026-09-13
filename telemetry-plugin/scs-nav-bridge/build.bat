@@ -47,13 +47,19 @@ if errorlevel 1 (
     exit /b 1
 )
 
-cl /nologo /O2 /EHsc /W3 /utf-8 ^
+rem P4R Batch 6a: /Brepro on both the compiler and the linker. Without it the only
+rem difference between two clean builds from two different absolute paths was the
+rem 4-byte PE COFF TimeDateStamp (and its copy in the coffgrp debug directory entry),
+rem which made byte equality impossible. With it the timestamp is derived from the
+rem content instead of the clock. The source embeds no absolute path, no __FILE__,
+rem no __DATE__/__TIME__ and no PDB, so nothing else needed normalising.
+cl /nologo /O2 /EHsc /W3 /utf-8 /Brepro ^
    /I "%SDK_INC%" ^
    /D WIN32 /D NDEBUG ^
    /LD ^
    "%~dp0scs-nav-bridge.cpp" ^
    /Fe:"%OUTDIR%\scs-nav-bridge.dll" ^
-   /link /DEF:"%~dp0scs-nav-bridge.def" /OUT:"%OUTDIR%\scs-nav-bridge.dll"
+   /link /Brepro /DEF:"%~dp0scs-nav-bridge.def" /OUT:"%OUTDIR%\scs-nav-bridge.dll"
 
 if errorlevel 1 (
     echo [ERROR] Build failed

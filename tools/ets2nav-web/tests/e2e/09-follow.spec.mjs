@@ -20,6 +20,27 @@ async function followState(page) {
   }));
 }
 
+// ─── 相机状态判据在 MapLibre 4.x → 6.x 的变更（P4R Batch 6A）─────────────────
+// 本用例原先用 `map.isEasing() || map.isMoving()` 判断「跟随缓动在跑」。6.x 移除了
+// Map 上的 `isEasing()`：实现仍在 Camera 上（`isEasing(){return!!this._easeFrameId}`），
+// 但 Camera 类不再从包入口导出，Map 也不再转发该方法。实测（6.4.1，真实 Chromium）：
+// `typeof map.isEasing === "undefined"`，调用即抛 TypeError。
+//
+// 替代判据取 `map.isMoving()`。它不是权宜之计，两者在 6.x 的语义是重合的：
+// `Map.isMoving()` 返回 `camera.isMoving() || handlers.isMoving()`，而
+// `Camera.easeTo()` 在动画开始前经 `_prepareEase()` 置 `_moving = true`，
+// 动画结束经 `_afterEase()` 置 `_moving = false`——正是 `_easeFrameId` 的置位/清零
+// 时机。因此判据强度未降低：跟随循环若仍在发 `easeTo`，`isMoving()` 必为 true；
+// 跟随一旦停止，最多一个 200 ms 缓动周期后即为 false。
+//
+// 论断范围：`isMoving()` 的第二个合取项（手势）在本用例的观测点均为空闲——
+// 前置检查发生在任何鼠标交互之前，后置检查发生在 `mouse.up()` 之后。
+
+/** 相机是否处于运动中（跟随缓动或手势任一在跑）。 */
+async function cameraMoving(page) {
+  return page.evaluate(() => map.isMoving());
+}
+
 test("E2E-09 拖拽暂停跟随、暂停期不恢复、到期后自动恢复", async ({ page }) => {
   const s = await session();
   await gotoApp(page, s.dataOrigin);
@@ -29,7 +50,7 @@ test("E2E-09 拖拽暂停跟随、暂停期不恢复、到期后自动恢复", a
   // 若跟随尚未开始移动，拖拽事件与跟随状态机的交互并非被测场景。
   expect((await followState(page)).following).toBe(true);
   await expect
-    .poll(async () => page.evaluate(() => map.isEasing() || map.isMoving()), { timeout: 15_000 })
+    .poll(async () => cameraMoving(page), { timeout: 15_000 })
     .toBe(true);
 
   // 真实鼠标拖拽（MapLibre 在位移超过阈值后触发 dragstart）
@@ -156,7 +177,7 @@ test("E2E-09d 真实时间尺度的拖动必须暂停跟随（修复前 0/16）"
 
   // 前置：跟随动画确实在跑。没有它就没有竞争对象，本用例也就失去意义。
   await expect
-    .poll(async () => page.evaluate(() => map.isEasing() || map.isMoving()), { timeout: 15_000 })
+    .poll(async () => cameraMoving(page), { timeout: 15_000 })
     .toBe(true);
 
   const box = await page.locator("#map").boundingBox();
@@ -188,8 +209,8 @@ test("E2E-09d 真实时间尺度的拖动必须暂停跟随（修复前 0/16）"
     "MapLibre 未识别出这次拖动（手势被跟随动画丢弃）",
   ).toBeGreaterThanOrEqual(1);
 
-  // 3) 相机必须真的停下：暂停后不得再有跟随缓动
-  await expect.poll(async () => page.evaluate(() => map.isEasing()), { timeout: 5_000 }).toBe(false);
+  // 3) 相机必须真的停下：暂停后不得再有跟随缓动（判据见文件开头「相机状态判据」）
+  await expect.poll(async () => cameraMoving(page), { timeout: 5_000 }).toBe(false);
 
   // 4) 用户仍可合法恢复跟随（既有 UX：◎ 按钮）
   await page.click("#btn-follow");

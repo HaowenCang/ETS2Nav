@@ -48,8 +48,9 @@ test("E2E-02 地图加载并使用 PMTiles 矢量源", async ({ page }) => {
   expect(tileResponses.some((r) => r.range !== null), "取瓦片必须带 Range 头").toBe(true);
 
   // 证据 2：瓦片已被解析进瓦片索引。
-  // 注意 querySourceFeatures 必须带 sourceLayer——不带时 MapLibre 4.7.1 返回 0
-  // （实测：不带 0 条，带 "road" 9 条），会造成「瓦片没加载」的假阴性。
+  // 注意 querySourceFeatures 必须带 sourceLayer——不带时 MapLibre 6.4.1 返回 0
+  // （P4R Batch 6A 在 6.4.1 上复测：不带 0 条，带 "road" 9 条，与 4.7.1 时相同），
+  // 会造成「瓦片没加载」的假阴性。
   await expect
     .poll(async () => page.evaluate(() => map.querySourceFeatures("tiles", { sourceLayer: "road" }).length), {
       timeout: 20_000,

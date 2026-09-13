@@ -4,6 +4,7 @@ use std::io::Write;
 use std::path::Path;
 use std::time::Instant;
 
+mod fault;
 mod security;
 mod server;
 mod server_cli;
@@ -20,7 +21,9 @@ fn usage() {
     eprintln!("  nav-core-cli server <dataset-dir> [--replay=<trace>] [--port=<N>] [--web=<dir>] [--fake-signal] [--lan]");
     eprintln!("      —— 默认只监听 127.0.0.1；--lan 才监听局域网并要求私网对端携带会话令牌");
     // P4R Batch 5 §16：机器契约写在用法里，调用方不必读源码才能知道退出码含义。
-    eprintln!("退出码: 0 成功；1 业务失败（如 route 无路线）；2 用法或参数错误");
+    // P4R Batch 6A §3 增补 70：数据源 worker 致命终止（panic 或意外结束）——
+    // 与 1 分开是必需的，否则观测方无法区分「服务没起来」与「服务起来后数据源死了」。
+    eprintln!("退出码: 0 成功；1 业务失败（如 route 无路线）；2 用法或参数错误；70 数据源 worker 致命终止");
 }
 
 fn main() {

@@ -171,6 +171,37 @@ impl ServerShared {
             clients.remove(i);
         }
     }
+
+    /// 致命退出前显式断开全部 WS 客户端，返回被断开的连接数。
+    ///
+    /// 为什么不能只依赖 `process::exit`：进程退出确实会关闭套接字，但那是**中止**
+    /// 而非协议层关闭，客户端只能从 `onerror`/异常断开推断，且若退出路径被拖慢，
+    /// 客户端会停在最后一帧。此处显式发 RFC6455 close（1001 going away）再
+    /// `shutdown(Both)`，使「数据源已死」在客户端是一个明确的连接结束事件。
+    ///
+    /// `budget` 是整体时间上界：单连接写超时 200 ms，且超预算后不再尝试发帧，但仍
+    /// 逐个 shutdown——关连接不得因为一个卡住的客户端而被无限推迟。
+    pub fn close_all_clients(&self, reason: &str, budget: std::time::Duration) -> usize {
+        const WS_CLOSE_GOING_AWAY: u16 = 1001;
+        let mut clients = self.ws_clients.lock().unwrap();
+        let n = clients.len();
+        let deadline = std::time::Instant::now() + budget;
+        // reason 只允许 ASCII：截断到控制帧 payload 上界（125 字节，含 2 字节状态码）
+        // 时不会落在多字节字符中间。
+        debug_assert!(reason.is_ascii(), "关闭原因必须是 ASCII");
+        let mut payload = WS_CLOSE_GOING_AWAY.to_be_bytes().to_vec();
+        payload.extend_from_slice(reason.as_bytes());
+        payload.truncate(123);
+        for c in clients.iter_mut() {
+            if std::time::Instant::now() < deadline {
+                let _ = c.set_write_timeout(Some(std::time::Duration::from_millis(200)));
+                let _ = ws_send_frame(c, 0x8, &payload);
+            }
+            let _ = c.shutdown(std::net::Shutdown::Both);
+        }
+        clients.clear();
+        n
+    }
 }
 
 /// NavigationSnapshot → §60 vehicle 事件 JSON（手写映射；无 serde derive）。
@@ -362,11 +393,17 @@ pub(crate) fn drain_inbound(r: &mut dyn Read, max_bytes: usize) -> usize {
 /// 会把开发机用户名与目录结构泄露给任何能访问该端点的对端。此处只暴露数据集
 /// 的**目录名**（`data/europe-v5` → `europe-v5`）与图规模统计。`dataset_dir`
 /// 在进程内部照常保留，用于加载与日志。
-pub(crate) fn metadata_json(nodes: usize, edges: usize, dataset_dir: &str) -> String {
+pub(crate) fn metadata_json(
+    nodes: usize,
+    edges: usize,
+    dataset_dir: &str,
+    ws_clients: usize,
+) -> String {
     serde_json::json!({
         "nodes": nodes,
         "edges": edges,
         "dataset": dataset_display_name(dataset_dir),
+        "ws_clients": ws_clients,
     })
     .to_string()
 }
@@ -815,7 +852,7 @@ mod tests {
             "/home/example/ets2nav/data/europe-v5",
             r"data\europe-v5",
         ] {
-            let s = metadata_json(123, 456, dir);
+            let s = metadata_json(123, 456, dir, 0);
             assert!(!s.contains(dir), "不得回显完整 dataset_dir: {dir}");
             assert!(!s.contains(r":\"), "不得含 Windows 盘符路径: {s}");
             assert!(!s.contains("/"), "不得含路径分隔符: {s}");
@@ -829,6 +866,28 @@ mod tests {
             assert_eq!(v["dataset"], "europe-v5");
             assert_eq!(v["nodes"], 123);
             assert_eq!(v["edges"], 456);
+            assert_eq!(v["ws_clients"], 0);
+        }
+    }
+
+    /// `/api/metadata` 的 ws_clients 是**计数**，不得被用来回显任何客户端标识。
+    ///
+    /// 该字段的存在理由是让「桌面 WebView 是否真的连上」在服务端可观测；一旦它
+    /// 变成回显地址/令牌的通道，可观测性就换来了信息泄露。此处锁定其形状。
+    #[test]
+    fn metadata_json_ws_clients_is_a_bare_count() {
+        let v: serde_json::Value =
+            serde_json::from_str(&metadata_json(1, 2, "data/europe-v5", 3)).unwrap();
+        assert_eq!(v["ws_clients"], 3);
+        assert!(v["ws_clients"].is_u64());
+        assert_eq!(v.as_object().unwrap().len(), 4, "字段集合必须恒定: {v}");
+        let raw = metadata_json(1, 2, "data/europe-v5", 3);
+        // 注意不能断言「不含 ':'」——JSON 本身由冒号分隔键值；要拦的是**路径**形态。
+        for banned in ["127.0.0.1", "token", "Bearer", ":\\", ":/", "\\\\"] {
+            assert!(
+                !raw.to_lowercase().contains(&banned.to_lowercase()),
+                "元信息不得含 {banned}: {raw}"
+            );
         }
     }
 

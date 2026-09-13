@@ -1,0 +1,161 @@
+{
+  "schema": "ets2nav.scs-sdk-provenance/1",
+  "_comment": "Provenance record for the SCS Telemetry SDK used to build the two tracked telemetry plugin DLLs (P4R Batch 6a). The SHA-256 below is the trust root. How and when it was obtained: on 2026-09-13 the archive was downloaded from the official URL with System.Net.WebClient (TLS 1.2) into C:/Temp/b6a/official-scs_sdk_1_14.zip and hashed with Get-FileHash -Algorithm SHA256; the same digest was then computed for the archive that was already cached at vendor/scs_sdk_1_14.zip, and the two agreed byte-for-byte (both 62794 bytes). The extracted tree under vendor/scs_sdk_1_14 was additionally compared entry-by-entry against the archive: all 46 files are byte-identical to their zip entries. The expected digest is therefore empirical, not transcribed from a third party.",
+  "generated_utc": "2026-09-13T03:51:26Z",
+  "sdk": {
+    "name": "SCS Telemetry SDK",
+    "version": "1.14",
+    "upstream_channel": "SCS Modding Wiki lists Telemetry SDK 1.14 as stable and links the download URL below",
+    "source_url": "https://download.eurotrucksimulator2.com/scs_sdk_1_14.zip",
+    "archive_filename": "scs_sdk_1_14.zip",
+    "sha256": "c6c1f7376b7324994d9f9c567f3c4141fbbf305b6bf803bc4cfeef2437b2023a",
+    "size_bytes": 62794,
+    "archive_entries": 56,
+    "archive_files": 46,
+    "local_cache_path": "vendor/scs_sdk_1_14.zip",
+    "local_cache_sha256": "c6c1f7376b7324994d9f9c567f3c4141fbbf305b6bf803bc4cfeef2437b2023a",
+    "local_cache_size_bytes": 62794,
+    "local_cache_agrees_with_official_download": true,
+    "header_dir_convention": "<repo>/vendor/scs_sdk_1_14/include (the archive root contains include/, examples/, readme.txt, sdk_license.txt; extract the archive so that <extract-dir>/include/scssdk_telemetry.h exists, which is exactly the path telemetry-plugin/*/build.bat resolves as %~dp0..\\..\\vendor\\scs_sdk_1_14\\include)",
+    "gitignored": true,
+    "required_headers_direct": [
+      "scssdk_telemetry.h",
+      "eurotrucks2/scssdk_eut2.h",
+      "eurotrucks2/scssdk_telemetry_eut2.h",
+      "amtrucks/scssdk_ats.h",
+      "amtrucks/scssdk_telemetry_ats.h"
+    ],
+    "required_headers_transitive_closure": [
+      "scssdk_telemetry.h",
+      "scssdk.h",
+      "scssdk_value.h",
+      "scssdk_telemetry_event.h",
+      "scssdk_telemetry_channel.h",
+      "eurotrucks2/scssdk_eut2.h",
+      "eurotrucks2/scssdk_telemetry_eut2.h",
+      "amtrucks/scssdk_ats.h",
+      "amtrucks/scssdk_telemetry_ats.h",
+      "common/scssdk_telemetry_common_configs.h",
+      "common/scssdk_telemetry_common_channels.h",
+      "common/scssdk_telemetry_truck_common_channels.h",
+      "common/scssdk_telemetry_trailer_common_channels.h",
+      "common/scssdk_telemetry_job_common_channels.h",
+      "common/scssdk_telemetry_common_gameplay_events.h"
+    ],
+    "prepare_script": "scripts/prepare-scs-sdk.ps1",
+    "prepare_script_contract": "Downloads only when the cache is absent or fails the digest; re-hashes the cache on every run; exits 3 without extracting anything when the digest does not match; asserts every required header and that every extracted file is byte-identical to its zip entry; prints HEADER_DIR. -Offline forbids the download but never skips verification."
+  },
+  "license": {
+    "license_file_in_archive": "sdk_license.txt",
+    "readme_file_in_archive": "readme.txt",
+    "spdx_identifier": "MIT",
+    "copyright_line": "Copyright (C) 2016 SCS Software",
+    "verbatim_grant": "Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:",
+    "verbatim_condition": "The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.",
+    "verbatim_disclaimer": "THE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.",
+    "readme_finding": "readme.txt describes plugin discovery, threading, version negotiation and the telemetry/input APIs. It contains no licensing, redistribution or third-party-mod restriction text at all; the operative terms are entirely in sdk_license.txt.",
+    "third_party_mod_use": "The grant is unconditional as to purpose: the SDK readme states the SDK 'provides information and APIs necessary for interaction between a third party software and the Euro Truck Simulator 2 (ETS2), American Truck Simulator (ATS) and possible other future games', and sdk_license.txt places no field-of-use, no royalty and no restriction on distributing derived plugin binaries.",
+    "redistribution_permitted_legally": true,
+    "redistribution_conclusion": "sdk_license.txt is the unmodified MIT licence. It expressly permits use, copy, modify, merge, publish, distribute, sublicense and sell, in source and binary form, conditioned only on retaining the copyright and permission notice. Committing the archive or its headers to this repository, or having CI fetch them, is therefore PERMITTED by the licence, and no separate SCS permission is required. A redistribution would have to carry sdk_license.txt alongside.",
+    "committed_to_repository": false,
+    "ci_network_download_wired": false,
+    "decision_rationale": "The licence is not the blocker. This change deliberately does NOT commit the archive/headers and does NOT add a download step to any CI check: whether download.eurotrucksimulator2.com is an acceptable CI network trust root is a repository-owner decision that was explicitly reserved, and .github/workflows/ci.yml plus scripts/regression.ps1 were out of scope for this change. The SDK therefore remains an external precondition that scripts/prepare-scs-sdk.ps1 can satisfy on demand."
+  },
+  "reproducibility": {
+    "verdict": "PASS",
+    "acceptance_criterion": "SHA256(build A) == SHA256(build B) == SHA256(build C), byte equality, three distinct absolute build paths",
+    "toolchain": {
+      "vswhere_installation_path": "E:/Program Files/Microsoft Visual Studio/18/Community",
+      "msvc_toolset": "14.51.36231",
+      "cl_version_string": "Microsoft (R) C/C++ Optimized Compiler Version 19.51.36252 for x64",
+      "discovery": "telemetry-plugin/*/build.bat locates the toolchain through vswhere -latest -products * -requires Microsoft.VisualStudio.Component.VC.Tools.x86.x64; no install path is hardcoded in tracked files",
+      "sdk_archive_sha256": "c6c1f7376b7324994d9f9c567f3c4141fbbf305b6bf803bc4cfeef2437b2023a"
+    },
+    "determinism_flags": {
+      "compiler": "/Brepro",
+      "linker": "/Brepro",
+      "full_compile_line": "cl /nologo /O2 /EHsc /W3 /utf-8 /Brepro /I <sdk-include> /D WIN32 /D NDEBUG /LD <source>.cpp /Fe:out\\<name>.dll /link /Brepro /DEF:<name>.def /OUT:out\\<name>.dll",
+      "semaphore_bridge_delta": "/EHsc is replaced by /EHa in semaphore-bridge/build.bat; cl emits warning D9025 because /EHa overrides the /EHs implied by /EHsc. That warning is pre-existing and is not an error."
+    },
+    "non_determinism_before_fix": {
+      "observed": "Without /Brepro, two clean builds from two different absolute paths differed in exactly 2 bytes.",
+      "offsets": [
+        "0x000100 - PE COFF header TimeDateStamp, low byte (0x3F for build A, 0x42 for build B; a 3-second clock difference)",
+        "0x01D2D4 - the same TimeDateStamp value repeated in the single coffgrp debug directory entry"
+      ],
+      "ruled_out": [
+        "embedded absolute source path: build A and build B have different absolute paths yet no path byte differs; literal scans for 'E:\\\\', 'C:\\\\Users\\\\', 'C:\\\\Program Files', 'Projects\\\\', 'buildA', 'buildB', 'Temp' and the generic pattern [A-Za-z]:\\\\ all return zero hits inside both DLLs",
+        "PDB / CodeView: no 'RSDS', no 'NB10', no '.pdb' string anywhere in the image; the only debug directory entry is coffgrp",
+        "/INCREMENTAL: adding /INCREMENTAL:NO was considered and rejected as unnecessary - the only differing field was the timestamp and no .ilk/.pdb was produced",
+        "__FILE__, __DATE__, __TIME__, __TIMESTAMP__: grep over both .cpp files returns zero occurrences; the only #pragma directives are pack(push)/pack(1)/pack(pop) at scs-nav-bridge.cpp:51,52,96",
+        "compiler or linker version skew: all three builds used the same vswhere-resolved toolset"
+      ],
+      "fix_applied": "Added /Brepro to the cl command line and to the /link command line of both build.bat files. /Brepro makes the linker derive the PE TimeDateStamp and the new IMAGE_DEBUG_TYPE_REPRO entry from the image content instead of the clock. Verified effect on scs-nav-bridge.dll: TimeDateStamp changed from a clock value to 0x9925678B, a second debug directory entry of type 'repro' appeared (28 bytes, taking the debug directory from 0x1C to 0x38 bytes), and the file grew from 139776 to 140288 bytes because .rdata crossed a section boundary."
+    },
+    "builds": {
+      "scs-nav-bridge": {
+        "A": { "root": "C:\\Temp\\b6a\\buildA", "size_bytes": 140288, "sha256": "bc9714779f6656955a350fc49c901722e4e0c8b75b3f108e059139e1172aa568" },
+        "B": { "root": "C:\\Temp\\b6a\\buildB", "size_bytes": 140288, "sha256": "bc9714779f6656955a350fc49c901722e4e0c8b75b3f108e059139e1172aa568" },
+        "C": { "root": "C:\\Temp\\b6a\\buildC-longer-path-name\\deeper", "size_bytes": 140288, "sha256": "bc9714779f6656955a350fc49c901722e4e0c8b75b3f108e059139e1172aa568" },
+        "byte_identical": true,
+        "pre_brepro_sha256_a": "89565eeec068adb91ab844c0f52448e7d3bb141821f8d3445601fbd977bf40bc",
+        "pre_brepro_sha256_b": "3a0b27cd072e526b50b2b88b9fedda6f394d6151818d9c26b0788d036adbd089",
+        "pre_brepro_tracked_sha256": "05dc03e5cb3b29ddb6122767f9ef969b43a9fa256f15daf81f92b6b5ff285367",
+        "pre_brepro_tracked_relation": "The previously tracked DLL differed from pre-/Brepro build A in exactly 6 bytes, all inside the two copies of the PE TimeDateStamp (tracked 0x6A78D54F vs A 0x6AA61D3F). Every other byte, including all code and data sections, was already identical, so the recipe did reproduce the tracked artifact up to the clock field."
+      },
+      "semaphore-bridge": {
+        "A": { "root": "C:\\Temp\\b6a\\buildA", "size_bytes": 139264, "sha256": "171434e476666c90c63dee837f76f9812d80d846d71bb1b9751ac64a2d4e4452" },
+        "B": { "root": "C:\\Temp\\b6a\\buildB", "size_bytes": 139264, "sha256": "171434e476666c90c63dee837f76f9812d80d846d71bb1b9751ac64a2d4e4452" },
+        "C": { "root": "C:\\Temp\\b6a\\buildC-longer-path-name\\deeper", "size_bytes": 139264, "sha256": "171434e476666c90c63dee837f76f9812d80d846d71bb1b9751ac64a2d4e4452" },
+        "byte_identical": true,
+        "pre_brepro_tracked_sha256": "b31e88771fc9259b89b020fd4a1c369add505d3d4e51a7618e4a300d196cc4b9"
+      }
+    },
+    "sdk_source_paths_were_distinct": "Each of the three build roots held its own copy of the extracted SDK (tree hash da9ee517d2630f743efdfa7799c8d4cddcc24fc7fb1a79e9571aa9367d3d8ea9 in all three and in the repository), so the /I include path differed between builds as well.",
+    "tracked_artifact_upgrade": {
+      "why": "Adding /Brepro to the recorded recipe changes the linker output, so the previously tracked DLLs no longer matched their own build recipe. Both were rebuilt in place with the updated build.bat, as required.",
+      "before_after": {
+        "scs-nav-bridge": { "before_size_bytes": 139776, "before_sha256": "05dc03e5cb3b29ddb6122767f9ef969b43a9fa256f15daf81f92b6b5ff285367", "after_size_bytes": 140288, "after_sha256": "bc9714779f6656955a350fc49c901722e4e0c8b75b3f108e059139e1172aa568" },
+        "semaphore-bridge": { "before_size_bytes": 139264, "before_sha256": "b31e88771fc9259b89b020fd4a1c369add505d3d4e51a7618e4a300d196cc4b9", "after_size_bytes": 139264, "after_sha256": "171434e476666c90c63dee837f76f9812d80d846d71bb1b9751ac64a2d4e4452" }
+      },
+      "characterisation": "Measured, not assumed. scs-nav-bridge: .data, .fptable and .reloc are byte-identical; .text has 17 differing bytes and all 17 lie inside 13 RIP-relative 32-bit displacement fields whose value increased by exactly 32 (0x20); .pdata differs only in shifted RVAs; .rdata grew from 0xAE00 to 0xB000 raw because the new 28-byte IMAGE_DEBUG_TYPE_REPRO debug directory entry pushed the section across a 512-byte file-alignment boundary, and the debug directory went from 1 entry (coffgrp) to 2 (coffgrp, repro). semaphore-bridge: file size unchanged, .text has 14 differing bytes and all 14 lie inside such displacement fields, .rdata raw size unchanged but its content shifted by the inserted entry. No opcode or immediate byte differs in either image. What is NOT established: that the rebuilt binaries behave identically at runtime. That would require loading them in the game, which was not done here; the historical in-game validation recorded in docs/validation/ refers to the previous binaries."
+    }
+  },
+  "artifacts": [
+    {
+      "name": "scs-nav-bridge",
+      "path": "telemetry-plugin/scs-nav-bridge/out/scs-nav-bridge.dll",
+      "def_path": "telemetry-plugin/scs-nav-bridge/scs-nav-bridge.def",
+      "build_script": "telemetry-plugin/scs-nav-bridge/build.bat",
+      "size_bytes": 140288,
+      "sha256": "bc9714779f6656955a350fc49c901722e4e0c8b75b3f108e059139e1172aa568",
+      "sha256_before_brepro": "05dc03e5cb3b29ddb6122767f9ef969b43a9fa256f15daf81f92b6b5ff285367",
+      "required_exports": ["scs_telemetry_init", "scs_telemetry_shutdown"],
+      "reproduced_by_recorded_recipe": true,
+      "reproduction_evidence": "The DLL now in the working tree was produced by telemetry-plugin/scs-nav-bridge/build.bat in place and is byte-identical to all three independent clean builds A, B and C."
+    },
+    {
+      "name": "semaphore-bridge",
+      "path": "telemetry-plugin/semaphore-bridge/out/semaphore-bridge.dll",
+      "def_path": "telemetry-plugin/semaphore-bridge/semaphore-bridge.def",
+      "build_script": "telemetry-plugin/semaphore-bridge/build.bat",
+      "size_bytes": 139264,
+      "sha256": "171434e476666c90c63dee837f76f9812d80d846d71bb1b9751ac64a2d4e4452",
+      "sha256_before_brepro": "b31e88771fc9259b89b020fd4a1c369add505d3d4e51a7618e4a300d196cc4b9",
+      "required_exports": ["scs_telemetry_init", "scs_telemetry_shutdown"],
+      "reproduced_by_recorded_recipe": true,
+      "reproduction_evidence": "The DLL now in the working tree was produced by telemetry-plugin/semaphore-bridge/build.bat in place and is byte-identical to all three independent clean builds A, B and C."
+    }
+  ],
+  "artifact_checks": {
+    "script": "scripts/verify-plugin-artifacts.ps1",
+    "offline": true,
+    "checks": [
+      "file exists and is non-zero",
+      "MZ signature, PE\\0\\0 signature, COFF Machine == 0x8664, IMAGE_FILE_DLL characteristic bit 0x2000, PE32+ optional header magic 0x20B (headers parsed in-process, no external tool)",
+      "every export name listed in the sibling .def file is present in the PE export directory (required names read from the .def so the check cannot drift from the build recipe)",
+      "no developer absolute path in the image: literal scans (case-insensitive) for 'E:\\\\', 'C:\\\\Users\\\\', 'C:\\\\Program Files', 'Projects\\\\', the repository root, %USERPROFILE%, plus the generic pattern [A-Za-z]:\\\\ ; every match reported with surrounding bytes",
+      "the provenance manifest corresponds to the artifact: recorded SHA-256 and size compared against the file on disk, and the recorded build hashes compared against the tracked binary"
+    ]
+  }
+}

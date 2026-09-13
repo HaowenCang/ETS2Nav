@@ -78,7 +78,8 @@
 #Requires -Version 5.1
 [CmdletBinding()]
 param(
-    [ValidateSet('P1', 'P2', 'P3', 'P5', 'All', 'SelfTest', 'Portable', 'CLI')]
+    [ValidateSet('P1', 'P2', 'P3', 'P5', 'All', 'SelfTest', 'Portable', 'CLI',
+        'FaultContainment', 'Desktop')]
     [string[]]$Suite = @('All'),
 
     [string]$Ets2Install,
@@ -1434,11 +1435,15 @@ function Invoke-SelfTest {
 # ─────────────────────────────────────────────────────────────────────────────
 
 # 前端构建的必需产物。可选运行期资源（map.pmtiles、fonts/）不在其中：它们缺失时
-# build.mjs 只告警，属「离线视觉完整性」，留给 Batch 6 的发布收尾，不由构建门判定。
+# build.mjs 只告警，属「离线视觉完整性」，其发布决策见 Batch 6A §10。
+#
+# `vendor/maplibre-gl-worker.js` 是 Batch 6A §2 加入的：MapLibre 6 只发布 ESM，打包后
+# 库无法用 `import.meta` 自行定位 worker，必须由产品显式提供并 setWorkerUrl 指过去。
+# 它缺失时地图不会进入 loaded 状态——这是**功能性**缺失而非视觉降级，故纳入必需产物。
 $script:FrontendArtifacts = @(
     'index.html', 'app.js', 'style.css',
-    'vendor/maplibre-gl.js', 'vendor/maplibre-gl.css', 'vendor/pmtiles.js',
-    'vendor/qrcode.min.js', 'build-manifest.json'
+    'vendor/maplibre-gl.js', 'vendor/maplibre-gl.css', 'vendor/maplibre-gl-worker.js',
+    'vendor/pmtiles.js', 'vendor/qrcode.min.js', 'build-manifest.json'
 )
 
 # 仓库侧（非 harness 侧）的检查：判定失败是 TEST FAILURE（exit 1），不是 HARNESS FAILURE。
@@ -1569,12 +1574,71 @@ function Assert-FrontendManifest {
         if ($bytes -ne (Get-Item -LiteralPath $p).Length) { $problems += "$rel 的 bytes 与 manifest 记录不一致" }
     }
     if ($problems.Count -eq 0) {
-        Write-Log '  manifest 校验通过：3 个运行依赖 + esbuild 版本与 lockfile 一致，7 项产物哈希与实体一致'
+        # 计数由清单长度推导而不是写死：写死的数字会在产物增删时变成一句错误陈述。
+        Write-Log (("  manifest 校验通过：3 个运行依赖 + esbuild 版本与 lockfile 一致，" +
+                "{0} 项产物哈希与实体一致（manifest 不自我引用）") -f ($script:FrontendArtifacts.Count - 1))
     }
     return (Add-RepoCheck -Suite $Suite -Name 'frontend-manifest' -Ok ($problems.Count -eq 0) `
             -Detail ("manifest 校验问题: " + ($problems -join '; ')) `
             -OkDetail '依赖版本与 lockfile 一致，产物 sha256/bytes 与实体一致' `
             -SemanticText 'manifest 依赖版本与 lockfile 一致、产物 sha256 与实体一致')
+}
+
+# SCS SDK provenance 的**离线**契约核对（Batch 6A §11/§14）。
+#
+# 核对的是「清单本身是否可据以取回并校验 SDK」，而不是去取回它：required CI 的结论
+# 不得因为 download.eurotrucksimulator2.com 当下不可达而随时间改变。真正的下载与
+# 哈希比对在 scripts/prepare-scs-sdk.ps1 中执行，由打包/发布步骤显式触发。
+function Assert-ScsSdkProvenanceContract {
+    param([string]$Suite = 'Portable')
+    $path = Join-Path $script:RepoRoot 'telemetry-plugin/scs-sdk-provenance.json'
+    $problems = @()
+    $m = $null
+    try {
+        $m = Read-JsonFile -Path $path
+    } catch {
+        return (Add-RepoCheck -Suite $Suite -Name 'scs-sdk-provenance' -Ok $false `
+                -Detail "无法解析 $path : $($_.Exception.Message)" `
+                -SemanticText 'provenance 清单存在且可解析')
+    }
+    $sdk = Get-JsonMember $m 'sdk'
+    $url = [string](Get-JsonMember $sdk 'source_url')
+    if ($url -ne 'https://download.eurotrucksimulator2.com/scs_sdk_1_14.zip') {
+        $problems += "source_url 不是钉住的官方地址: '$url'"
+    }
+    $file = [string](Get-JsonMember $sdk 'archive_filename')
+    if ($file -ne 'scs_sdk_1_14.zip') { $problems += "archive_filename 不是钉住的文件名: '$file'" }
+    $sha = [string](Get-JsonMember $sdk 'sha256')
+    if ($sha -notmatch '^[0-9a-f]{64}$') { $problems += "sha256 形态非法: '$sha'" }
+    $size = Get-JsonMember $sdk 'size_bytes'
+    if (-not ($size -gt 0)) { $problems += "size_bytes 非正数: '$size'" }
+    $headers = @(Get-JsonMember $sdk 'required_headers_direct')
+    if ($headers -notcontains 'scssdk_telemetry.h') {
+        $problems += 'required_headers_direct 未包含 scssdk_telemetry.h'
+    }
+    $prep = [string](Get-JsonMember $sdk 'prepare_script')
+    if ($prep -ne 'scripts/prepare-scs-sdk.ps1') { $problems += "prepare_script 未指向工具脚本: '$prep'" }
+    if (-not (Test-Path -LiteralPath (Join-Path $script:RepoRoot $prep) -PathType Leaf)) {
+        $problems += "prepare_script 指向的文件不存在: $prep"
+    }
+    # 许可结论必须显式记录：允许再分发与不允许都会影响发布决策，缺失即为未审计。
+    $license = Get-JsonMember $m 'license'
+    $spdx = [string](Get-JsonMember $license 'spdx_identifier')
+    if (-not $spdx) { $problems += 'license.spdx_identifier 缺失（许可未审计）' }
+    $redist = Get-JsonMember $license 'redistribution_permitted_legally'
+    if ($null -eq $redist) { $problems += 'license.redistribution_permitted_legally 缺失' }
+    # 本轮明确不把网络下载接进 required CI；该决定必须写在清单里，而不是只存在于对话中。
+    if ((Get-JsonMember $license 'ci_network_download_wired') -ne $false) {
+        $problems += 'license.ci_network_download_wired 必须为 false（本轮不接网络信任根）'
+    }
+
+    if ($problems.Count -eq 0) {
+        Write-Log "  provenance: url/filename/sha256 已钉住，许可=$spdx，header=$($headers.Count) 项，未接网络下载"
+    }
+    return (Add-RepoCheck -Suite $Suite -Name 'scs-sdk-provenance' -Ok ($problems.Count -eq 0) `
+            -Detail ("provenance 契约问题: " + ($problems -join '; ')) `
+            -OkDetail 'provenance 清单钉住官方 URL/文件名/SHA-256，必需头齐备，许可已审计，且未把网络下载接入 required CI' `
+            -SemanticText 'provenance 清单可据以取回并校验 SDK（URL/文件名/SHA-256/必需头/许可，全部离线核对）')
 }
 
 # dotnet test 的 portable 汇总判定：不仅要求 Failed: 0，还要求**执行数恰为常量**。
@@ -1639,6 +1703,8 @@ function Invoke-PortableSuite {
     $cargo = Resolve-Tool 'cargo'
     $npm = Resolve-Tool 'npm'
     $dotnet = Resolve-Tool 'dotnet'
+    $node = Resolve-Tool 'node'
+    $powershell = Resolve-Tool 'powershell'
     $navCore = Join-Path $script:RepoRoot 'nav-core'
     $web = Join-Path $script:RepoRoot 'tools/ets2nav-web'
     $dist = Join-Path $web 'dist'
@@ -1721,6 +1787,15 @@ function Invoke-PortableSuite {
 
     [void](Assert-FrontendManifest -WebDir $web -DistRoot $dist)
 
+    # [6b] MapLibre 版本门（Batch 6A §2）。离线、确定：advisory 下限写成脚本内常量
+    # （ADVISORY_FLOOR = 6.4.1，注明 GHSA-jrc7-96c5-q579 / CVE-2026-85061），因此
+    # 同一 commit 的结论不随 advisory 数据库变化——`npm audit` 不适合做永久硬门。
+    # 必须在 npm ci 之后执行：它读的是已安装树与 lockfile 的实际版本。
+    [void](Invoke-NativeStep -Suite Portable -Name 'frontend-maplibre-version' -FilePath $node `
+        -Arguments @('scripts/verify-maplibre-version.mjs') -WorkingDirectory $web `
+        -SemanticText 'exit 0 且输出 "[gate] PASS"（已安装版本 ≥ 6.4.1 且与 lockfile 一致）' `
+        -Semantic { param($out, $err) Test-Contains $out '[gate] PASS' 'MapLibre 版本门通过行' })
+
     $diff = @()
     foreach ($rel in $script:FrontendArtifacts) {
         $a = $snaps[1][$rel]; $b = $snaps[2][$rel]
@@ -1730,8 +1805,9 @@ function Invoke-PortableSuite {
     }
     [void](Add-RepoCheck -Suite Portable -Name 'frontend-reproducibility' -Ok ($diff.Count -eq 0) `
         -Detail "两次独立构建的产物哈希不同: $($diff -join '; ')" `
-        -OkDetail '两轮独立构建的 8 个必需产物 sha256 逐字节一致' `
-        -SemanticText 'npm ci + npm run build 连续两轮，8 个必需产物 sha256 逐字节一致')
+        -OkDetail ("两轮独立构建的 {0} 个必需产物 sha256 逐字节一致" -f $script:FrontendArtifacts.Count) `
+        -SemanticText ("npm ci + npm run build 连续两轮，{0} 个必需产物 sha256 逐字节一致" -f `
+                $script:FrontendArtifacts.Count))
     if ($diff.Count -eq 0) {
         Write-Log ("  两轮一致: index.html={0} app.js={1} qrcode.min.js={2} manifest={3}" -f `
                 (Get-ShortHash $snaps[1]['index.html'].Sha256), (Get-ShortHash $snaps[1]['app.js'].Sha256),
@@ -1765,6 +1841,25 @@ function Invoke-PortableSuite {
         [void](Assert-ArtifactFresh -Suite Portable -Name 'cargo-build-desktop-artifact' `
             -Artifact (Join-Path $script:RepoRoot 'desktop/target/debug/ets2nav-desktop.exe') -SourceRoots $roots)
     }
+
+    # ── telemetry plugin 的产物与 provenance 契约（Batch 6A §11/§13）──────────
+    # 两条都刻意**不联网**：required CI 的结论不得依赖某个外部服务器当下是否可达。
+    # 真正取回 SDK 的动作在 scripts/prepare-scs-sdk.ps1 里，由打包/发布步骤显式触发。
+    Write-Log ''
+    Write-Log '--- telemetry plugin：产物身份与 SDK provenance 契约（离线）---'
+    [void](Invoke-NativeStep -Suite Portable -Name 'plugin-artifacts' -FilePath $powershell `
+        -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+            (Join-Path $script:RepoRoot 'scripts/verify-plugin-artifacts.ps1')) `
+        -WorkingDirectory $script:RepoRoot `
+        -SemanticText 'exit 0 且汇总行为 "summary: N PASS, 0 FAIL, 0 NOT EVALUATED"（PE x64 DLL、导出齐备、无开发机路径）' `
+        -Semantic {
+            param($out, $err)
+            Test-All @(
+                (Test-Contains $out 'artefact contract verified' '产物契约结论行'),
+                (Test-Match $out 'summary:\s*\d+ PASS, 0 FAIL, 0 NOT EVALUATED' '零失败零未评估的汇总行')
+            )
+        })
+    [void](Assert-ScsSdkProvenanceContract -Suite Portable)
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -1830,6 +1925,138 @@ function Invoke-CliSuite {
             Test-All @(
                 (Test-Match $err '格式:' '用法提示行'),
                 (Test-NotContains $err 'panicked' '不得以 panic 表达用法错误')
+            )
+        })
+
+    # release 产物不得含故障注入钩子（Batch 6A §4）。
+    #
+    # 注入由 cfg(debug_assertions) 门控，因此 release 二进制里连环境变量名字面量都不应
+    # 存在。这比代码审查更强：审查只能说明「当前没有调用点」，字节扫描说明「字符串根本
+    # 不在产物里」。反向断言（debug 二进制**含**该字面量）由 FaultContainment 套件负责
+    # ——两侧合起来才排除「字符串拼写漂移导致双方都通过」。
+    if (Test-Path -LiteralPath $cliExe -PathType Leaf) {
+        $latin = [Text.Encoding]::GetEncoding(28591)   # ISO-8859-1：字节与字符一一对应
+        $text = $latin.GetString([IO.File]::ReadAllBytes($cliExe))
+        $hooks = @('ETS2NAV_FAULT_INJECT', 'ETS2NAV_FAULT_HOLD_MS')
+        $found = @($hooks | Where-Object { $text.Contains($_) })
+        [void](Add-RepoCheck -Suite CLI -Name 'release-binary-has-no-injection-hook' -Ok ($found.Count -eq 0) `
+            -Detail "release 二进制含注入钩子字面量: $($found -join ', ')" `
+            -OkDetail "release 二进制不含 $($hooks -join ' / ')（故障注入仅在 debug 构建存在）" `
+            -SemanticText 'release 二进制不含任何故障注入环境变量字面量（注入不可由发布产物触发）')
+    }
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# FaultContainment 套件（Batch 6A §3/§4）
+#
+# 只验证一件事：数据源 worker 致命终止后，进程不得停在「listener 还活着、状态永久
+# 冻结」的 zombie 形态。故障是**主动注入**的，不是等某个偶发 panic。
+#
+# 前提是 debug 二进制：注入钩子由 cfg(debug_assertions) 门控，release 里不存在。
+# 这一点由脚本自身的前置断言把关（不含钩子即以 exit 4 拒绝），因此「拿错二进制」
+# 不会退化成「等超时」。
+# ─────────────────────────────────────────────────────────────────────────────
+function Invoke-FaultContainmentSuite {
+    param([hashtable]$Cfg)
+    Write-Rule 'FaultContainment Suite（数据源 worker 故障遏制）'
+    $cargo = Resolve-Tool 'cargo'
+    $npm = Resolve-Tool 'npm'
+    $navCore = Join-Path $script:RepoRoot 'nav-core'
+    $web = Join-Path $script:RepoRoot 'tools/ets2nav-web'
+
+    [void](Invoke-NativeStep -Suite FaultContainment -Name 'build-nav-core-cli-debug' -FilePath $cargo `
+        -Arguments @('build', '-p', 'nav-core-cli') -WorkingDirectory $navCore)
+    # dataset 由 preflight 经 ETS2NAV_DATASET 传入（脚本自身读环境变量或 repo 默认值）。
+    [void](Invoke-NativeStep -Suite FaultContainment -Name 'fault-containment' -FilePath $npm `
+        -Arguments @('run', 'test:fault-containment') -WorkingDirectory $web `
+        -SemanticText 'exit 0 且汇总行为 "FAULT CONTAINMENT: PASS"（FC-01…FC-06 全部断言通过）' `
+        -Semantic {
+            param($out, $err)
+            Test-All @(
+                (Test-Contains $out 'FAULT CONTAINMENT: PASS' '故障遏制汇总行'),
+                (Test-Match $out '断言合计\s*(\d+)，失败 0' '零失败断言计数行'),
+                (Test-Contains $out 'FC-03' 'FC-03 退出码断言行')
+            )
+        })
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Desktop 套件（Batch 6A §5-§9、§19）
+#
+# 判据不是「编译通过」，而是**打包产物在运行时成立**：
+#   release 二进制 → 组装 bundle（含前端与数据集）→ 校验清单身份 →
+#   用 bundle 内的 Desktop 真实跑一遍生命周期（身份、端口协商、可服务、回收、无孤儿）。
+#
+# 之所以必须是 release：清单强制（bundle-manifest.json 缺失即拒绝启动）只在 release
+# 生效，debug 构建允许缺清单但会显式标注 identity=unverified-no-manifest。
+# ─────────────────────────────────────────────────────────────────────────────
+function Invoke-DesktopSuite {
+    param([hashtable]$Cfg)
+    Write-Rule 'Desktop Suite（bundle 组装 + 打包产物生命周期）'
+    $cargo = Resolve-Tool 'cargo'
+    $node = Resolve-Tool 'node'
+    $npm = Resolve-Tool 'npm'
+    $powershell = Resolve-Tool 'powershell'
+    $web = Join-Path $script:RepoRoot 'tools/ets2nav-web'
+    $navCore = Join-Path $script:RepoRoot 'nav-core'
+    $bundle = Join-Path $script:TempRoot 'desktop-bundle'
+    $Cfg.BundleDir = $bundle
+
+    # [1][2] release 二进制。sidecar 与桌面壳都必须是 release：发布形态。
+    [void](Invoke-NativeStep -Suite Desktop -Name 'build-nav-core-cli-release' -FilePath $cargo `
+        -Arguments @('build', '--release', '-p', 'nav-core-cli') -WorkingDirectory $navCore)
+    $r = Invoke-NativeStep -Suite Desktop -Name 'build-desktop-release' -FilePath $cargo `
+        -Arguments @('build', '--release', '--manifest-path', 'desktop/Cargo.toml') `
+        -WorkingDirectory $script:RepoRoot
+    if ($r.Result -ne 'PASS') {
+        [void](Add-RepoCheck -Suite Desktop -Name 'bundle-not-attempted' -Ok $false `
+            -Detail 'release 构建失败，bundle 组装未执行' -SemanticText 'bundle 组装前置成立')
+        return
+    }
+
+    # [3] 前端产物：bundle 的 web/ 来源。缺失才现构建，避免重复劳动。
+    if (-not (Test-Path -LiteralPath (Join-Path $web 'dist/index.html') -PathType Leaf)) {
+        Write-Log '  dist/ 缺失，先执行 npm ci + npm run build'
+        [void](Invoke-NativeStep -Suite Desktop -Name 'frontend-npm-ci' -FilePath $npm `
+            -Arguments @('ci', '--no-fund', '--no-audit') -WorkingDirectory $web)
+        [void](Invoke-NativeStep -Suite Desktop -Name 'frontend-build' -FilePath $npm `
+            -Arguments @('run', 'build') -WorkingDirectory $web)
+    }
+
+    # [4] 组装 bundle。输入是**本次**构建出的 release 二进制与真实数据集。
+    $assemble = Join-Path $script:RepoRoot 'desktop/scripts/assemble-bundle.ps1'
+    $verify = Join-Path $script:RepoRoot 'desktop/scripts/verify-bundle.ps1'
+    [void](Invoke-NativeStep -Suite Desktop -Name 'assemble-bundle' -FilePath $powershell `
+        -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $assemble,
+            '-OutDir', $bundle, '-Dataset', $Cfg.Dataset.Path, '-Profile', 'release') `
+        -WorkingDirectory $script:RepoRoot `
+        -SemanticText 'exit 0 且输出 "=== bundle assembled ==="' `
+        -Semantic { param($out, $err) Test-Contains $out '=== bundle assembled ===' 'bundle 组装完成行' })
+
+    # [5] 独立复核：重新从磁盘读取每个身份并与清单比对（不信任组装步骤的内存状态）。
+    [void](Invoke-NativeStep -Suite Desktop -Name 'verify-bundle' -FilePath $powershell `
+        -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $verify, '-BundleDir', $bundle) `
+        -WorkingDirectory $script:RepoRoot `
+        -SemanticText 'exit 0 且输出 "BUNDLE VERIFY: PASS"（非 weak 模式，含数据集树摘要）' `
+        -Semantic {
+            param($out, $err)
+            Test-All @(
+                (Test-Contains $out 'BUNDLE VERIFY: PASS' 'bundle 校验汇总行'),
+                (Test-NotContains $out 'weak mode' '不得以弱模式通过'),
+                (Test-NotContains $out '[FAIL]' '不得有任何 FAIL 行')
+            )
+        })
+
+    # [6] 打包产物的生命周期（D-01…D-07）。被测对象是 bundle 内的 exe。
+    [void](Invoke-NativeStep -Suite Desktop -Name 'desktop-lifecycle' -FilePath $node `
+        -Arguments @('desktop/tests/desktop-lifecycle.mjs', '--bundle', $bundle) `
+        -WorkingDirectory $script:RepoRoot `
+        -SemanticText 'exit 0 且汇总行为 "DESKTOP LIFECYCLE: PASS"' `
+        -Semantic {
+            param($out, $err)
+            Test-All @(
+                (Test-Match $out 'DESKTOP LIFECYCLE: PASS \(\d+ checks\)' '桌面生命周期汇总行'),
+                (Test-NotContains $out '[FAIL]' '不得有任何 FAIL 行')
             )
         })
 }
@@ -1913,19 +2140,38 @@ try {
         Invoke-SelfTest
         Write-Summary 'Harness SelfTest'
         $exit = Get-ExitCode
-    } elseif (($Suite -contains 'Portable') -or ($Suite -contains 'CLI')) {
-        # Portable / CLI 是 Batch 5 引入的**云端可执行门**，与 P1/P2/P3 的完整门分离。
-        # 二者都不需要游戏资源：Portable 连数据集都不需要，CLI 只需要 released dataset。
+    } elseif (($Suite -contains 'Portable') -or ($Suite -contains 'CLI') -or
+        ($Suite -contains 'FaultContainment') -or ($Suite -contains 'Desktop')) {
+        # Portable / CLI / FaultContainment / Desktop 是**云端可执行门**，与 P1/P2/P3 的
+        # 完整门分离。四者都不需要游戏资源：
+        #   Portable         连数据集都不需要（源码门）
+        #   CLI              只需要 released dataset
+        #   FaultContainment 需要 released dataset + debug 二进制（故障注入只在 debug 存在）
+        #   Desktop          需要 released dataset + release 二进制（发布形态）
         $wantPortable = $Suite -contains 'Portable'
         $wantCli = $Suite -contains 'CLI'
-        $Cfg = @{ Dataset = $null }
+        $wantFc = $Suite -contains 'FaultContainment'
+        $wantDesktop = $Suite -contains 'Desktop'
+        # 本分支只服务云端门。P1/P2/P3/P5 由下面的 else 分支服务，因此把它们与云端门
+        # 混在一次调用里会被**静默丢弃**——请求了 P5 却不跑 P5，是最坏的一类假绿。
+        # 这里显式拒绝，而不是默默只跑其中一部分（CI 本来就是分步执行的）。
+        $mixed = @($Suite | Where-Object {
+                $_ -in @('P1', 'P2', 'P3', 'P5', 'All')
+            })
+        if ($mixed.Count -gt 0) {
+            throw [HarnessException]::new(
+                "HARNESS FAILURE: 云端门（Portable/CLI/FaultContainment/Desktop）不能与 " +
+                "$($mixed -join ',') 合并成一次调用——本分支不会执行后者。请分次执行，例如 " +
+                "-Suite P5 与 -Suite CLI 各一次。")
+        }
+        $Cfg = @{ Dataset = $null; BundleDir = $null }
 
         Write-Log ''
         Write-Log '--- preflight ---'
         if ($wantPortable) {
             Write-Log 'portable    : 不需要 ETS2 游戏资源、不需要导航数据集（源码门）'
         }
-        if ($wantCli) {
+        if ($wantCli -or $wantFc -or $wantDesktop) {
             $Cfg.Dataset = Get-DatasetPath -Explicit $Dataset
             Write-Log "dataset     : $($Cfg.Dataset.Path)  [$($Cfg.Dataset.Source)]"
             # 与 P 系列一致：把解析结果导出给子进程，避免「参数传了一个、环境变量是另一个」。
@@ -1943,6 +2189,8 @@ try {
             Invoke-SelfTest
         }
         if ($wantCli) { Invoke-CliSuite -Cfg $Cfg }
+        if ($wantFc) { Invoke-FaultContainmentSuite -Cfg $Cfg }
+        if ($wantDesktop) { Invoke-DesktopSuite -Cfg $Cfg }
 
         Write-Summary ($Suite -join '+')
         $exit = Get-ExitCode

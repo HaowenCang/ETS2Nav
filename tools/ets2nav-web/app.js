@@ -5,6 +5,19 @@ const $ = (id) => document.getElementById(id);
 // §59 坐标转换（渲染层）：ETS2 米制世界 → 伪经纬度（与瓦片生成 lng=x/111320 一致）
 const K = 111320;
 const toLngLat = ([x, z]) => [x / K, z / K];
+
+// ─── MapLibre 6.x worker 引导（P4R Batch 6A：4.7.1 → 6.4.1）──────────────────
+// MapLibre 6.x 只发布 ESM，浏览器产物由 scripts/build.mjs 打成 IIFE 全局
+// `maplibregl`。打包之后 `import.meta.url` 不再指向库文件本身，库因此无法自行
+// 推导 worker 地址——其内部 getWorkerUrl() 在 import.meta.url 非 http(s) 时返回
+// 空串，`new Worker("")` 会去加载当前页面文档并必然失败，症状是地图永远不进入
+// loaded（不是渲染异常，而是没有底图也没有要素）。v6 的迁移要求因此是硬性的：
+// 由应用在创建 Map 之前显式给出 worker 地址。
+//
+// 用 URL 折算成绝对地址：worker 以 module worker 加载，相对地址按文档基址解析，
+// 显式转绝对可避免 <base> 或页面路径变化带来的歧义。
+maplibregl.setWorkerUrl(new URL("vendor/maplibre-gl-worker.js", document.baseURI).href);
+
 const map = new maplibregl.Map({
   container: "map",
   style: {
@@ -150,7 +163,7 @@ const TILE_FONT_STACK = "Open Sans Regular";
 // 瓦片层（P4R-02）：标准 PMTiles protocol 流程——
 //   new pmtiles.Protocol() → maplibregl.addProtocol("pmtiles", protocol.tile)
 //   → vector source 使用 pmtiles:// URL。
-// MapLibre GL JS 4.7.1 没有内置 "pmtiles" source 类型（原实现直接写
+// MapLibre GL JS 6.4.1 没有内置 "pmtiles" source 类型（原实现直接写
 // `{type:"pmtiles"}`，必然抛错后被 catch 吞掉，瓦片层在任何情况下都不会出现）。
 // addSource 仍须在 style load 之后（A2c-M5）。
 //
