@@ -371,10 +371,33 @@ try {
 
     # $built 现已填充：在此解析两个输出路径的默认值（此处是它们的最早可用点）。
     if (-not $ReleaseNotesPath) { $ReleaseNotesPath = Join-Path $built['A'].Dir 'release-notes-rc.md' }
-    if (-not $reportPath) { $reportPath = Join-Path $built['A'].Dir 'release-validation-report.md' }
+    # 纯赋值，不能写成 `if (-not $reportPath) { … }`：$reportPath 既不是参数也尚未赋值，
+    # StrictMode 2.0 下**读取**它就是终止性错误（$ReleaseNotesPath 是参数，所以那一行的
+    # 读是安全的——两个结构相同但语义不同的语句正是这里出过错的地方）。
+    $reportPath = Resolve-ReportPath -Spec $ValidationReport -Default (Join-Path $built['A'].Dir 'release-validation-report.md')
     # 清单里记录的是**相对指针**（与 ZIP 同级），不是任何机器的绝对路径。
     $validationPointer = if ($ValidationReport) { $ValidationReport } else { 'release-validation-report.md' }
 
+    # 报告文件必须先存在：A 区会在验证之后立刻写出外层清单，而清单校验要求
+    # `validation_report` 指向的文件存在。报告本身要到 B 区与比较块之后才能写全，
+    # 因此这里先落一个**如实说明自己尚未完成**的头部，最终由末尾的完整内容覆盖。
+    # 不这样做的话，第一次写清单会因为报告不存在而失败——此前之所以没暴露，是因为
+    # 报告恰好被写进了仓库，上一次运行留下的旧文件让存在性检查偶然通过。
+    $reportDir = Split-Path -Parent $reportPath
+    if (-not (Test-Path -LiteralPath $reportDir)) { $null = New-Item -ItemType Directory -Path $reportDir -Force }
+    $stubHeader = @(
+        '# ETS2Nav RC 发布验证报告（生成中）'
+        ''
+        '本文件由 desktop/scripts/run-release-pipeline.ps1 生成。'
+        '**若你看到本行且没有后续内容，说明流水线在该点之前中止**，本文件不是完整报告。'
+        '完整报告在 A/B 两个产物都验证完毕后覆盖本文件。'
+        ''
+        "- source commit : $gitCommit (dirty=$gitDirty)"
+        "- workdir       : $WorkDir"
+        "- expected profile : $ExpectProfile"
+        ''
+    ) -join "`r`n"
+    [System.IO.File]::WriteAllText($reportPath, $stubHeader, (New-Object System.Text.UTF8Encoding($false)))
     if ($null -eq $built['A'].Zip -or $null -eq $built['B'].Zip) {
         Write-Host ''
         Write-Host 'PIPELINE: FAIL（至少一份产物未生成，A/B 比较无法进行）'
