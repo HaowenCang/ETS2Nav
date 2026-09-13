@@ -410,9 +410,9 @@ fn parse_port(s: &str) -> Option<u16> {
 
 /// 浏览器来源是否被接受（`/ws` 握手与 `/api/bootstrap` 共用同一策略）。
 ///
-/// 两类被接受：
-/// 1. **本服务器自身的同源页面**——authority 在本机已知地址表内且端口相符；
-/// 2. **CORS 白名单**（实测确认的 Tauri origin）。
+/// 唯一被接受的来源是**本服务器自身的同源页面**——authority 在本机已知地址表内且
+/// 端口相符。Batch 6B §22 删除了此前的 CORS 白名单例外，因为桌面产品已改为同源
+/// 形态，该例外不再有任何生产者。
 ///
 /// `None`（无 `Origin` 头）不在本函数职责内：非浏览器客户端本来就不发 `Origin`，
 /// 它必须靠令牌通过认证。调用方必须先判令牌；本函数只是「若浏览器携带 Origin，
@@ -459,7 +459,60 @@ pub fn is_json_content_type(headers: &[(String, String)]) -> bool {
 pub const HARDENING_HEADERS: &[(&str, &str)] = &[
     ("X-Content-Type-Options", "nosniff"),
     ("Referrer-Policy", "no-referrer"),
+    ("Content-Security-Policy", CSP_POLICY),
 ];
+
+/// 内容安全策略（Batch 6B §23）。
+///
+/// ## 为什么可以收紧到这个程度
+///
+/// 前端的实际需求是**可枚举的**，并且逐项核对过（`tools/ets2nav-web/index.html`
+/// 与 `app.js`）：
+///
+/// ```text
+/// 页面没有任何内联 <script>、没有内联 <style>、没有内联事件属性
+/// 三个 vendor 包与 app.js 都是同源外部文件
+/// 地图 worker 是同源 .js 文件（app.js 用 setWorkerUrl 显式指向）
+/// 字形 PBF、PMTiles、bootstrap、/api/* 全部同源
+/// ```
+///
+/// `script-src 'self'` 因此无需 `'unsafe-inline'`。`style-src` 保留 `'unsafe-inline'`
+/// 是刻意的：MapLibre 通过 HTML 字符串写入带 `style` 属性的元素（归属控件、画布容器），
+/// 去掉它会产出控制台报错，却换不到实质防护——页面不渲染任何用户可控的 HTML，
+/// 样式注入在本页面没有可用的攻击面。
+///
+/// `connect-src` 只允许 `'self'`，不允许裸 `ws:`，也不列举回环端口通配：
+///
+/// - 裸 `ws:` 等于允许页面向任意主机发起 WebSocket，而产品的全部连接目标都是自身同源；
+/// - 同源 WS 由 CSP3 的 `'self'` 规则覆盖（`ws:` 与 `http:` 同主机同端口视为同源）；
+/// - `ws://127.0.0.1:*` 这类兜底会在策略里引入 `*`，而"响应正文中不得出现星号"是
+///   既有 CORS 断言使用的判据——一条只为兜底而存在的通配会迫使那条断言放宽。宁可
+///   让策略更窄，也不放宽一条与 CORS 通配相关的安全检查。
+///
+/// `index.html` 中 `ws://127.0.0.1:8123/ws` 这个回退默认值不受影响：它只在页面并非由
+/// 本服务经 http(s) 提供时（`file://`）才被用到，而那种情形下本策略根本不适用。
+///
+/// `object-src` / `base-uri` / `form-action` / `frame-ancestors` 均为 `'none'`：
+/// 页面不需要插件、不需要改写基址、不提交表单、也不应被任何页面嵌入。
+///
+/// ## 边界
+///
+/// 本策略在**真实 Chromium**（E2E 套件）与**真实 WebView2**（桌面窗口形态）上验证
+/// 通过后才保留；验证结果记录在 `docs/validation/p4r-batch6b-2026-09.md`。局域网
+/// 来源（`http://192.168.x.x:<port>`）的浏览器行为未被本轮独立验证，其依据是同一条
+/// `'self'` 规则——这一点在报告中如实标注，不冒充已覆盖。
+pub const CSP_POLICY: &str = "default-src 'self'; \
+     script-src 'self'; \
+     style-src 'self' 'unsafe-inline'; \
+     img-src 'self' data:; \
+     font-src 'self' data:; \
+     connect-src 'self'; \
+     worker-src 'self' blob:; \
+     child-src 'self' blob:; \
+     object-src 'none'; \
+     base-uri 'none'; \
+     form-action 'none'; \
+     frame-ancestors 'none'";
 
 /// 动态 API 响应的缓存指令：实时导航状态与令牌都不得进入任何缓存。
 pub const NO_STORE_HEADERS: &[(&str, &str)] = &[("Cache-Control", "no-store")];
@@ -525,7 +578,8 @@ pub fn discover_lan_candidates() -> Vec<LanCandidate> {
 ///
 /// Batch 3 该端点名为 `/api/lan-bootstrap`，其职责被描述为「LAN 令牌出口」。
 /// Batch 3.5 改为 `session bootstrap`：令牌在两种模式下都存在，本机页面
-/// （`http://127.0.0.1:…` 与 Tauri 的 `http://tauri.localhost`）都经它取得令牌。
+/// （`http://127.0.0.1:<port>`，Batch 6A 起桌面页面同样由 sidecar 自己在此提供）
+/// 都经它取得令牌。
 /// 旧名不再保留别名——第二个入口只会多出一条需要独立审计的豁免路径。
 pub const BOOTSTRAP_PATH: &str = "/api/bootstrap";
 
@@ -581,27 +635,43 @@ pub fn bootstrap_response(
 
 // ─── CORS ────────────────────────────────────────────────────────────────────
 
-/// 允许携带凭据的跨源 origin 白名单。
+/// 允许携带凭据的跨源 origin 白名单。**当前为空**（Batch 6B §22）。
 ///
-/// 只有 `http://tauri.localhost`：该值是**实测**结果——在 Windows 上运行
-/// `desktop/target/debug/ets2nav-desktop.exe`（Tauri 2.11.5，`frontendDist` 指向
-/// `tools/ets2nav-web/dist`，无 `devUrl`）并对 nav-server 端口做握手捕获，实测
-/// WebView2 发出的握手请求头为 `Origin: http://tauri.localhost`。
+/// 这里曾登记 `http://tauri.localhost`：Batch 3 实测到旧桌面壳（Tauri 2.11.5、
+/// `frontendDist` 指向静态前端）的 WebView2 握手 `Origin` 为该值，因而它是**唯一**
+/// 被实测确认过的跨源来源。Batch 6A 改变了产品架构：窗口改为加载 sidecar 自己在
+/// 回环端口上提供的页面，页面与 API **同源**，于是浏览器根本不会发起跨源请求。
 ///
-/// 刻意不加入下列「记忆中的」候选，因为它们在本项目当前配置下**未被验证**：
-/// `tauri://localhost`（macOS/Linux 自定义协议形式）、`https://tauri.localhost`、
-/// `http://localhost:1420`（Tauri 默认 devUrl——本项目 `tauri.conf.json` 未配置
-/// `devUrl`，dev 与 prod 均走自定义协议）。若将来引入 `devUrl` 或跨平台构建，
-/// 必须重新实测并把测得值加入本表。
-pub const CORS_ALLOWED_ORIGINS: &[&str] = &["http://tauri.localhost"];
+/// 保留一条没有任何生产消费者的许可，等于在受信集合里留下一个无人验证的条目——
+/// 「旧测试还在跑」不构成消费者。审计结论是删除，而不是标注为遗留：
+///
+/// ```text
+/// 删除前：browser_origin_accepted = 自身同源 ∨ 白名单{tauri.localhost}
+/// 删除后：browser_origin_accepted = 自身同源
+/// ```
+///
+/// 机制本身**保留**（`cors_allowed_origin_in` / `cors_headers_in` 等按下表取值），
+/// 并由单测以合成表证明其在非空时按契约工作。这样将来若真的引入第二个受信来源，
+/// 存在一个经过测试的登记点，而不必临时改判定逻辑——也不会退化成通配符。
+///
+/// 若将来重新引入 `devUrl`、跨平台构建或第三方嵌入，必须**重新实测**取得 Origin
+/// 并把测得值加入本表；不得凭记忆填写候选（`tauri://localhost`、
+/// `https://tauri.localhost`、`http://localhost:1420` 在本项目均未被验证过）。
+pub const CORS_ALLOWED_ORIGINS: &[&str] = &[];
 
-/// 命中的白名单常量；未命中返回 `None`。判定与响应头生成共用此函数，
-/// 以免出现「判定为允许但不发头」或反之的分叉。
-fn cors_allowed_origin(origin: &str) -> Option<&'static str> {
-    CORS_ALLOWED_ORIGINS.iter().find(|a| **a == origin).copied()
+/// 按下表取值的白名单判定。参数化是刻意的：策略为空时机制仍需可被证明，
+/// 否则「白名单为空」与「白名单机制被写坏」在测试上不可区分。
+fn cors_allowed_origin_in(list: &[&'static str], origin: &str) -> Option<&'static str> {
+    list.iter().find(|a| **a == origin).copied()
 }
 
-/// 依据请求 `Origin` 生成 CORS 响应头。
+/// 命中当前白名单的常量；未命中返回 `None`。判定与响应头生成共用此函数，
+/// 以免出现「判定为允许但不发头」或反之的分叉。
+fn cors_allowed_origin(origin: &str) -> Option<&'static str> {
+    cors_allowed_origin_in(CORS_ALLOWED_ORIGINS, origin)
+}
+
+/// 依据请求 `Origin` 生成 CORS 响应头（按当前白名单）。
 ///
 /// 未在白名单内（含无 Origin、含 `null`）→ 返回空表，即**不发出任何许可头**。
 /// 绝不回 `*`：通配符与 `Authorization` 凭据组合会把鉴权结果暴露给任意站点。
@@ -611,7 +681,11 @@ fn cors_allowed_origin(origin: &str) -> Option<&'static str> {
 /// 但向前者取值的写法使「响应头中不可能出现请求方构造的字节」成为结构性事实，
 /// 无需再论证 CRLF 注入不可行。
 pub fn cors_headers_for(origin: Option<&str>) -> Vec<(&'static str, String)> {
-    match origin.and_then(cors_allowed_origin) {
+    cors_headers_in(CORS_ALLOWED_ORIGINS, origin)
+}
+
+fn cors_headers_in(list: &[&'static str], origin: Option<&str>) -> Vec<(&'static str, String)> {
+    match origin.and_then(|o| cors_allowed_origin_in(list, o)) {
         Some(matched) => vec![
             ("Access-Control-Allow-Origin", matched.to_string()),
             ("Vary", "Origin".to_string()),
@@ -624,8 +698,18 @@ pub fn cors_headers_for(origin: Option<&str>) -> Vec<(&'static str, String)> {
 ///
 /// 跨源携带 `Authorization` + `Content-Type: application/json` 必然触发预检，
 /// 因此这三项必须齐全；`Allow-Headers` / `Allow-Methods` 逐项列举，不用 `*`。
+///
+/// 当前白名单为空（§22），因此生产路径上该函数恒返回空表。与 `cors_headers_for`
+/// 同样参数化，使「白名单为空」与「预检机制被写坏」保持可区分。
 pub fn preflight_headers_for(origin: Option<&str>) -> Vec<(&'static str, String)> {
-    let mut h = cors_headers_for(origin);
+    preflight_headers_in(CORS_ALLOWED_ORIGINS, origin)
+}
+
+fn preflight_headers_in(
+    list: &[&'static str],
+    origin: Option<&str>,
+) -> Vec<(&'static str, String)> {
+    let mut h = cors_headers_in(list, origin);
     if h.is_empty() {
         return h; // 非白名单 origin：连预检也不得许可
     }
@@ -979,15 +1063,18 @@ mod tests {
     }
 
     #[test]
-    fn browser_origin_accepted_covers_self_and_tauri_only() {
+    fn browser_origin_accepted_covers_self_origin_only() {
         let a = auth_with(8123, &["10.148.63.202"]);
         assert!(browser_origin_accepted(&a, "http://127.0.0.1:8123"));
         assert!(browser_origin_accepted(&a, "http://10.148.63.202:8123"));
-        assert!(browser_origin_accepted(&a, "http://tauri.localhost"));
+        // Batch 6B §22：旧桌面壳的 origin 不再受信。它在产品中已无生产者——桌面窗口
+        // 现在加载 sidecar 自己提供的同源页面——因此这条断言由「必须被接受」翻转为
+        // 「必须被拒绝」。这是收紧而不是放宽。
         for bad in [
             "http://evil.example",
             "http://127.0.0.1:9999",
             "null",
+            "http://tauri.localhost",
             "http://tauri.localhost.evil.example",
         ] {
             assert!(!browser_origin_accepted(&a, bad), "{bad} 必须被拒");
@@ -1365,18 +1452,27 @@ mod tests {
             assert_eq!(code, 403, "Origin {bad} 不得取得令牌");
             assert!(!body.contains(tok.as_str()), "拒绝响应不得包含令牌");
         }
-        // 被接受的两种浏览器来源
-        for ok in ["http://127.0.0.1:8123", "http://tauri.localhost"] {
-            let (code, _) = bootstrap_response(
-                ExposureMode::Lan,
-                PeerClass::Loopback,
-                Some(ok),
-                &auth,
-                &tok,
-                &list,
-            );
-            assert_eq!(code, 200, "Origin {ok} 应被接受");
-        }
+        // 被接受的浏览器来源：只剩本服务器自身同源（§22 后白名单为空）
+        let (code, _) = bootstrap_response(
+            ExposureMode::Lan,
+            PeerClass::Loopback,
+            Some("http://127.0.0.1:8123"),
+            &auth,
+            &tok,
+            &list,
+        );
+        assert_eq!(code, 200, "本服务器同源 Origin 应被接受");
+        // 旧桌面壳 origin 现在必须被拒
+        let (code, body) = bootstrap_response(
+            ExposureMode::Lan,
+            PeerClass::Loopback,
+            Some("http://tauri.localhost"),
+            &auth,
+            &tok,
+            &list,
+        );
+        assert_eq!(code, 403, "已删除的信任例外不得再取得令牌");
+        assert!(!body.contains(tok.as_str()), "拒绝响应不得包含令牌");
     }
 
     #[test]
@@ -1401,6 +1497,83 @@ mod tests {
     // ── CORS ───────────────────────────────────────────────────────────────
 
     #[test]
+    fn shipped_cors_allowlist_is_empty_so_no_origin_gets_headers() {
+        assert!(
+            CORS_ALLOWED_ORIGINS.is_empty(),
+            "§22：产品已同源，不得保留任何无生产消费者的受信 origin"
+        );
+        for origin in [
+            Some("http://tauri.localhost"),
+            Some("http://127.0.0.1:8123"),
+            Some("http://evil.example"),
+            Some("null"),
+            None,
+        ] {
+            assert!(
+                cors_headers_for(origin).is_empty(),
+                "白名单为空时任何 origin 都不得取得许可头: {origin:?}"
+            );
+            assert!(
+                preflight_headers_for(origin).is_empty(),
+                "白名单为空时任何 origin 都不得取得预检许可头: {origin:?}"
+            );
+        }
+    }
+
+    /// 白名单机制本身仍须按契约工作——否则「策略为空」与「机制被写坏」不可区分。
+    /// 用合成表驱动，不依赖 `CORS_ALLOWED_ORIGINS` 的当前取值。
+    #[test]
+    fn cors_mechanism_works_for_a_non_empty_list() {
+        let list: &[&'static str] = &["http://tauri.localhost"];
+        assert_eq!(
+            cors_allowed_origin_in(list, "http://tauri.localhost"),
+            Some("http://tauri.localhost")
+        );
+        let h = cors_headers_in(list, Some("http://tauri.localhost"));
+        assert_eq!(
+            h,
+            vec![
+                (
+                    "Access-Control-Allow-Origin",
+                    "http://tauri.localhost".to_string()
+                ),
+                ("Vary", "Origin".to_string()),
+            ]
+        );
+        // 精确相等，不做前缀/后缀/子域匹配
+        for wrong in [
+            "tauri://localhost",
+            "https://tauri.localhost",
+            "http://localhost:1420",
+            "http://tauri.localhost.evil.example",
+            "http://tauri.localhost:80",
+            "http://tauri.localhos",
+        ] {
+            assert!(
+                cors_headers_in(list, Some(wrong)).is_empty(),
+                "{wrong} 与白名单条目不精确相等，不得命中"
+            );
+        }
+        // 预检在非空表下按契约给出逐项列举、无通配符的许可头
+        let p = preflight_headers_in(list, Some("http://tauri.localhost"));
+        let map: std::collections::HashMap<_, _> = p.iter().cloned().collect();
+        assert_eq!(map["Access-Control-Allow-Origin"], "http://tauri.localhost");
+        assert_eq!(map["Access-Control-Allow-Methods"], "GET, POST, OPTIONS");
+        assert_eq!(
+            map["Access-Control-Allow-Headers"],
+            "Authorization, Content-Type"
+        );
+        assert!(!map["Access-Control-Allow-Methods"].contains('*'));
+        assert!(!map["Access-Control-Allow-Headers"].contains('*'));
+        for bad in [None, Some("http://evil.example"), Some("null")] {
+            assert!(
+                preflight_headers_in(list, bad).is_empty(),
+                "非白名单 origin 的预检不得返回许可头: {bad:?}"
+            );
+        }
+    }
+
+    #[test]
     fn cors_no_wildcard_ever() {
         for origin in [
             None,
@@ -1418,61 +1591,12 @@ mod tests {
     }
 
     #[test]
-    fn cors_only_verified_tauri_origin() {
-        let h = cors_headers_for(Some("http://tauri.localhost"));
-        assert_eq!(
-            h,
-            vec![
-                (
-                    "Access-Control-Allow-Origin",
-                    "http://tauri.localhost".to_string()
-                ),
-                ("Vary", "Origin".to_string()),
-            ]
-        );
-        // 未经实测的形式不得出现在白名单里
-        for wrong in [
-            "tauri://localhost",
-            "https://tauri.localhost",
-            "http://localhost:1420",
-            "http://tauri.localhost.evil.example",
-            "http://tauri.localhost:80",
-        ] {
-            assert!(
-                cors_headers_for(Some(wrong)).is_empty(),
-                "{wrong} 未经实测，不得进入白名单"
-            );
-        }
-    }
-
-    #[test]
     fn cors_denied_origin_gets_no_headers() {
         assert!(cors_headers_for(Some("http://evil.example")).is_empty());
         assert!(cors_headers_for(Some("null")).is_empty());
         assert!(cors_headers_for(None).is_empty(), "无 Origin 不视为许可");
         // 同源请求（Origin 为服务自身）同样不需要 CORS 头——浏览器不会因此失败
         assert!(cors_headers_for(Some("http://192.168.1.9:8123")).is_empty());
-    }
-
-    #[test]
-    fn preflight_only_for_allowed_origin_and_never_wildcard() {
-        let ok = preflight_headers_for(Some("http://tauri.localhost"));
-        let map: std::collections::HashMap<_, _> = ok.iter().cloned().collect();
-        assert_eq!(map["Access-Control-Allow-Origin"], "http://tauri.localhost");
-        assert_eq!(map["Access-Control-Allow-Methods"], "GET, POST, OPTIONS");
-        assert_eq!(
-            map["Access-Control-Allow-Headers"],
-            "Authorization, Content-Type"
-        );
-        assert!(!map["Access-Control-Allow-Methods"].contains('*'));
-        assert!(!map["Access-Control-Allow-Headers"].contains('*'));
-
-        for bad in [None, Some("http://evil.example"), Some("null")] {
-            assert!(
-                preflight_headers_for(bad).is_empty(),
-                "非白名单 origin 的预检不得返回许可头: {bad:?}"
-            );
-        }
     }
 
     #[test]

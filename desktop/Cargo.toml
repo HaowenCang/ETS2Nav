@@ -1,7 +1,14 @@
 [package]
 name = "ets2nav-desktop"
-version = "0.1.0"
+version = "0.7.0-rc.1"
 edition = "2021"
+
+[features]
+# 默认关闭：发布产物不含任何故障注入代码（由 assemble-bundle.ps1 字节扫描强制）。
+# 打开后可在 **release** 配置下注入作业对象失败，用于证明 release 的 fail-closed 判据
+# 真的被执行，而不是仅由阅读代码推断（P4R Batch 6B §4）。
+default = []
+fault-inject = []
 
 [build-dependencies]
 tauri-build = { version = "2", features = [] }

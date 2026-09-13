@@ -662,7 +662,16 @@ mod tests {
             &body[10..=19],
             "206 必须只回请求区间，不得回全量"
         );
-        assert!(out.len() < body.len(), "206 响应不得包含全量表示");
+        // 判据必须落在**载荷**上，而不是整个响应的总字节数。Batch 6B §23 加入 CSP 后
+        // 响应头显著变长，用总长度与表示长度比较会把「头变长」误判成「回了全量」——
+        // 那是判据与语义脱节，不是被测性质失效。此处直接切出头部之后的部分。
+        let sep = out
+            .windows(4)
+            .position(|w| w == b"\r\n\r\n")
+            .expect("响应必须含头部终止空行");
+        let payload = &out[sep + 4..];
+        assert_eq!(payload.len(), 10, "206 响应的载荷长度必须等于请求区间长度");
+        assert_ne!(payload.len(), body.len(), "206 响应不得包含全量表示");
 
         // 端点越界：截断到表示末尾（RFC 9110 §14.1.2）
         let mut out = Vec::new();
@@ -741,7 +750,17 @@ mod tests {
 
     #[test]
     fn http_reply_emits_specific_origin_and_vary() {
-        let cors = crate::security::cors_headers_for(Some("http://tauri.localhost"));
+        // 本测试的对象是**回包写出器**（交给它的头必须原样、正确地出现），不是白名单
+        // 策略。§22 之后 `cors_headers_for` 在生产路径上恒为空表，若继续由它取值，
+        // 这条测试会退化成「空表下不出现头」——与它要证明的性质无关。改用合成头向量，
+        // 使「写出器正确」与「策略为空」两件事各自可证、互不掩盖。
+        let cors: Vec<(&'static str, String)> = vec![
+            (
+                "Access-Control-Allow-Origin",
+                "http://tauri.localhost".to_string(),
+            ),
+            ("Vary", "Origin".to_string()),
+        ];
         let mut out = Vec::new();
         http_reply(&mut out, "200 OK", "application/json", b"{}", &cors).unwrap();
         let text = String::from_utf8_lossy(&out).to_string();
@@ -753,6 +772,26 @@ mod tests {
         );
         // 头部必须以空行结束，body 原样跟随
         assert!(text.contains("\r\n\r\n{}"), "头部与 body 之间必须有空行");
+    }
+
+    #[test]
+    fn http_reply_emits_no_cors_headers_for_the_shipped_policy() {
+        // §22：产品白名单为空，因此按真实策略取值时任何 origin 都得不到许可头。
+        for origin in [
+            Some("http://tauri.localhost"),
+            Some("http://127.0.0.1:8123"),
+            None,
+        ] {
+            let cors = crate::security::cors_headers_for(origin);
+            let mut out = Vec::new();
+            http_reply(&mut out, "200 OK", "application/json", b"{}", &cors).unwrap();
+            let text = String::from_utf8_lossy(&out).to_string();
+            assert!(
+                !text.contains("Access-Control-Allow-Origin"),
+                "白名单为空时不得出现许可头: {origin:?}"
+            );
+            assert!(!text.contains('*'));
+        }
     }
 
     #[test]
@@ -774,7 +813,14 @@ mod tests {
 
     #[test]
     fn static_reply_carries_cors_only_for_allowed_origin() {
-        let cors = crate::security::cors_headers_for(Some("http://tauri.localhost"));
+        // 同 http_reply_emits_specific_origin_and_vary：对象是写出器，不是策略。
+        let cors: Vec<(&'static str, String)> = vec![
+            (
+                "Access-Control-Allow-Origin",
+                "http://tauri.localhost".to_string(),
+            ),
+            ("Vary", "Origin".to_string()),
+        ];
         let mut out = Vec::new();
         http_reply_static(
             &mut out,

@@ -1,0 +1,26 @@
+{
+  "schema": "ets2nav.privacy-allowlist/1",
+  "_comment": "发布产物隐私扫描的人工分类结果。每条目必须同时给出具体文件（相对路径或 glob，相对于**被扫描的 bundle 根**）、具体模式类与真实理由；不得整体豁免某棵树或某个模式类（scan-release-privacy.ps1 会以退出码 3 拒绝这类条目）。条目少而具体是结论，不是默认状态：下面每一条都是逐个人工看过命中上下文之后写下的。",
+  "entries": [
+    {
+      "file": "THIRD_PARTY_NOTICES.txt",
+      "pattern": "node-modules-reference",
+      "reason": "该文件是 GPL-3.0 合规所需的第三方许可声明，必须逐条指出每个随包分发的依赖其版本与许可文本取自何处，因此正文按 tools/ets2nav-web 的目录结构书写 node_modules/<pkg>/LICENSE 这类相对引用。这些引用不含盘符、不含用户目录，也不意味着产物内含 node_modules 目录（产物内的第三方代码只有 web/vendor 下的上游浏览器产物）。豁免只覆盖 node-modules-reference 一类：同一文件仍受 drive-absolute-path、user-profile-path、repo-absolute-path、build-artifact-residue（target/、*.pdb、.git/ 等）、token 各类约束。"
+    },
+    {
+      "file": "web/vendor/maplibre-gl.js",
+      "pattern": "node-modules-reference",
+      "reason": "该文件由 tools/ets2nav-web/scripts/build.mjs 用 esbuild 从 node_modules/maplibre-gl/dist/maplibre-gl.mjs 打包而成，esbuild 会在产物里插入源文件的相对路径注释（如 `// node_modules/maplibre-gl/dist/maplibre-gl.mjs`）。这些是打包器自带的来源标注，不是本机构建残留，且不含盘符与用户目录。逐文件豁免而非整类豁免：产物中其余任何位置的 node_modules/ 命中仍判 FAIL。"
+    },
+    {
+      "file": "web/vendor/maplibre-gl-worker.js",
+      "pattern": "node-modules-reference",
+      "reason": "与 web/vendor/maplibre-gl.js 同源：同一 esbuild 打包步骤从 node_modules/maplibre-gl/dist/maplibre-gl-worker.mjs 生成，产物内的 node_modules/ 字符串是打包器插入的来源注释。理由同上：只豁免这一个文件的这一类命中。"
+    },
+    {
+      "file": "THIRD_PARTY_NOTICES.txt",
+      "pattern": "sdk-archive-reference",
+      "reason": "该文件必须区分「随包分发」与「构建期外部前置」两类第三方组件：SCS Telemetry SDK 属于后者，其归档与头文件不随本发布件分发（vendor/ 整体不入库也不入包，取回与摘要校验由 scripts/prepare-scs-sdk.ps1 承担）。为此声明中记有归档名 vendor/scs_sdk_1_14.zip 与公开的 SHA-256 摘要。这是合规声明所必需的相对引用与公开摘要，不含开发机文件系统位置，也不表示该归档被打进产物。豁免只覆盖本文件的 sdk-archive-reference 一类；同一文件仍受 drive-absolute-path、user-profile-path、build-artifact-residue、token 各类约束。"
+    }
+  ]
+}

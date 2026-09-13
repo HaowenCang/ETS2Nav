@@ -26,6 +26,14 @@ use crate::sha256;
 
 /// bundle 清单文件名。
 pub const MANIFEST_NAME: &str = "bundle-manifest.json";
+/// 本版本 Desktop 理解的清单 schema。
+///
+/// schema 2（Batch 6B §5/§8）相对 schema 1 的**不兼容**改动：`basemap.source` /
+/// `fonts.source` 被 `*.provenance` 取代（旧字段记录调用机器的绝对路径，属发布隐私
+/// 缺陷），并新增 `profile`（CORE/FULL）与 `fonts.tree_sha256`。schema 号递增使
+/// 「旧 Desktop 读到新清单」与「新 Desktop 读到旧清单」都成为**显式失败**，而不是
+/// 静默忽略一个字段后给出看似正常的结论。
+pub const MANIFEST_SCHEMA: u64 = 2;
 /// sidecar 的基准名（不带扩展名与可选 target triple 后缀）。
 pub const SIDECAR_BASE: &str = "nav-core-cli";
 /// 随包前端目录名。
@@ -94,9 +102,9 @@ impl Manifest {
         let raw: serde_json::Value = serde_json::from_str(&text)
             .map_err(|e| format!("{MANIFEST_NAME} 不是合法 JSON: {e}"))?;
         let schema = raw.get("schema").and_then(|v| v.as_u64()).unwrap_or(0);
-        if schema != 1 {
+        if schema != MANIFEST_SCHEMA {
             return Err(format!(
-                "{MANIFEST_NAME} 的 schema={schema}，本版本 Desktop 只理解 schema=1"
+                "{MANIFEST_NAME} 的 schema={schema}，本版本 Desktop 只理解 schema={MANIFEST_SCHEMA}"
             ));
         }
         Ok(Some(Manifest { raw }))
@@ -120,6 +128,16 @@ impl Manifest {
 
     pub fn sidecar_name(&self) -> Option<&str> {
         self.str_at(&["sidecar", "name"])
+    }
+    /// 发布 profile：`FULL`（数据集 + 底图 + 字形齐备）或 `CORE`（缺视觉资源）。
+    ///
+    /// 它是**声明值**，不是由 Desktop 重新推断的结论：推断会在底图被替换成别的文件时
+    /// 仍然给出 FULL。打包脚本按实际内容写入，Desktop 只负责如实转述。
+    pub fn profile(&self) -> Option<&str> {
+        self.str_at(&["profile"])
+    }
+    pub fn app_version(&self) -> Option<&str> {
+        self.str_at(&["app_version"])
     }
     pub fn sidecar_sha256(&self) -> Option<&str> {
         self.str_at(&["sidecar", "sha256"])
@@ -366,18 +384,35 @@ mod tests {
     #[test]
     fn manifest_schema_is_enforced() {
         let root = tmpdir("schema");
-        std::fs::write(root.join(MANIFEST_NAME), r#"{"schema":2}"#).unwrap();
+        // 旧 schema 必须被显式拒绝：静默接受会让 `basemap.provenance` 这类改动在新
+        // Desktop 上「看起来正常」，而它读到的其实是一个 schema 不同的清单。
+        std::fs::write(root.join(MANIFEST_NAME), r#"{"schema":1}"#).unwrap();
         let err = Manifest::load(&root).unwrap_err();
-        assert!(err.contains("schema=2"), "{err}");
+        assert!(err.contains("schema=1"), "{err}");
+        assert!(err.contains(&format!("schema={MANIFEST_SCHEMA}")), "{err}");
         std::fs::write(
             root.join(MANIFEST_NAME),
-            r#"{"schema":1,"sidecar":{"sha256":"ab"}}"#,
+            r#"{"schema":2,"sidecar":{"sha256":"ab"}}"#,
         )
         .unwrap();
         let m = Manifest::load(&root).unwrap().unwrap();
         assert_eq!(m.sidecar_sha256(), Some("ab"));
         assert_eq!(m.sidecar_name(), None);
         assert!(!m.basemap_present());
+        assert_eq!(m.profile(), None, "未声明的 profile 不得被猜成 FULL");
+    }
+
+    #[test]
+    fn profile_and_version_are_read_verbatim() {
+        let root = tmpdir("profile");
+        let text = r#"{"schema":2,"app_version":"0.7.0-rc.1","profile":"CORE",
+                       "basemap":{"present":false},"fonts":{"present":false}}"#;
+        std::fs::write(root.join(MANIFEST_NAME), text).unwrap();
+        let m = Manifest::load(&root).unwrap().unwrap();
+        assert_eq!(m.profile(), Some("CORE"));
+        assert_eq!(m.app_version(), Some("0.7.0-rc.1"));
+        assert!(!m.basemap_present());
+        assert!(!m.fonts_present());
     }
 
     #[test]
@@ -394,7 +429,7 @@ mod tests {
         assert_eq!(actual, sha);
 
         // 清单一致 → Verified
-        let text = format!(r#"{{"schema":1,"sidecar":{{"sha256":"{sha}","bytes":7}}}}"#);
+        let text = format!(r#"{{"schema":2,"sidecar":{{"sha256":"{sha}","bytes":7}}}}"#);
         std::fs::write(root.join(MANIFEST_NAME), text).unwrap();
         let m = Manifest::load(&root).unwrap();
         let (id, _, _) = verify_sidecar(&sidecar, m.as_ref()).unwrap();
@@ -480,7 +515,7 @@ mod tests {
 
         // 清单声明的名字优先
         std::fs::write(root.join("custom.exe"), b"y").unwrap();
-        let text = r#"{"schema":1,"sidecar":{"name":"custom.exe","sha256":"00"}}"#;
+        let text = r#"{"schema":2,"sidecar":{"name":"custom.exe","sha256":"00"}}"#;
         std::fs::write(root.join(MANIFEST_NAME), text).unwrap();
         let m = Manifest::load(&root).unwrap();
         let got = resolve_sidecar(&root, m.as_ref()).unwrap();

@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   Verify an assembled Desktop bundle against its own manifest (P4R Batch 6A section 6).
@@ -64,17 +64,23 @@ if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
     Write-Host "PRECONDITION FAILURE: bundle-manifest.json not found in $BundleDir"
     exit 3
 }
-$m = Get-Content -LiteralPath $manifestPath -Raw | ConvertFrom-Json
+$m = Get-Content -LiteralPath $manifestPath -Raw -Encoding UTF8 | ConvertFrom-Json
 
 Write-Host '=== bundle verification ==='
 Write-Host "bundle   : $BundleDir"
-Write-Host "profile  : $($m.source.profile)  commit=$($m.source.commit) dirty=$($m.source.dirty)"
+Write-Host "version  : $($m.app_version)  profile=$($m.profile)"
+Write-Host "source   : commit=$($m.source.commit) dirty=$($m.source.dirty) cargo_profile=$($m.source.cargo_profile)"
 Write-Host "basemap  : present=$($m.basemap.present)"
 Write-Host "fonts    : present=$($m.fonts.present)"
 Write-Host ''
 
 Write-Host '-- executables --'
-Check 'manifest schema is 1' ($m.schema -eq 1) "schema=$($m.schema)"
+Check 'manifest schema is 2' ($m.schema -eq 2) "schema=$($m.schema)"
+# profile 是**测量值**，必须与磁盘上的资源存在性一致。CORE 被打成 FULL（或反之）会让
+# 产物名称与 release note 描述的完整性与实际内容不符——这正是「Core RC 不得冒称
+# Full Offline」这条要求可以被机械核查的地方。
+$expectedProfile = if ([bool]$m.basemap.present -and [bool]$m.fonts.present) { 'FULL' } else { 'CORE' }
+Check 'profile matches resource presence' ($m.profile -eq $expectedProfile) "declared=$($m.profile) expected=$expectedProfile"
 foreach ($pair in @(@('desktop_exe', 'ets2nav-desktop.exe'), @('sidecar', 'nav-core-cli.exe'))) {
     $key = $pair[0]
     $declaredName = $m.$key.name
@@ -123,6 +129,24 @@ if ($fontsOnDisk) {
     $ft = Get-TreeTotals -Entries $fe
     Check 'fonts file count matches manifest' ($ft.Files -eq [int64]$m.fonts.files)
     Check 'fonts bytes matches manifest' ($ft.Bytes -eq [int64]$m.fonts.bytes)
+    # schema 2 起记录字形树的摘要：只比对文件数会让「换掉内容、保持文件数」通过。
+    $fd = Get-TreeDigest -Entries $fe
+    Check 'fonts tree digest matches manifest' ($fd -eq $m.fonts.tree_sha256) "actual=$($fd.Substring(0,16))... declared=$($m.fonts.tree_sha256.Substring(0,16))..."
+    # ranges 声明必须与磁盘分片互相覆盖（与 assemble-bundle.ps1 同一条判据的独立复核）。
+    $prov = $m.fonts.provenance
+    if ($null -eq $prov) {
+        Check 'fonts provenance present when glyphs ship' $false 'provenance 为 null'
+    } else {
+        $declared = @($prov.ranges -split ',' | ForEach-Object { $_.Trim() } | Where-Object { $_ })
+        $onDisk = @()
+        foreach ($g in (Get-ChildItem -LiteralPath $fontsDir -Recurse -File -Filter '*.pbf')) {
+            $onDisk += ("{0}/{1}" -f (Split-Path -Leaf (Split-Path -Parent $g.FullName)), [IO.Path]::GetFileNameWithoutExtension($g.Name))
+        }
+        $missing = @($declared | Where-Object { $onDisk -notcontains "$($prov.font)/$_" })
+        Check 'every declared range has a glyph file' ($missing.Count -eq 0) "missing=$($missing -join ', ')"
+        $undeclared = @($onDisk | Where-Object { $declared -notcontains ($_ -split '/', 2)[1] })
+        Check 'no undeclared glyph file ships' ($undeclared.Count -eq 0) "undeclared=$($undeclared -join ', ')"
+    }
 }
 
 Write-Host ''

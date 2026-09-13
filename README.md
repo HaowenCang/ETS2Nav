@@ -1,4 +1,4 @@
-# ETS2Nav — Euro Truck Simulator 2 外部智能导航系统
+﻿# ETS2Nav — Euro Truck Simulator 2 外部智能导航系统
 
 独立于游戏原生 Route Advisor 的外部智能导航系统：自行解析 ETS2 地图资源建立导航数据库，提供独立路径规划、实时地图匹配、转向导航、红绿灯倒计时（±1 s 目标）、限速与测速提示、POI 搜索、中文语音导航，PC 核心 + PC/移动端双前端。
 
@@ -42,9 +42,12 @@ ETS2 Files ──▶ Map Compiler (C#/TS，离线低频) ──▶ map.db / rout
 | `-Suite CLI` | 否 | 是 | 是 |
 | `-Suite FaultContainment` | 否 | 是 | 是 |
 | `-Suite Desktop` | 否 | 是 | 是 |
+| `-Suite JobObject` | 否 | 是 | 是 |
 | `-Suite P5` | 否 | 是 | 是 |
 | `-Suite P1` / `P2` / `P3` | 是 | P2/P3 是 | 否 |
 | `-Suite SelfTest` | 否 | 否 | 是 |
+
+`-Suite Release`（Batch 6B 引入）同样不需要游戏资源、需要数据集，但**不进 required CI**：它把 373 MB 数据集完整打包并解压两轮做可复现性对照，成本远高于其边际检出能力，而数据集本身已由 `Dataset Gates` 下载并校验。发布证据链由它在本机产出并写进当轮报告。
 
 `Portable` 覆盖 cargo fmt/clippy/test、map-compiler 的 portable dotnet 测试（显式排除 `GameAssetsRequired` 分类并断言执行数）、前端 clean build 两轮哈希比对与 `build-manifest.json` 校验、**MapLibre 版本门**（离线判定已安装版本 ≥ 安全下限 `6.4.1` 且与 lockfile、精确钉版一致，advisory 下限写成脚本内常量，不随 advisory 数据库变化）、**telemetry plugin 产物身份检查**（PE x64 DLL、导出齐备、镜像内无开发机绝对路径）、**SCS SDK provenance 契约核对**（离线：URL/文件名/SHA-256/必需头/许可，不联网）、Desktop 编译门以及 harness 自检。
 
@@ -52,9 +55,15 @@ ETS2 Files ──▶ Map Compiler (C#/TS，离线低频) ──▶ map.db / rout
 
 `Desktop` 从 clean build 出发组装发布 bundle（release 的桌面壳 + sidecar + 前端产物 + 数据集），独立复核每个身份后，用 **bundle 内**的 Desktop 真实跑一遍生命周期：身份校验、运行时端口协商、可服务、退出回收、无孤儿（含被强杀的情形，由作业对象保证）。窗口形态（真实 WebView 渲染 UI 并连上 WS）需要在交互式桌面上运行 `--windowed`，不在云端步骤内。
 
+`JobObject` 判定**作业对象不可用时的 fail closed**：`create` 或 `assign` 失败即启动失败、sidecar 被立即回收、退出码 24（`kind=sidecar-job-required`）、且不建窗口。判定对象是 `--release --features fault-inject` 的构建——注入代码默认不编译进发布产物，而「release 在作业对象缺失时会怎样」这条判据若只在 debug 上验证，就只是一条只在测试里存在的旁路。发布产物本身不含注入面，由 `assemble-bundle.ps1` 在组装时按字节扫描断言。开发者可用 `--allow-no-job-object` 显式降级，此时必须留下 WARN 且状态可观测。
+
+`Portable` 另含**发布隐私扫描器自检**：用一个临时树同时放正样本（每种泄漏模式各一）与负样本（`http://`、`https://`、文档中的回环默认端口都不得被误判），逐条核对分类结果。扫描器本身失效会让「零命中」变成一句没有依据的话，因此自检进源码门。
+
 CI 定义见 `.github/workflows/ci.yml`。
 
-四个 workflow job 的显示名即 `main` 保护检查的名称：`Source Gates`、`Dataset Gates`、`Web E2E`、`Security Portable`。名称里不含矩阵或版本，可长期稳定引用。`Security Portable` 这个后缀是有意的：该 job 真实门控的是**协议集成**（`test:protocol`）、**浏览器回环安全**（`test:browser-loopback`，BLS-01..09，真实 Chromium + 真实攻击页面）、**数据源故障遏制**（`-Suite FaultContainment`）与**桌面 bundle 生命周期**（`-Suite Desktop`），都不是完整 S1–S11 局域网矩阵。S9（不受允许来源在连接层被拒绝）需要一个非 RFC1918 的真实对端地址，hosted runner 不具备，脚本因此报 `NOT VERIFIED` 并以非零退出；该矩阵在 job 内仍原样运行（`continue-on-error`，不删断言、不改写结论），完整形态属本地/发布门：本机实测 `FAIL=0 NOT_VERIFIED=0 SKIP=0`。因此 `Security Portable` 通过只声称 portable protocol + browser-loopback + 故障遏制 + 桌面生命周期，不代表完整局域网矩阵。
+四个 workflow job 的显示名即 `main` 保护检查的名称：`Source Gates`、`Dataset Gates`、`Web E2E`、`Security Portable`。名称里不含矩阵或版本，可长期稳定引用。`Security Portable` 这个后缀是有意的：该 job 真实门控的是**协议集成**（`test:protocol`）、**浏览器回环安全**（`test:browser-loopback`，BLS-01..09，真实 Chromium + 真实攻击页面）、**数据源故障遏制**（`-Suite FaultContainment`）、**桌面 bundle 生命周期**（`-Suite Desktop`）与**作业对象 fail closed**（`-Suite JobObject`），都不是完整 S1–S11 局域网矩阵。S9（不受允许来源在连接层被拒绝）需要一个非 RFC1918 的真实对端地址，hosted runner 不具备，脚本因此报 `NOT VERIFIED` 并以非零退出；该矩阵在 job 内仍原样运行（`continue-on-error`，不删断言、不改写结论），完整形态属本地/发布门：本机实测 `FAIL=0 NOT_VERIFIED=0 SKIP=0`。因此 `Security Portable` 通过只声称 portable protocol + browser-loopback + 故障遏制 + 桌面生命周期 + 作业对象判据，不代表完整局域网矩阵。
+
+分支保护自 P4R Batch 6B 起 `enforce_admins = true`：四个 required check 对仓库管理员同样是硬门，管理员直接推送 `main` 会被 GitHub 拒绝。所有改动（含报告本身的修订）都经 feature branch → required checks → PR 合入。
 
 ```bat
 :: 游戏安装目录必须显式提供：回归入口不猜测本机位置
@@ -115,7 +124,7 @@ npm run build          :: 生成 dist\（vendor 库 + 页面 + build-manifest.js
 ```
 
 产物为 `tools/ets2nav-web/dist/`，即 nav-server 的默认 web root（可用 `--web=` 覆盖），也是桌面 bundle 的 `web/` 来源。
-`maplibre-gl` 精确钉在 `6.4.1`（修复 critical advisory GHSA-jrc7-96c5-q579 / CVE-2026-85061，影响 `<= 6.4.0`）。MapLibre 6 只发布 ESM，且打包后库无法自行定位 worker，因此构建额外产出 `vendor/maplibre-gl-worker.js`，由 `app.js` 以 `setWorkerUrl` 显式指向；该文件缺失时地图不会进入 loaded 状态，故它属必需产物。`tools/graph-debugger` 是独立的开发工具，**未**随之升级（其自引用仍固定在受影响范围内的 unpkg 4.7.1，且该工具当前无法运行）——它是既有遗留项，不属于发布运行时。
+`maplibre-gl` 精确钉在 `6.4.1`（修复 critical advisory GHSA-jrc7-96c5-q579 / CVE-2026-85061，影响 `<= 6.4.0`）。MapLibre 6 只发布 ESM，且打包后库无法自行定位 worker，因此构建额外产出 `vendor/maplibre-gl-worker.js`，由 `app.js` 以 `setWorkerUrl` 显式指向；该文件缺失时地图不会进入 loaded 状态，故它属必需产物。`tools/graph-debugger` 是独立的开发工具，**不进入任何 release artifact**。P4R Batch 6B 已把它从 unpkg 的 `maplibre-gl@4.7.1`（落在同一 advisory 的受影响区间内）改为引用本地构建产物，并修复了它自身的语法错误与并不存在的 `{type:'pmtiles'}` source；运行期公共 CDN 引用已完全移除，由真实 Chromium 冒烟门 `npm run verify:graph-debugger` 断言「零非回环请求」。
 
 `map.pmtiles` 与 `fonts/` 属运行期可选资源：缺失时前端降级（无底图 / 跳过 city 文字层），并在 console 输出 INFO/WARN，不静默失败。**它们当前尚未随发布包分发**，因此不得把本产品描述为"完整离线地图"；发布契约见 `docs/validation/p4r-batch6a-2026-09.md` §10（组装脚本已支持 `-MapPmtiles` / `-FontsDir`，并把有无如实记入 `bundle-manifest.json`）。
 依赖版本、来源与产物 SHA-256 记录于 `dist/build-manifest.json`；打包产物的整体身份记录于 bundle 的 `bundle-manifest.json`（桌面壳与 sidecar 的 SHA-256、前端与数据集的树摘要、数据集自身的 content fingerprint）。
@@ -131,7 +140,7 @@ ets2nav-desktop.exe
   Tauri WebView ── 加载 http://127.0.0.1:<运行时端口>/
 ```
 
-页面与 API **同源**，因此 bootstrap / WS / `/api/*` 与普通浏览器走完全相同的路径（跨源模型退出产品）。端口经 sidecar 的 stdout 通道 `[server] port=<n>` 协商，**令牌不经该通道**——它只经回环 `/api/bootstrap` 交付。退出码：`0` 正常；`2` 用法；`20` 打包缺陷（sidecar 缺失/身份不符/前端产物缺失）；`21` 数据集；`22` sidecar 启动失败；`23` sidecar 运行期意外退出。退出时 sidecar 被显式终止，且由作业对象保证 Desktop 自身被强杀时也不留孤儿。
+页面与 API **同源**，因此 bootstrap / WS / `/api/*` 与普通浏览器走完全相同的路径（跨源模型退出产品）。端口经 sidecar 的 stdout 通道 `[server] port=<n>` 协商，**令牌不经该通道**——它只经回环 `/api/bootstrap` 交付。退出码：`0` 正常；`2` 用法；`20` 打包缺陷（sidecar 缺失/身份不符/前端产物缺失/版本与清单不符）；`21` 数据集；`22` sidecar 启动失败；`23` sidecar 运行期意外退出；`24` 作业对象不可用。退出时 sidecar 被显式终止，且由作业对象保证 Desktop 自身被强杀时也不留孤儿——这条保证是**必需**的：作业对象创建或加入失败时 Desktop 拒绝启动（退出码 24，不建窗口），而不是降级为一个不再成立的承诺。开发者可用 `--allow-no-job-object` 显式降级，此时会留下 WARN。
 
 ```bat
 :: 组装发布 bundle（release 桌面壳 + sidecar + 前端产物 + 数据集）
@@ -150,6 +159,21 @@ node desktop\tests\desktop-lifecycle.mjs --bundle <输出目录> [--windowed]
 两个插件 DLL（`scs-nav-bridge` / `semaphore-bridge`）由 `telemetry-plugin/*/build.bat` 用 MSVC 构建；SDK 头文件不随仓库分发（`vendor/` 被忽略），取回与摘要校验由 `scripts/prepare-scs-sdk.ps1` 承担：固定官方 URL 与文件名、固定 SHA-256（`c6c1f737…023a`，62794 字节，许可为 MIT，允许再分发）、摘要不符即失败且不落盘任何头文件。插件产物另有机器契约检查 `scripts/verify-plugin-artifacts.ps1`（PE x64 DLL、`.def` 声明的导出齐备、镜像内无开发机绝对路径、与 provenance 清单对应）。构建已加 `/Brepro`，因此从不同绝对路径的三次 clean build 逐字节一致。
 
 **是否把该下载接入 required CI 的信任根尚未决定**，因此本轮只把 provenance 清单的**离线契约**放进 `Portable` 门；取回 SDK 仍是打包/发布时的显式外部前置。
+
+### Release Candidate 打包（P4R Batch 6B）
+
+候选版本号为 `0.7.0-rc.1`，单一事实来源是 `desktop/Cargo.toml` 的 `[package] version`：`nav-core-cli/Cargo.toml`、`desktop/tauri.conf.json`、`tools/ets2nav-web/package.json` 三处必须与它一致，`assemble-bundle.ps1` 在组装时核对（不一致即 PRECONDITION FAILURE），Desktop 在启动时也核对清单声明（不一致即退出码 20）。此前 `bundle-manifest.json` 的 `app_version` 是硬编码的 `0.1.0`，与 Cargo 版本长期漂移；现在这条一致性是机器判据，不只是文档约定。
+
+```bat
+:: 组装 staging -> 校验 -> 打包 -> 解压到全新路径 -> 再校验 -> 从解压产物跑生命周期；A/B 两次做可复现性对照
+powershell -NoProfile -ExecutionPolicy Bypass -File desktop\scripts\run-release-pipeline.ps1 -Dataset <数据集目录>
+```
+
+产物是**可移植 ZIP**（`ETS2Nav-<version>-windows-x64-<profile>.zip`），顶层为单一目录 `ETS2Nav/`，内含两个可执行文件、`bundle-manifest.json`、`LICENSE`、`THIRD_PARTY_NOTICES.txt`、`plugins/`、`data/europe-v5/`、`web/`。`profile` 是**测量值**：只有数据集、底图、字形三类资源齐备才写 `FULL`，否则写 `CORE`；因此当前产物是 **Core RC**，不得称 Full Offline。发布层另有 `SHA256SUMS.txt` 与 `release-manifest.json`，后者记录 artifact 字节数/SHA、解压后 bundle 树摘要、两个可执行文件与插件 DLL 的 SHA、数据集与 MapLibre 版本、SCS SDK SHA 以及**实机验证状态**。
+
+第三方许可清单由 `scripts/generate-third-party-notices.ps1` 生成（`-Check` 校验是否过期），所有许可事实取自锁文件、已安装包的 `package.json` 与 `LICENSE`、`cargo metadata` 与 SDK 归档内的许可文本，不手写猜测。Windows 代码签名状态为 **未签名且已披露**——本项目没有代码签名证书，产物不得被描述为「已签名」或「可信发布者」。
+
+**当前不得发布 stable：** B1–B6 实机验收未执行，重建后的插件 DLL 未在游戏内验证，底图与字形未随包分发。候选二进制身份（各 SHA-256）在 `docs/validation/p4r-batch6b-2026-09.md` 中冻结，B1–B6 必须绑定该组 SHA；任一二进制在测试中途改变，对应证据即失效。
 
 ### 测试入口（P4R Batch 2 起）
 

@@ -79,7 +79,7 @@
 [CmdletBinding()]
 param(
     [ValidateSet('P1', 'P2', 'P3', 'P5', 'All', 'SelfTest', 'Portable', 'CLI',
-        'FaultContainment', 'Desktop')]
+        'FaultContainment', 'Desktop', 'JobObject', 'Release')]
     [string[]]$Suite = @('All'),
 
     [string]$Ets2Install,
@@ -1796,6 +1796,26 @@ function Invoke-PortableSuite {
         -SemanticText 'exit 0 且输出 "[gate] PASS"（已安装版本 ≥ 6.4.1 且与 lockfile 一致）' `
         -Semantic { param($out, $err) Test-Contains $out '[gate] PASS' 'MapLibre 版本门通过行' })
 
+    # [6c] 发布隐私扫描器自检（Batch 6B §5/§29）。纯逻辑、不需要数据集或产物：
+    # 用一个临时树同时放正样本（每种泄漏模式各一）与负样本（http://、https://、
+    # 文档中的回环默认端口等不得被误判），逐条核对分类结果。自检进源码门是有意的：
+    # 扫描器本身失效会让「零命中」变成一句没有依据的话。
+    [void](Invoke-NativeStep -Suite Portable -Name 'release-privacy-selftest' -FilePath $powershell `
+        -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+            (Join-Path $script:RepoRoot 'desktop/scripts/scan-release-privacy.ps1'), '-SelfTest') `
+        -WorkingDirectory $script:RepoRoot `
+        -SemanticText 'exit 0；自检汇总 PASS；正/负样本计数均非零（零样本的自检不得算通过）' `
+        -Semantic {
+            param($out, $err)
+            Test-All @(
+                # 只匹配 **ASCII**：子进程 stdout 经管道解码后中文不可靠（见扫描器内的注释），
+                # 门控判据必须与编码无关。计数断言要求分子等于分母，且正/负样本数量非零。
+                (Test-Match $out 'PRIVACY SELF-TEST:\s*PASS' '隐私扫描器自检汇总行'),
+                (Test-Match $out 'PRIVACY SELF-TEST SUMMARY: positives (\d+)/\1 negatives (\d+)/\2 allowlist (\d+)/\3' '计数分子等于分母且非零'),
+                (Test-NotContains $out '[FAIL]' '不得有分类错误的样本')
+            )
+        })
+
     $diff = @()
     foreach ($rel in $script:FrontendArtifacts) {
         $a = $snaps[1][$rel]; $b = $snaps[2][$rel]
@@ -2062,6 +2082,115 @@ function Invoke-DesktopSuite {
 }
 
 # ─────────────────────────────────────────────────────────────────────────────
+# JobObject 套件（Batch 6B §4）
+#
+# 被判定的性质是「**release 构建**在作业对象不可用时 fail closed」。这条判据若只在
+# debug 构建上验证，就只是「一条只在测试里存在的旁路」——因此这里显式构建
+# `--release --features fault-inject` 的可执行文件：它的判据路径与发布产物相同，
+# 只有注入开关是额外的。发布产物本身由 assemble-bundle.ps1 字节扫描保证不含注入面
+# （本套件的 assemble 步骤复用同一条检查）。
+#
+# 为什么注入构建用独立 target-dir：cargo 对同一 package 的不同 feature 集合输出到
+# **同一个** target/release 路径。若共用，先构建的发布产物会被注入构建覆盖，而
+# 「随包二进制不含注入面」这条性质会因此静默失效。
+# ─────────────────────────────────────────────────────────────────────────────
+function Invoke-JobObjectSuite {
+    param([hashtable]$Cfg)
+    Write-Rule 'JobObject Suite（作业对象 fail closed）'
+    $cargo = Resolve-Tool 'cargo'
+    $node = Resolve-Tool 'node'
+    $npm = Resolve-Tool 'npm'
+    $powershell = Resolve-Tool 'powershell'
+    $web = Join-Path $script:RepoRoot 'tools/ets2nav-web'
+    $navCore = Join-Path $script:RepoRoot 'nav-core'
+    $bundle = Join-Path $script:TempRoot 'jobobject-bundle'
+    $injectRelease = Join-Path $script:RepoRoot 'desktop/target/fault-inject-release/release/ets2nav-desktop.exe'
+    $injectDebug = Join-Path $script:RepoRoot 'desktop/target/fault-inject-debug/debug/ets2nav-desktop.exe'
+
+    [void](Invoke-NativeStep -Suite JobObject -Name 'build-nav-core-cli-release' -FilePath $cargo `
+        -Arguments @('build', '--release', '-p', 'nav-core-cli') -WorkingDirectory $navCore)
+    $r = Invoke-NativeStep -Suite JobObject -Name 'build-desktop-release' -FilePath $cargo `
+        -Arguments @('build', '--release', '--manifest-path', 'desktop/Cargo.toml') `
+        -WorkingDirectory $script:RepoRoot
+    if ($r.Result -ne 'PASS') {
+        [void](Add-RepoCheck -Suite JobObject -Name 'jobobject-not-attempted' -Ok $false `
+            -Detail 'release 构建失败，作业对象判据未执行' -SemanticText 'release 构建前置成立')
+        return
+    }
+    [void](Invoke-NativeStep -Suite JobObject -Name 'build-desktop-inject-release' -FilePath $cargo `
+        -Arguments @('build', '--release', '--features', 'fault-inject',
+            '--target-dir', 'desktop/target/fault-inject-release',
+            '--manifest-path', 'desktop/Cargo.toml') -WorkingDirectory $script:RepoRoot)
+    [void](Invoke-NativeStep -Suite JobObject -Name 'build-desktop-inject-debug' -FilePath $cargo `
+        -Arguments @('build', '--features', 'fault-inject',
+            '--target-dir', 'desktop/target/fault-inject-debug',
+            '--manifest-path', 'desktop/Cargo.toml') -WorkingDirectory $script:RepoRoot)
+
+    if (-not (Test-Path -LiteralPath (Join-Path $web 'dist/index.html') -PathType Leaf)) {
+        [void](Invoke-NativeStep -Suite JobObject -Name 'frontend-npm-ci' -FilePath $npm `
+            -Arguments @('ci', '--no-fund', '--no-audit') -WorkingDirectory $web)
+        [void](Invoke-NativeStep -Suite JobObject -Name 'frontend-build' -FilePath $npm `
+            -Arguments @('run', 'build') -WorkingDirectory $web)
+    }
+
+    [void](Invoke-NativeStep -Suite JobObject -Name 'assemble-bundle' -FilePath $powershell `
+        -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File',
+            (Join-Path $script:RepoRoot 'desktop/scripts/assemble-bundle.ps1'),
+            '-OutDir', $bundle, '-Dataset', $Cfg.Dataset.Path, '-Profile', 'release') `
+        -WorkingDirectory $script:RepoRoot `
+        -SemanticText 'exit 0 且输出 "=== bundle assembled ==="（含发布产物无注入面的字节扫描）' `
+        -Semantic { param($out, $err) Test-Contains $out '=== bundle assembled ===' 'bundle 组装完成行' })
+
+    [void](Invoke-NativeStep -Suite JobObject -Name 'job-object-gate' -FilePath $node `
+        -Arguments @('desktop/tests/job-object-gate.mjs', '--bundle', $bundle,
+            '--inject-exe-release', $injectRelease, '--inject-exe-debug', $injectDebug) `
+        -WorkingDirectory $script:RepoRoot `
+        -SemanticText 'exit 0 且汇总行为 "JOB OBJECT GATE: PASS"（J-01…J-06 全部断言通过，无 NOT VERIFIED）' `
+        -Semantic {
+            param($out, $err)
+            Test-All @(
+                (Test-Match $out 'JOB OBJECT GATE: PASS \(\d+ checks\)' '作业对象门汇总行'),
+                (Test-NotContains $out '[FAIL]' '不得有任何 FAIL 行'),
+                (Test-NotContains $out '[NOT VERIFIED]' '不得有未执行项（两种 profile 的注入构建都须存在）')
+            )
+        })
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Release 套件（Batch 6B §14/§16/§17/§18/§29）
+#
+# 被判定的对象是**最终要上传的字节**，不是 staging 目录：组装 → 校验 → 打包 →
+# 解压到全新路径 → 再校验 → 从解压产物启动 Desktop 跑完整生命周期。两次独立打包
+# 用于区分 payload 可复现性与 archive 字节可复现性。
+#
+# 该套件刻意**不进 required CI**（§14 的评估结论）：它需要把 373 MB 数据集完整打包并
+# 解压两轮，成本远高于其边际检出能力，且数据集本身已由 Dataset Gates 下载并校验。
+# 发布证据链由本套件在本机产出并记录进报告。
+# ─────────────────────────────────────────────────────────────────────────────
+function Invoke-ReleaseSuite {
+    param([hashtable]$Cfg)
+    Write-Rule 'Release Suite（可分发产物：打包、二次验证、可复现性）'
+    $powershell = Resolve-Tool 'powershell'
+    $pipeline = Join-Path $script:RepoRoot 'desktop/scripts/run-release-pipeline.ps1'
+    $work = Join-Path $script:TempRoot 'rc-pipeline'
+
+    [void](Invoke-NativeStep -Suite Release -Name 'release-pipeline' -FilePath $powershell `
+        -Arguments @('-NoProfile', '-ExecutionPolicy', 'Bypass', '-File', $pipeline,
+            '-Dataset', $Cfg.Dataset.Path, '-WorkDir', $work, '-ExpectProfile', 'CORE') `
+        -WorkingDirectory $script:RepoRoot `
+        -SemanticText 'exit 0；payload 可复现性 PASS；archive 可复现性明确给出 PASS 或 NOT CLOSED' `
+        -Semantic {
+            param($out, $err)
+            Test-All @(
+                (Test-Match $out 'Payload reproducibility\s*=\s*PASS' 'payload 可复现性判定行'),
+                (Test-Match $out 'Archive reproducibility\s*=\s*(PASS|NOT CLOSED)' 'archive 可复现性判定行'),
+                (Test-NotContains $out 'PRECONDITION FAILURE' '不得有前置条件失败'),
+                (Test-NotContains $out '[FAIL]' '不得有任何 FAIL 行')
+            )
+        })
+}
+
+# ─────────────────────────────────────────────────────────────────────────────
 # 主流程
 # ─────────────────────────────────────────────────────────────────────────────
 function Get-FailedSteps {
@@ -2141,17 +2270,22 @@ try {
         Write-Summary 'Harness SelfTest'
         $exit = Get-ExitCode
     } elseif (($Suite -contains 'Portable') -or ($Suite -contains 'CLI') -or
-        ($Suite -contains 'FaultContainment') -or ($Suite -contains 'Desktop')) {
-        # Portable / CLI / FaultContainment / Desktop 是**云端可执行门**，与 P1/P2/P3 的
-        # 完整门分离。四者都不需要游戏资源：
+        ($Suite -contains 'FaultContainment') -or ($Suite -contains 'Desktop') -or
+        ($Suite -contains 'JobObject') -or ($Suite -contains 'Release')) {
+        # Portable / CLI / FaultContainment / Desktop / JobObject / Release 是**云端可执行门**，
+        # 与 P1/P2/P3 的完整门分离。六者都不需要游戏资源：
         #   Portable         连数据集都不需要（源码门）
         #   CLI              只需要 released dataset
         #   FaultContainment 需要 released dataset + debug 二进制（故障注入只在 debug 存在）
         #   Desktop          需要 released dataset + release 二进制（发布形态）
+        #   JobObject        需要 released dataset + 两种 profile 的 fault-inject 构建
+        #   Release          需要 released dataset；做两次独立打包做可复现性对照
         $wantPortable = $Suite -contains 'Portable'
         $wantCli = $Suite -contains 'CLI'
         $wantFc = $Suite -contains 'FaultContainment'
         $wantDesktop = $Suite -contains 'Desktop'
+        $wantJobObject = $Suite -contains 'JobObject'
+        $wantRelease = $Suite -contains 'Release'
         # 本分支只服务云端门。P1/P2/P3/P5 由下面的 else 分支服务，因此把它们与云端门
         # 混在一次调用里会被**静默丢弃**——请求了 P5 却不跑 P5，是最坏的一类假绿。
         # 这里显式拒绝，而不是默默只跑其中一部分（CI 本来就是分步执行的）。
@@ -2160,7 +2294,7 @@ try {
             })
         if ($mixed.Count -gt 0) {
             throw [HarnessException]::new(
-                "HARNESS FAILURE: 云端门（Portable/CLI/FaultContainment/Desktop）不能与 " +
+                "HARNESS FAILURE: 云端门（Portable/CLI/FaultContainment/Desktop/JobObject/Release）不能与 " +
                 "$($mixed -join ',') 合并成一次调用——本分支不会执行后者。请分次执行，例如 " +
                 "-Suite P5 与 -Suite CLI 各一次。")
         }
@@ -2171,7 +2305,7 @@ try {
         if ($wantPortable) {
             Write-Log 'portable    : 不需要 ETS2 游戏资源、不需要导航数据集（源码门）'
         }
-        if ($wantCli -or $wantFc -or $wantDesktop) {
+        if ($wantCli -or $wantFc -or $wantDesktop -or $wantJobObject -or $wantRelease) {
             $Cfg.Dataset = Get-DatasetPath -Explicit $Dataset
             Write-Log "dataset     : $($Cfg.Dataset.Path)  [$($Cfg.Dataset.Source)]"
             # 与 P 系列一致：把解析结果导出给子进程，避免「参数传了一个、环境变量是另一个」。
@@ -2191,6 +2325,8 @@ try {
         if ($wantCli) { Invoke-CliSuite -Cfg $Cfg }
         if ($wantFc) { Invoke-FaultContainmentSuite -Cfg $Cfg }
         if ($wantDesktop) { Invoke-DesktopSuite -Cfg $Cfg }
+        if ($wantJobObject) { Invoke-JobObjectSuite -Cfg $Cfg }
+        if ($wantRelease) { Invoke-ReleaseSuite -Cfg $Cfg }
 
         Write-Summary ($Suite -join '+')
         $exit = Get-ExitCode
