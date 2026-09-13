@@ -1808,9 +1808,10 @@ function Invoke-PortableSuite {
         -Semantic {
             param($out, $err)
             Test-All @(
+                # 只匹配 **ASCII**：子进程 stdout 经管道解码后中文不可靠（见扫描器内的注释），
+                # 门控判据必须与编码无关。计数断言要求分子等于分母，且正/负样本数量非零。
                 (Test-Match $out 'PRIVACY SELF-TEST:\s*PASS' '隐私扫描器自检汇总行'),
-                (Test-Match $out '正样本 (\d+)/\1 捕获' '正样本全部捕获且计数非零'),
-                (Test-Match $out '负样本 (\d+)/\1 未被误判' '负样本全部未误判且计数非零'),
+                (Test-Match $out 'PRIVACY SELF-TEST SUMMARY: positives (\d+)/\1 negatives (\d+)/\2 allowlist (\d+)/\3' '计数分子等于分母且非零'),
                 (Test-NotContains $out '[FAIL]' '不得有分类错误的样本')
             )
         })

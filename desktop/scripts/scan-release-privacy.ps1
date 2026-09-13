@@ -458,6 +458,12 @@ function Invoke-SelfTest {
     $allowCases = 2
 
     Write-Host ''
+    # 纯 ASCII 汇总行（CI 断言只匹配这一行）。
+    # 中文那一行是给人看的，但**不能**作为门控判据：子进程 stdout 经管道回到父 PowerShell
+    # 时按控制台代码页解码，在 GitHub runner 上中文会变成 `?`、`→` 会变成 0x1A，
+    # 于是「匹配中文」的断言在本地通过而在 runner 上失败。门控判据必须与编码无关。
+    Write-Host ("PRIVACY SELF-TEST SUMMARY: positives {0}/{1} negatives {2}/{3} allowlist {4}/{4}" -f `
+        $posCaught, $cases.Count, $negClean, $negatives.Count, $allowCases)
     Write-Host ("自检统计: 正样本 {0}/{1} 捕获；负样本 {2}/{3} 未被误判；允许清单用例 {4}/{4}" -f `
         $posCaught, $cases.Count, $negClean, $negatives.Count, $allowCases)
     if ($fail.Count -gt 0) {
