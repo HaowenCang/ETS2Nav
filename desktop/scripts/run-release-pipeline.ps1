@@ -162,7 +162,10 @@ function Compare-InputFingerprint {
 }
 
 function Format-FingerprintValue {
-    param([Parameter(Mandatory)][string]$Value)
+    param([Parameter(Mandatory)][AllowEmptyString()][string]$Value)
+    # 空串是**合法取值**：git-worktree-status 在干净树上的值就是空串，而干净树恰恰是本守卫
+    # 要认证的情形。渲染为 (clean) 而不是空白，避免把「空」误读成「没有这一项」。
+    if ($Value.Length -eq 0) { return '(clean)' }
     if ($Value.Length -le 20) { return $Value }
     return $Value.Substring(0, 20) + '…'
 }
