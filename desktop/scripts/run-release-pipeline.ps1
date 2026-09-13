@@ -553,7 +553,9 @@ try {
     [void]$sb.AppendLine()
     [void]$sb.AppendLine('## 未验证项（NOT VERIFIED）')
     [void]$sb.AppendLine()
-    [void]$sb.AppendLine('1. **REAL-GAME B1–B6 未运行**：本机未安装 Euro Truck Simulator 2，游戏内验证不在本轮范围内。')
+    [void]$sb.AppendLine('1. **REAL-GAME B1–B6 未运行**：$ETS2_INSTALL 与 $ETS2NAV_EXTRACTED 在 process/user/machine 三个作用域均未设置，
+   而本流水线**不猜测游戏安装目录**，因此无法定位游戏资源；游戏内验证不在本轮范围内。' + 
+   '「未设置」不等于「未安装」——本报告不声称机器上没有游戏。')
     [void]$sb.AppendLine('2. **FULL 档位未端到端执行**：本环境没有底图 ``map.pmtiles`` 与字形 ``fonts/`` 资源，')
     [void]$sb.AppendLine('   因此只可能产出 CORE 产物；FULL 路径（含 provenance 校验、字形 ranges 覆盖检查）本工具支持但本轮未执行。')
     [void]$sb.AppendLine('3. **代码签名**：无证书，``Get-AuthenticodeSignature`` 对四个二进制报告 NotSigned；签名后需重跑本流水线。')
