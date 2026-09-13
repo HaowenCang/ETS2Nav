@@ -318,8 +318,9 @@ Dataset identity                  = PASS
 Runbook stale identity            = FIXED
 Runbook control-character hygiene = PASS   （CONTROL_CHARS = 0）
 Workspace binary ambiguity        = CLOSED
-Candidate source unchanged        = PASS
-Required CI                       = PASS   （run 34760013796，四项 success，无 retry）
+Candidate source unchanged        = PASS   （c7e0c522..1be77a81 仅 docs/ 与只读 helper，见 §12）
+Required CI                       = PASS   （合入门：run 34760013796 四项 success，无 retry；
+                                             合入后 main push 首次 Web E2E 失败、重跑 success，见 §12.1）
 Pre-B0 candidate gate             = PASS
 ```
 
@@ -386,4 +387,67 @@ Artifact source commit `c7e0c522…` 与 artifact SHA `20a3307b…f3b`。
 输出必须全部落在 `docs/` 与 `scripts/verify-b-candidate.ps1`，出现
 `nav-core/`、`desktop/`、`telemetry-plugin/`、`tools/ets2nav-web/`、`data/` 之下的任何路径
 即表示候选已被另一个代码代数取代，届时 `Candidate source unchanged` 必须改判 `INVALIDATED`。
-该复核的结果记录在下节。
+该复核的结果记录在 §12。
+
+---
+
+## §12 合入后复核
+
+```text
+合入提交（main HEAD）  1be77a81be0cdbf17b142d0b5684b0eb290da381
+origin/main            同上
+divergence             0	0
+工作区                 clean（git status --porcelain 为空）
+git diff --check       0
+tag / release          7 个 / 仅 dataset-europe-v5（均未新增）
+```
+
+`git diff --name-only c7e0c5227cdc3d378c188eff5ee19c90f22c98a3..1be77a81be0cdbf17b142d0b5684b0eb290da381`
+的输出恰为四项：
+
+```text
+docs/validation/b-session-runbook-2026-08.md
+docs/validation/p4r-batch6b-2026-09.md
+docs/validation/pre-b0-candidate-identity-2026-09.md
+scripts/verify-b-candidate.ps1
+```
+
+全部落在 `docs/` 与只读 helper；`nav-core/`、`desktop/`、`telemetry-plugin/`、
+`tools/ets2nav-web/`、`data/` 之下被改动的文件数均为 **0**。据此
+`Candidate source unchanged = PASS`。
+
+候选本体重算：ZIP 仍为 178091258 B / `20a3307b…f3b`；`desktop/scripts/assemble-bundle.ps1`
+仍为 `d231c81af2a71779108084258534f48786117f11fe8d0f666341239429b23e59`，与产出候选的流水线
+记录值相同；合入后在 `main` 上重跑 oracle，`核对项 63 个，未通过 0 个`，
+`PRE-B0 CANDIDATE GATE: PASS`。
+
+### §12.1 合入后 main push 运行的一次失败与重跑
+
+`main` push 运行 `34762118382`（head `1be77a81`）第一次执行时 `Web E2E` **失败**，
+其余三个 job 成功：
+
+```text
+1) tests\e2e\12-lan.spec.mjs:197 › E2E-LAN-03 远端页面推导同源 LAN WS 并真实建立连接（B5 回归）
+   Error: E2E-LAN-03: 出现 2 条非白名单诊断
+     [console.error] Failed to load resource: net::ERR_NO_BUFFER_SPACE @ http://10.1.0.107:54032/map.pmtiles
+     [console.error] Error @ http://10.1.0.107:54032/vendor/maplibre-gl.js
+   45 passed / 1 failed
+```
+
+对同一提交重跑该 job（attempt 2）后 `Web E2E` success（7m12s）。因此**同一棵树、同一提交上
+1 次失败、2 次通过**（PR 阶段运行 `34760013796` 与 `34760975851` 亦均为 success）。
+
+判定为**环境级抖动，非产品缺陷**，依据有三：`net::ERR_NO_BUFFER_SPACE` 是 Chromium 网络栈的
+缓冲区耗尽错误，产生于资源加载层而不是应用逻辑层；失败与通过的两次运行是同一 commit 的
+同一棵树；本轮改动只涉及 `docs/` 与一个新的只读脚本，不触及 `tools/ets2nav-web/` 的任何
+代码路径。
+
+**登记为待修问题，且本轮刻意不修**：`E2E-LAN-03` 的诊断白名单不区分「应用产生的诊断」与
+「基础设施级网络错误」，因此在 runner 资源紧张时会随机失败。没有给 Playwright 加 retry
+（本轮明确禁止），也没有扩大 `assertCleanDiagnostics` 的白名单——后者会改动
+`tools/ets2nav-web/`，按 §8 的判据将**使候选冻结失效**。该项留给下一个允许改动前端测试的
+轮次，并在修改时一并评估是否需要在 CI 中隔离该用例。
+
+因此 `Required CI = PASS` 指的是**合入门**：PR #8 的四个 required check 在 `d348db1e` 与
+`a152dec` 两个 head 上均 success，合入未使用任何绕过手段。合入后的 main push 运行需要一次
+重跑才全绿，这一事实记在此处，不以「最终绿了」掩盖。
