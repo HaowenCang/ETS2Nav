@@ -4,8 +4,14 @@
 <meta charset="utf-8">
 <title>ETS2Nav graph-debugger</title>
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="stylesheet" href="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.css">
-<script src="https://unpkg.com/maplibre-gl@4.7.1/dist/maplibre-gl.js"></script>
+<!-- 依赖一律为同源本地产物（vendor/，由 build.mjs 生成）：运行期不得引用公共 CDN。
+     原实现从 unpkg 加载 maplibre-gl@4.7.1，该版本落在 GHSA-jrc7-96c5-q579 /
+     CVE-2026-85061 的影响区间内（影响 <= 6.4.0，首个修复 6.4.1）。 -->
+<link rel="icon" href="data:,">
+<link rel="stylesheet" href="vendor/maplibre-gl.css">
+<script src="vendor/maplibre-gl.js"></script>
+<!-- PMTiles protocol 由该库提供：MapLibre 6.4.1 没有内置 "pmtiles" source 类型 -->
+<script src="vendor/pmtiles.js"></script>
 <style>
   html, body, #map { margin: 0; height: 100%; font-family: system-ui, sans-serif; }
   #panel { position: absolute; top: 10px; left: 10px; z-index: 10; background: rgba(255,255,255,.95);
@@ -25,68 +31,202 @@
   <div style="margin-top:6px;color:#888">起点/终点 = 节点 uid（hex，如 5731ab8a218ff811）。<br>空起终点 = 全部图。点地图 = 最近节点。</div>
   <input id="from" placeholder="起点 node uid（hex）">
   <input id="to" placeholder="终点 node uid（hex）">
-  <button class="btn" onclick="route()">Dijkstra 路径</button>
-  <button class="btn" onclick="resetView()">重置视图</button>
+  <button class="btn" id="btn-route">Dijkstra 路径</button>
+  <button class="btn" id="btn-reset">重置视图</button>
   <div id="route-info"></div>
   <div id="stats"></div>
 </div>
 <script>
-const map = new maplibregl.Map({ container: 'map', style: {
-  version: 8, sources: {}, layers: [],
-  glyphs: 'https://demotiles.maplibre.org/font/{fontstack}/{range}.pbf',
-  sources: {},
-  layers: [
-    { id: 'bg', type: 'background', paint: { 'background-color': '#10141a' } },
-  ],
+"use strict";
+
+// ─── MapLibre 6.x worker 引导（机制同 tools/ets2nav-web/app.js）───────────────
+// MapLibre 6.x 只发布 ESM，本页加载的是 esbuild 打成的 IIFE（全局 maplibregl）。
+// 打包之后库自身的 import.meta.url 不再指向库文件，其内部 getWorkerUrl() 在
+// import.meta.url 非 http(s) 时返回空串，new Worker("") 会去加载当前页面文档并
+// 必然失败，症状是地图永远不进入 loaded（没有底图也没有要素）。故必须在创建
+// Map 之前显式给出 worker 地址，且该地址必须是同源本地产物。
+maplibregl.setWorkerUrl(new URL("vendor/maplibre-gl-worker.js", document.baseURI).href);
+
+// SCS 米制世界坐标 → 伪经纬度（与瓦片生成侧的 lng = x/111320 保持一致）。
+const K = 111320;
+const toLngLat = ([x, z]) => [x / K, z / K];
+
+// 页面状态：显式反映各阶段结果，供 verify-graph-debugger.mjs 断言。
+// 失败一律落为 'error' 并同时 console.error，不做静默降级。
+const state = { mapLoaded: false, pmtiles: "pending", graph: "pending" };
+
+const map = new maplibregl.Map({
+  container: "map",
+  style: {
+    version: 8,
+    sources: {},
+    layers: [
+      { id: "bg", type: "background", paint: { "background-color": "#10141a" } },
+    ],
+    // 离线约束：glyphs 只能指向同源本地路径（vendor/fonts，由 build.mjs 可选复制）。
+    // 本地字体缺失时仅跳过 city 文字层，几何图层照常。
+    glyphs: "vendor/fonts/{fontstack}/{range}.pbf",
+  },
+  center: [0, 0],
+  zoom: 3,
 });
 
-// P1-12：pmtiles 矢量瓦片层（存在 map.pmtiles 时自动加载——road/city/poi/junction 图层）
-async function loadPmtiles() {
-  try {
-    const r = await fetch('map.pmtiles', { method: 'HEAD' });
-    if (!r.ok) return;
-    map.addSource('tiles', { type: 'pmtiles', url: 'map.pmtiles' });
-    map.addLayer({ id: 'tile-road', type: 'line', source: 'tiles', 'source-layer': 'road',
-      paint: { 'line-color': '#3b82f6', 'line-width': 1.2, 'line-opacity': 0.75 } });
-    map.addLayer({ id: 'tile-junction', type: 'circle', source: 'tiles', 'source-layer': 'junction',
-      paint: { 'circle-color': '#f59e0b', 'circle-radius': 2 } });
-    map.addLayer({ id: 'tile-city', type: 'symbol', source: 'tiles', 'source-layer': 'city',
-      layout: { 'text-field': ['get', 'name'], 'text-size': 11, 'text-font': ['Open Sans Regular'] },
-      paint: { 'text-color': '#fff' } });
-    map.addLayer({ id: 'tile-poi', type: 'circle', source: 'tiles', 'source-layer': 'poi',
-      paint: { 'circle-color': '#10b981', 'circle-radius': 2.5 } });
-    document.getElementById('data-name').textContent = 'map.pmtiles（矢量瓦片）';
-    console.log('pmtiles 已加载');
-  } catch (e) { console.log('无 pmtiles：', e); }
-}
-loadPmtiles();
-}, center: [0, 0], zoom: 3 });
+// MapLibre 自身的错误（资源取回失败等）不吞掉，但降为 warn：本页的硬失败一律由
+// loadPmtiles / loadGraph 显式判定并 console.error 报告，避免两类问题混同。
+map.on("error", (e) => {
+  console.warn("[graph-debugger] MapLibre 错误：", e && e.error ? e.error.message : e);
+});
+
+// 测试钩子：冒烟门据此断言「地图对象存在」与「页面脚本执行到哪个阶段」。
+window.__graphDebugger = { map, state };
 
 let nodes = new Map();      // uid -> {x, z}
-let edges = [];             // {from, to, uid, len, geojson-feature-idx}
+let edges = [];             // {from, to, uid, len}
 let features = [];
+let viewBounds = null;
 
-async function load() {
-  const r = await fetch('data.geojson');
-  const fc = await r.json();
-  features = fc.features;
-  // 构建节点图
-  for (const f of features) {
-    const p = f.properties;
-    if (f.geometry.type === 'LineString') {
-      const [x0, z0] = f.geometry.coordinates[0];
-      const [x1, z1] = f.geometry.coordinates[1];
-      if (p.from) {
-        if (!nodes.has(p.from)) nodes.set(p.from, { x: x0, z: z0 });
-        if (!nodes.has(p.to)) nodes.set(p.to, { x: x1, z: z1 });
-        edges.push({ from: p.from, to: p.to, uid: p.uid, len: p.len || 0 });
-      }
+/**
+ * 探测可选资源是否存在（HEAD + 显式消费响应体）。
+ *
+ * 显式消费不是多余动作：HEAD 响应体为空，但 Chromium 会把「未被消费的响应体」记为
+ * 请求中止（触发 requestfailed / net::ERR_ABORTED），而该请求其实已正常收到响应。
+ * 冒烟门以 requestfailed 作为网络失败判据，不消费会被误判为网络故障。
+ */
+async function probeExists(url) {
+  const r = await fetch(url, { method: "HEAD" });
+  const ok = r.ok;
+  await r.arrayBuffer().catch(() => {});
+  return ok;
+}
+
+// ─── P1-12：pmtiles 矢量瓦片层（存在 map.pmtiles 时自动加载）─────────────────
+// 标准 PMTiles 接入流程：new pmtiles.Protocol() → maplibregl.addProtocol("pmtiles", …)
+// → vector source 使用 pmtiles:// URL。MapLibre 没有内置 "pmtiles" source 类型，
+// 原实现写 { type: "pmtiles" } 必然抛错，瓦片层在任何情况下都不会出现。
+//
+// 错误分级（两类情况不混同）：
+//   情况 A  map.pmtiles 不存在     → INFO，降级为纯图模式
+//   情况 B  资源存在但接入失败      → ERROR，显式报告，不得静默 fallback
+async function loadPmtiles() {
+  let hasTiles = false;
+  try {
+    hasTiles = await probeExists("map.pmtiles");
+  } catch (e) {
+    console.warn("[graph-debugger] map.pmtiles 探测失败——仅显示图 GeoJSON", e);
+    state.pmtiles = "absent";
+    return;
+  }
+  if (!hasTiles) {
+    console.info("[graph-debugger] 未提供 map.pmtiles——仅显示图 GeoJSON");
+    state.pmtiles = "absent";
+    return;
+  }
+
+  if (typeof pmtiles === "undefined" || typeof pmtiles.Protocol !== "function") {
+    console.error("[graph-debugger] pmtiles 库未加载：vendor/pmtiles.js 缺失或未构建");
+    state.pmtiles = "error";
+    return;
+  }
+  try {
+    maplibregl.addProtocol("pmtiles", new pmtiles.Protocol().tile);
+  } catch (e) {
+    console.error("[graph-debugger] PMTiles protocol 注册失败", e);
+    state.pmtiles = "error";
+    return;
+  }
+  try {
+    map.addSource("tiles", { type: "vector", url: "pmtiles://map.pmtiles" });
+  } catch (e) {
+    console.error("[graph-debugger] PMTiles vector source 创建失败", e);
+    state.pmtiles = "error";
+    return;
+  }
+
+  for (const layer of [
+    { id: "tile-road", type: "line", source: "tiles", "source-layer": "road",
+      paint: { "line-color": "#3b82f6", "line-width": 1.2, "line-opacity": 0.75 } },
+    { id: "tile-junction", type: "circle", source: "tiles", "source-layer": "junction",
+      paint: { "circle-color": "#f59e0b", "circle-radius": 2 } },
+    { id: "tile-poi", type: "circle", source: "tiles", "source-layer": "poi",
+      paint: { "circle-color": "#10b981", "circle-radius": 2.5 } },
+  ]) {
+    try {
+      map.addLayer(layer);
+    } catch (e) {
+      console.error(`[graph-debugger] 矢量图层添加失败: ${layer.id}`, e);
+      state.pmtiles = "error";
+      return;
     }
   }
-  // 简易平面坐标系（SCS 坐标 → 墨卡托近似：z→lat, x→lng，仅调试）
-  const toLatLng = (x, z) => [x / 111320, z / 111320];
-  const fLines = features.filter(f => f.geometry.type === 'LineString');
-  if (fLines.length === 0) { document.getElementById('stats').textContent = '无 LineString 要素'; return; }
+
+  // city 文字层依赖 glyphs。本地字体缺失属「资源不存在」，可降级（跳过该层），
+  // 与 PMTiles 接入错误不同级，因此只 WARN 不 ERROR。
+  const fontStack = "Open Sans Regular";
+  const glyphProbe = `vendor/fonts/${encodeURIComponent(fontStack)}/0-255.pbf`;
+  let hasGlyphs = false;
+  try {
+    hasGlyphs = await probeExists(glyphProbe);
+  } catch (e) {
+    console.warn("[graph-debugger] 本地 glyphs 探测失败", e);
+  }
+  if (hasGlyphs) {
+    try {
+      map.addLayer({ id: "tile-city", type: "symbol", source: "tiles", "source-layer": "city",
+        layout: { "text-field": ["get", "name"], "text-size": 11, "text-font": [fontStack] },
+        paint: { "text-color": "#fff" } });
+    } catch (e) {
+      console.error("[graph-debugger] city 文字层添加失败", e);
+      state.pmtiles = "error";
+      return;
+    }
+  } else {
+    console.warn(`[graph-debugger] 本地字体缺失（${glyphProbe}）——跳过 city 文字层`);
+  }
+
+  document.getElementById("data-name").textContent = "map.pmtiles（矢量瓦片）";
+  state.pmtiles = "ready";
+  console.info("[graph-debugger] pmtiles 矢量瓦片层已加载");
+}
+
+// ─── 图数据：data.geojson（LineString 要素，properties.from/to/uid/len）───────
+async function loadGraph() {
+  let fc;
+  try {
+    const r = await fetch("data.geojson");
+    if (!r.ok) throw new Error(`HTTP ${r.status}`);
+    fc = await r.json();
+  } catch (e) {
+    console.error("[graph-debugger] data.geojson 加载失败", e);
+    document.getElementById("stats").textContent = "加载失败: " + e.message;
+    state.graph = "error";
+    return;
+  }
+  features = Array.isArray(fc.features) ? fc.features : [];
+
+  // 构建节点图
+  nodes = new Map();
+  edges = [];
+  for (const f of features) {
+    const p = f.properties || {};
+    if (!f.geometry || f.geometry.type !== "LineString") continue;
+    const coords = f.geometry.coordinates;
+    if (coords.length < 2) continue;
+    const [x0, z0] = coords[0];
+    const [x1, z1] = coords[1];
+    if (p.from) {
+      if (!nodes.has(p.from)) nodes.set(p.from, { x: x0, z: z0 });
+      if (!nodes.has(p.to)) nodes.set(p.to, { x: x1, z: z1 });
+      edges.push({ from: p.from, to: p.to, uid: p.uid, len: p.len || 0 });
+    }
+  }
+
+  const fLines = features.filter((f) => f.geometry && f.geometry.type === "LineString");
+  if (fLines.length === 0) {
+    document.getElementById("stats").textContent = "无 LineString 要素";
+    state.graph = "empty";
+    return;
+  }
+
   // 数据范围定中心
   let minX = Infinity, maxX = -Infinity, minZ = Infinity, maxZ = -Infinity;
   for (const f of fLines) for (const [x, z] of f.geometry.coordinates) {
@@ -95,27 +235,27 @@ async function load() {
   }
   viewBounds = { minX, maxX, minZ, maxZ };
   const cx = (minX + maxX) / 2, cz = (minZ + maxZ) / 2;
-  map.setCenter(toLatLng(cx, cz));
+  map.setCenter(toLngLat([cx, cz]));
   map.setZoom(10);
 
   // 源：边 + 错误点
-  map.addSource('edges', { type: 'geojson', data: { type: 'FeatureCollection', features: fLines } });
-  map.addLayer({ id: 'road', type: 'line', source: 'edges',
-    layout: { 'line-join': 'round', 'line-cap': 'round' },
+  map.addSource("edges", { type: "geojson", data: { type: "FeatureCollection", features: fLines } });
+  map.addLayer({ id: "road", type: "line", source: "edges",
+    layout: { "line-join": "round", "line-cap": "round" },
     paint: {
-      'line-color': ['case', ['==', ['get', 'kind'], 'prefab'], '#f59e0b', '#3b82f6'],
-      'line-width': ['case', ['==', ['get', 'kind'], 'prefab'], 2.5, 1.2],
-      'line-opacity': 0.85,
+      "line-color": ["case", ["==", ["get", "kind"], "prefab"], "#f59e0b", "#3b82f6"],
+      "line-width": ["case", ["==", ["get", "kind"], "prefab"], 2.5, 1.2],
+      "line-opacity": 0.85,
     } });
-  const errs = features.filter(f => f.properties.kind === 'validation_error');
+  const errs = features.filter((f) => f.properties && f.properties.kind === "validation_error");
   if (errs.length) {
-    map.addSource('errs', { type: 'geojson', data: { type: 'FeatureCollection', features: errs } });
-    map.addLayer({ id: 'err', type: 'circle', source: 'errs', paint: { 'circle-radius': 6, 'circle-color': '#dc2626' } });
+    map.addSource("errs", { type: "geojson", data: { type: "FeatureCollection", features: errs } });
+    map.addLayer({ id: "err", type: "circle", source: "errs", paint: { "circle-radius": 6, "circle-color": "#dc2626" } });
   }
-  document.getElementById('stats').textContent =
+  document.getElementById("stats").textContent =
     `节点 ${nodes.size} / 边 ${edges.length} / 要素 ${features.length} / 错误点 ${errs.length}`;
+  state.graph = "ready";
 }
-load().catch(e => { document.getElementById('stats').textContent = '加载失败: ' + e.message; });
 
 function dijkstra(fromUid, toUid) {
   const adj = new Map();
@@ -145,49 +285,66 @@ function dijkstra(fromUid, toUid) {
   return path;
 }
 
-map.on('click', (e) => {
-  // 点选最近节点（P1 §45）：交替填入起终点
-  if (!nodes.size) return;
-  let best = null, bestD = Infinity;
-  const lng = e.lngLat.lng, lat = e.lngLat.lat;
-  for (const [uid, n] of nodes) {
-    const d = (n.x / 111320 - lng) ** 2 + (n.z / 111320 - lat) ** 2;
-    if (d < bestD) { bestD = d; best = uid; }
-  }
-  const f = document.getElementById('from'), t = document.getElementById('to');
-  if (!f.value) f.value = best;
-  else if (!t.value) t.value = best;
-  else { f.value = best; t.value = ''; }
-  route();
-});
+function nodeXY(uid) { const n = nodes.get(uid); return [n.x, n.z]; }
 
 async function route() {
-  const from = document.getElementById('from').value.trim().toLowerCase();
-  const to = document.getElementById('to').value.trim().toLowerCase();
-  const info = document.getElementById('route-info');
-  if (!from || !to) { info.textContent = '请输入起终点 node uid'; return; }
-  if (!nodes.has(from)) { info.textContent = '起点不在图中'; return; }
-  if (!nodes.has(to)) { info.textContent = '终点不在图中'; return; }
+  const from = document.getElementById("from").value.trim().toLowerCase();
+  const to = document.getElementById("to").value.trim().toLowerCase();
+  const info = document.getElementById("route-info");
+  if (state.graph !== "ready") { info.textContent = "图数据未就绪"; return; }
+  if (!from || !to) { info.textContent = "请输入起终点 node uid"; return; }
+  if (!nodes.has(from)) { info.textContent = "起点不在图中"; return; }
+  if (!nodes.has(to)) { info.textContent = "终点不在图中"; return; }
   const path = dijkstra(from, to);
-  if (!path) { info.textContent = '无路径（可能在不同连通分量）'; return; }
-  const coords = path.map(e => {
+  if (!path) { info.textContent = "无路径（可能在不同连通分量）"; return; }
+  const coords = path.map((e) => {
     const [x0, z0] = nodeXY(e.from), [x1, z1] = nodeXY(e.to);
-    return [[x0 / 111320, z0 / 111320], [x1 / 111320, z1 / 111320]];
+    return [toLngLat([x0, z0]), toLngLat([x1, z1])];
   }).flat();
-  if (map.getSource('route')) map.removeLayer('route'), map.removeSource('route');
-  map.addSource('route', { type: 'geojson', data: { type: 'FeatureCollection', features: [{
-    type: 'Feature', properties: {}, geometry: { type: 'LineString', coordinates: coords } }] } });
-  map.addLayer({ id: 'route', type: 'line', source: 'route',
-    paint: { 'line-color': '#16a34a', 'line-width': 4, 'line-opacity': 0.9 } });
+  if (map.getSource("route")) { map.removeLayer("route"); map.removeSource("route"); }
+  map.addSource("route", { type: "geojson", data: { type: "FeatureCollection", features: [{
+    type: "Feature", properties: {}, geometry: { type: "LineString", coordinates: coords } }] } });
+  map.addLayer({ id: "route", type: "line", source: "route",
+    paint: { "line-color": "#16a34a", "line-width": 4, "line-opacity": 0.9 } });
   info.textContent = `路径 ${path.length} 条边，总长 ${path.reduce((s, e) => s + (e.len || 0), 0).toFixed(0)}m`;
 }
 
-function nodeXY(uid) { const n = nodes.get(uid); return [n.x, n.z]; }
 function resetView() {
   if (!viewBounds) return;
   const { minX, maxX, minZ, maxZ } = viewBounds;
-  map.fitBounds([[minX / 111320, minZ / 111320], [maxX / 111320, maxZ / 111320]], { padding: 30 });
+  map.fitBounds([toLngLat([minX, minZ]), toLngLat([maxX, maxZ])], { padding: 30 });
 }
+
+function nearestNodeUid(lng, lat) {
+  let best = null, bestD = Infinity;
+  for (const [uid, n] of nodes) {
+    const d = (n.x / K - lng) ** 2 + (n.z / K - lat) ** 2;
+    if (d < bestD) { bestD = d; best = uid; }
+  }
+  return best;
+}
+
+// 点地图 = 取最近节点，交替填入起终点（P1 §45）
+map.on("click", (e) => {
+  if (state.graph !== "ready" || !nodes.size) return;
+  const best = nearestNodeUid(e.lngLat.lng, e.lngLat.lat);
+  if (!best) return;
+  const f = document.getElementById("from"), t = document.getElementById("to");
+  if (!f.value) f.value = best;
+  else if (!t.value) t.value = best;
+  else { f.value = best; t.value = ""; }
+  void route();
+});
+
+document.getElementById("btn-route").addEventListener("click", () => { void route(); });
+document.getElementById("btn-reset").addEventListener("click", resetView);
+
+// ─── 启动顺序：style load 之后再增删源与图层（A2c-M5 的既有约定）─────────────
+map.once("load", () => {
+  state.mapLoaded = true;
+  void loadPmtiles();
+  void loadGraph();
+});
 </script>
 </body>
 </html>

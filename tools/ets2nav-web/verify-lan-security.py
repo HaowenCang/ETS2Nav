@@ -100,7 +100,7 @@ def selftest():
     eq("wildcard detected", has_cors_wildcard(h), True)
 
     st, h, b = parse_response(
-        b"HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: http://tauri.localhost\r\n\r\n"
+        b"HTTP/1.1 204 No Content\r\nAccess-Control-Allow-Origin: http://127.0.0.1:8123\r\n\r\n"
     )
     eq("204 empty body", b, b"")
     eq("specific origin not flagged as wildcard", has_cors_wildcard(h), False)
@@ -461,10 +461,12 @@ def main():
         r = http(LAN_IP, LAN_PORT, "GET", f"/api/snapshot?token={TOKEN_LIVE}")
         check("S3 HTTP API 不接受 query 令牌", r is not None and r[0] == 401,
               f"status={r[0] if r else 'CONN-FAIL'}")
-        # 伪造 Origin 不构成授权（Origin 不是 authentication）
+        # 伪造 Origin 不构成授权（Origin 不是 authentication）。此处刻意用**本机自身
+        # authority** 作为伪造值：它比任何外部 origin 都更接近「看起来合法」，因而是
+        # 这条断言的最强形式。
         r = http(LAN_IP, LAN_PORT, "GET", "/api/snapshot",
-                 {"Origin": "http://tauri.localhost"})
-        check("S3 伪造白名单 Origin 仍 401（Origin 非授权）",
+                 {"Origin": f"http://127.0.0.1:{LAN_PORT}"})
+        check("S3 伪造同源 Origin 仍 401（Origin 非授权）",
               r is not None and r[0] == 401, f"status={r[0] if r else 'CONN-FAIL'}")
 
         r = post_route(LAN_IP, LAN_PORT, None, ROUTE_A)
@@ -647,7 +649,7 @@ def main():
         check(f"S7 {path} 不回显令牌", r is not None and TOKEN_LIVE not in (r[2] or ""),
               f"status={r[0] if r else 'CONN-FAIL'}")
 
-    # ── S8 CORS ───────────────────────────────────────────────────────────
+    # ── S8 CORS（Batch 6B §22：白名单已删除，矩阵相应改判）──────────────────
     def acao(resp):
         return (resp[1].get("access-control-allow-origin") if resp else None)
 
@@ -657,15 +659,18 @@ def main():
     check("S8 同源请求本身成功（不依赖 CORS 头）", r is not None and r[0] == 200,
           f"status={r[0] if r else 'CONN-FAIL'}")
 
+    # §22：旧桌面壳 origin 已从白名单删除。它曾是**唯一**被接受的跨源来源，因此这条
+    # 断言由「必须获得精确 ACAO」翻转为「必须一无所获」——判据收紧，而不是删除。
     r = http("127.0.0.1", LAN_PORT, "GET", "/api/snapshot",
              {"Origin": "http://tauri.localhost", **bearer(TOKEN_LIVE)})
-    check("S8 已实测 Tauri origin 获得精确 ACAO",
-          acao(r) == "http://tauri.localhost", f"ACAO={acao(r)!r}")
-    check("S8 白名单响应带 Vary: Origin",
-          r is not None and r[1].get("vary") == "Origin",
+    check("S8 已删除的受信 origin 不再获得 ACAO",
+          r is not None and acao(r) is None, f"ACAO={acao(r)!r}")
+    check("S8 已删除的受信 origin 不返回 Vary: Origin",
+          r is not None and r[1].get("vary") is None,
           f"Vary={r[1].get('vary') if r else None!r}")
 
-    for bad in ("http://evil.example", "null", "http://tauri.localhost.evil.example",
+    for bad in ("http://evil.example", "null", "http://tauri.localhost",
+                "http://tauri.localhost.evil.example",
                 "tauri://localhost", "https://tauri.localhost"):
         r = http("127.0.0.1", LAN_PORT, "GET", "/api/snapshot",
                  {"Origin": bad, **bearer(TOKEN_LIVE)})
@@ -683,22 +688,18 @@ def main():
                 wild.append((origin, path, rr[1].get("access-control-allow-origin")))
     check("S8 全端点均无 Access-Control-Allow-Origin: *", not wild, f"命中={wild}")
 
-    # OPTIONS 预检
+    # OPTIONS 预检。白名单为空后，**任何** origin 的预检都不得返回许可头；机制本身的
+    # 正向路径由 security.rs 的单测以合成白名单覆盖（cors_mechanism_works_for_a_non_empty_list），
+    # 因此这里不再存在「预检正向」用例，而不是把它悄悄删掉。
     r = http("127.0.0.1", LAN_PORT, "OPTIONS", "/api/route",
              {"Origin": "http://tauri.localhost",
               "Access-Control-Request-Method": "POST",
               "Access-Control-Request-Headers": "authorization,content-type"})
-    check("S8 白名单 origin 的 OPTIONS 预检许可",
-          r is not None and r[0] in (200, 204) and acao(r) == "http://tauri.localhost",
-          f"status={r[0] if r else 'CONN-FAIL'} ACAO={acao(r)!r}")
-    check("S8 预检 Allow-Methods 逐项列举且无通配",
-          r is not None and r[1].get("access-control-allow-methods") == "GET, POST, OPTIONS",
-          f"ACAM={r[1].get('access-control-allow-methods') if r else None!r}")
-    check("S8 预检 Allow-Headers 含 Authorization 且无通配",
-          r is not None
-          and "Authorization" in (r[1].get("access-control-allow-headers") or "")
-          and "*" not in (r[1].get("access-control-allow-headers") or ""),
-          f"ACAH={r[1].get('access-control-allow-headers') if r else None!r}")
+    check("S8 已删除的受信 origin 的 OPTIONS 预检不返回任何许可头",
+          r is not None and acao(r) is None
+          and r[1].get("access-control-allow-methods") is None
+          and r[1].get("access-control-allow-headers") is None,
+          f"status={r[0] if r else 'CONN-FAIL'} headers={r[1] if r else None}")
 
     r = http("127.0.0.1", LAN_PORT, "OPTIONS", "/api/route",
              {"Origin": "http://evil.example",
@@ -802,13 +803,14 @@ def main():
           r is not None and r[0] == 403, f"status={r[0] if r else 'CONN-FAIL'}")
     check("S11 该拒绝响应不含令牌",
           r is not None and TOKEN_LIVE not in (r[2] or ""))
-    for bad in ("http://evil.example", "null", "https://127.0.0.1:" + str(LAN_PORT)):
+    for bad in ("http://evil.example", "null", "https://127.0.0.1:" + str(LAN_PORT),
+                "http://tauri.localhost"):
         r = http("127.0.0.1", LAN_PORT, "GET", "/api/bootstrap", {"Origin": bad})
         check(f"S11 bootstrap 拒绝未批准 Origin: {bad}",
               r is not None and r[0] == 403 and TOKEN_LIVE not in (r[2] or ""),
               f"status={r[0] if r else 'CONN-FAIL'}")
-    # 正向：同源页面与实测 Tauri origin 必须仍能取得令牌
-    for ok in (f"http://127.0.0.1:{LAN_PORT}", "http://tauri.localhost"):
+    # 正向：只剩同源页面（§22 后已无跨源白名单条目）
+    for ok in (f"http://127.0.0.1:{LAN_PORT}",):
         r = http("127.0.0.1", LAN_PORT, "GET", "/api/bootstrap", {"Origin": ok})
         got = ""
         if r and r[0] == 200:
@@ -822,13 +824,13 @@ def main():
 
     # WS：持有**正确令牌**但 Origin 恶意，仍必须被拒——否则 Origin 检查等于被令牌
     # 完全覆盖而形同虚设（BLS-04 的服务端对应断言）。
-    for bad in (attacker_origin, "http://evil.example", "null"):
+    for bad in (attacker_origin, "http://evil.example", "null", "http://tauri.localhost"):
         st, _, _ = ws_attempt("127.0.0.1", LAN_PORT, "/ws?token=" + TOKEN_LIVE,
                               origin=bad)
         check(f"S11 正确令牌 + 恶意 Origin 的 WS 仍被拒（403，无 101）: {bad}",
               st == 403, f"status={st}")
-    # 正向：同源 Origin 与实测 Tauri origin
-    for ok in (f"http://127.0.0.1:{LAN_PORT}", "http://tauri.localhost"):
+    # 正向：只剩同源 Origin
+    for ok in (f"http://127.0.0.1:{LAN_PORT}",):
         st, _, s = ws_attempt("127.0.0.1", LAN_PORT, "/ws?token=" + TOKEN_LIVE,
                               origin=ok)
         check(f"S11 已批准 Origin 的 WS 完成 101: {ok}", st == 101, f"status={st}")

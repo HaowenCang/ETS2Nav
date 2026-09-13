@@ -63,6 +63,22 @@ mod imp {
         handle: Owned,
     }
 
+    /// 作业对象建立失败的诊断：失败发生在哪一步、Win32 错误码是多少。
+    ///
+    /// 分开记录步骤而不是只报一个布尔值，是因为两种失败的处置不同：创建失败时尚未
+    /// 派生子进程，无需回收；配置失败时作业句柄已建立但未生效，必须关闭。
+    #[derive(Debug, Clone)]
+    pub struct JobError {
+        pub step: &'static str,
+        pub win32: u32,
+    }
+
+    impl std::fmt::Display for JobError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{} win32_error={}", self.step, self.win32)
+        }
+    }
+
     impl ProcessRef {
         pub fn open(pid: u32) -> Option<ProcessRef> {
             // PROCESS_SET_QUOTA 是 AssignProcessToJobObject 的前置权限要求。
@@ -92,12 +108,28 @@ mod imp {
     }
 
     impl Job {
-        /// 建立作业并设置「句柄关闭即终止成员进程」。失败返回 None（调用方降级为
-        /// 仅 Drop 守卫，并必须如实报告该降级）。
-        pub fn create_kill_on_close() -> Option<Job> {
+        /// 建立作业并设置「句柄关闭即终止成员进程」。
+        ///
+        /// 失败以 `JobError` 返回而不是 `None`：调用方需要区分「哪一步失败」才能给出可
+        /// 诊断的信息，也因为 §4 的判据是「失败即 fail closed」，一个丢失原因的 `None`
+        /// 会让发布态错误报告退化为「作业对象不可用」这种无法排查的措辞。
+        pub fn create_kill_on_close() -> Result<Job, JobError> {
+            // 故障注入（仅 --features fault-inject 构建）。位置刻意放在真实 API 调用之前：
+            // 注入的效果与「内核拒绝创建」在调用方看来完全一致，因此被验证的判据与真实
+            // 故障路径是同一条，而不是一条只在测试里存在的旁路。
+            #[cfg(feature = "fault-inject")]
+            if crate::inject::requested() == Some(crate::inject::JobFault::Create) {
+                return Err(JobError {
+                    step: "create-injected",
+                    win32: 0,
+                });
+            }
             let h = unsafe { CreateJobObjectW(std::ptr::null(), std::ptr::null()) };
             if h.is_null() {
-                return None;
+                return Err(JobError {
+                    step: "CreateJobObjectW",
+                    win32: unsafe { GetLastError() },
+                });
             }
             let mut info: JOBOBJECT_EXTENDED_LIMIT_INFORMATION = unsafe { std::mem::zeroed() };
             info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE;
@@ -110,10 +142,15 @@ mod imp {
                 )
             };
             if ok == 0 {
+                // 错误码必须在 CloseHandle 之前读取：后续调用会覆盖线程的最后错误。
+                let win32 = unsafe { GetLastError() };
                 unsafe { CloseHandle(h) };
-                return None;
+                return Err(JobError {
+                    step: "SetInformationJobObject",
+                    win32,
+                });
             }
-            Some(Job {
+            Ok(Job {
                 handle: Owned(h as isize),
             })
         }
@@ -121,6 +158,13 @@ mod imp {
         /// 把进程加入作业。返回 `Err(GetLastError)` 便于诊断具体原因
         /// （例如外层作业已禁止嵌套）。
         pub fn assign(&self, proc: &ProcessRef) -> Result<(), u32> {
+            // 故障注入（仅 --features fault-inject 构建）。返回 5（ERROR_ACCESS_DENIED）：
+            // 这是「外层作业禁止嵌套」在真实环境中最常见的表现，因此被测者在诊断层面
+            // 无法把注入与真实故障区分开。
+            #[cfg(feature = "fault-inject")]
+            if crate::inject::requested() == Some(crate::inject::JobFault::Assign) {
+                return Err(5);
+            }
             let ok = unsafe { AssignProcessToJobObject(self.handle.handle(), proc.raw()) };
             if ok == 0 {
                 return Err(unsafe { GetLastError() });
@@ -132,8 +176,11 @@ mod imp {
 
 #[cfg(not(windows))]
 mod imp {
-    /// 非 Windows 平台不存在作业对象语义；本仓库的产品是 Windows-only，
-    /// 这里只保证代码可编译，不声称任何生命周期保证。
+    /// 非 Windows 平台不存在作业对象语义；本仓库的产品是 Windows-only。
+    ///
+    /// `create_kill_on_close` 在此返回 `Err` 而不是 `None`/空作业：缺省策略是要求作业
+    /// 对象（fail closed），因此非 Windows 上 Desktop 会明确拒绝启动，而不是在一个
+    /// 无法提供生命周期保证的平台上假装提供了保证。
     pub struct ProcessRef;
     impl ProcessRef {
         pub fn open(_pid: u32) -> Option<ProcessRef> {
@@ -143,10 +190,23 @@ mod imp {
             false
         }
     }
+    #[derive(Debug, Clone)]
+    pub struct JobError {
+        pub step: &'static str,
+        pub win32: u32,
+    }
+    impl std::fmt::Display for JobError {
+        fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+            write!(f, "{} win32_error={}", self.step, self.win32)
+        }
+    }
     pub struct Job;
     impl Job {
-        pub fn create_kill_on_close() -> Option<Job> {
-            None
+        pub fn create_kill_on_close() -> Result<Job, JobError> {
+            Err(JobError {
+                step: "unsupported-platform",
+                win32: 0,
+            })
         }
         pub fn assign(&self, _proc: &ProcessRef) -> Result<(), u32> {
             Err(0)

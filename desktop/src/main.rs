@@ -32,14 +32,20 @@
 //! 21  数据集缺失或不完整
 //! 22  sidecar 启动或就绪失败
 //! 23  sidecar 运行期意外退出
+//! 24  作业对象不可用（发布性质未能建立，§4 fail closed）
 //! ```
 //!
 //! 与 `nav-core-cli` 的 0/1/2/70 及 harness 的 0/1/3/4 都不重叠，因此「桌面壳失败」
-//! 与「服务本身失败」在退出码层面可区分。
+//! 与「服务本身失败」在退出码层面可区分。24 与 22 分开而不是合并，是因为二者的含义
+//! 不同：22 说明 sidecar 起不来，24 说明 sidecar 起来了但**发布性质的清理保证**没有
+//! 建立——后者在发布检查里必须可被单独观测，否则「作业对象没生效」会伪装成普通启动
+//! 失败。
 
 #![cfg_attr(not(debug_assertions), windows_subsystem = "windows")]
 
 mod bundle;
+#[cfg(feature = "fault-inject")]
+mod inject;
 mod log;
 mod sha256;
 mod sidecar;
@@ -51,7 +57,7 @@ use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 
 use log::{err, out};
-use sidecar::{Sidecar, SpawnSpec};
+use sidecar::{Sidecar, SpawnSpec, StartError};
 
 const EXIT_OK: i32 = 0;
 const EXIT_USAGE: i32 = 2;
@@ -59,6 +65,7 @@ const EXIT_PACKAGING: i32 = 20;
 const EXIT_DATASET: i32 = 21;
 const EXIT_SIDECAR_START: i32 = 22;
 const EXIT_SIDECAR_FATAL: i32 = 23;
+const EXIT_SIDECAR_JOB: i32 = 24;
 
 const APP_VERSION: &str = env!("CARGO_PKG_VERSION");
 
@@ -72,6 +79,7 @@ struct Options {
     verify_dataset_digest: bool,
     replay: Option<PathBuf>,
     fake_signal: bool,
+    allow_no_job_object: bool,
 }
 
 fn usage() {
@@ -84,7 +92,8 @@ fn usage() {
     err("  --verify-dataset-digest  启动时重算整棵数据集树摘要并与清单比对（约 373 MB，默认关闭）");
     err("  --replay <trace> 让 sidecar 回放录制轨迹而不是等待实时遥测（演示/自动化用，透传给 server）");
     err("  --fake-signal    让 sidecar 注入合成灯态剧本（演示/自动化用，透传给 server）");
-    err("退出码: 0 正常；2 用法；20 打包缺陷；21 数据集；22 sidecar 启动失败；23 sidecar 意外退出");
+    err("  --allow-no-job-object  允许在作业对象不可用时继续运行（仅开发者用；会放弃“被强杀也不残留 sidecar”这一保证，并留下 WARN）");
+    err("退出码: 0 正常；2 用法；20 打包缺陷；21 数据集；22 sidecar 启动失败；23 sidecar 意外退出；24 作业对象不可用");
 }
 
 fn parse_args(args: &[String]) -> Result<Options, String> {
@@ -98,6 +107,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
         verify_dataset_digest: false,
         replay: None,
         fake_signal: false,
+        allow_no_job_object: false,
     };
     let mut i = 0;
     while i < args.len() {
@@ -120,6 +130,7 @@ fn parse_args(args: &[String]) -> Result<Options, String> {
             "--verify-dataset-digest" => o.verify_dataset_digest = true,
             "--replay" => o.replay = Some(PathBuf::from(take_value("--replay")?)),
             "--fake-signal" => o.fake_signal = true,
+            "--allow-no-job-object" => o.allow_no_job_object = true,
             "--hold-ms" => {
                 let v = take_value("--hold-ms")?;
                 o.hold_ms = v
@@ -223,6 +234,24 @@ fn resolve_bundle(
                 "[desktop] ERROR kind=sidecar-identity-mismatch code={EXIT_PACKAGING} expected={expected} actual={actual}"
             ));
             return Err(EXIT_PACKAGING);
+        }
+    }
+
+    // ── 版本一致性（Batch 6B §19）───────────────────────────────────────────
+    // 二进制自身版本、清单声明版本、产物文件名三者必须指同一个候选版本。此前
+    // `app_version` 在打包脚本里被硬编码为 '0.1.0'，与 Cargo.toml 长期漂移；把这条
+    // 一致性做成启动期判据后，漂移不再可能只体现在文档里。
+    if let Some(m) = manifest.as_ref() {
+        if let Some(v) = m.app_version() {
+            if v != APP_VERSION {
+                err(&format!(
+                    "[desktop] ERROR kind=version-mismatch code={EXIT_PACKAGING} binary={APP_VERSION} manifest={v}"
+                ));
+                return Err(EXIT_PACKAGING);
+            }
+            out(&format!(
+                "[desktop] version-consistency binary={APP_VERSION} manifest={v} ok"
+            ));
         }
     }
 
@@ -336,8 +365,8 @@ fn resolve_bundle(
 
 fn run(o: Options) -> i32 {
     out(&format!(
-        "[desktop] start version={APP_VERSION} no_window={} lan={}",
-        o.no_window, o.lan
+        "[desktop] start version={APP_VERSION} no_window={} lan={} job_required={}",
+        o.no_window, o.lan, !o.allow_no_job_object
     ));
     let (sidecar_path, dataset, web, manifest) = match resolve_bundle(&o) {
         Ok(v) => v,
@@ -369,11 +398,22 @@ fn run(o: Options) -> i32 {
             lan: o.lan,
             replay: o.replay.as_deref(),
             fake_signal: o.fake_signal,
+            // §4：缺省要求作业对象。显式降级由 --allow-no-job-object 打开，并在
+            // sidecar 层留下 WARN——降级是发布性质的丧失，必须可观测。
+            job_required: !o.allow_no_job_object,
         },
         on_unexpected_exit,
     ) {
         Ok(s) => s,
-        Err(e) => {
+        Err(StartError::JobRequired { step, detail }) => {
+            // fail closed：sidecar 已被回收（或尚未派生），此处直接退出且**不建窗口**。
+            // 继续运行等于宣称一个已经不成立的保证：界面不见了、服务还在监听。
+            err(&format!(
+                "[desktop] ERROR kind=sidecar-job-required code={EXIT_SIDECAR_JOB} step={step} detail={detail}"
+            ));
+            return EXIT_SIDECAR_JOB;
+        }
+        Err(StartError::Other(e)) => {
             err(&format!(
                 "[desktop] ERROR kind=sidecar-start code={EXIT_SIDECAR_START} detail={e}"
             ));
@@ -392,7 +432,11 @@ fn run(o: Options) -> i32 {
         sidecar.url()
     ));
     out(&format!(
-        "[desktop] bundle basemap={} fonts={}",
+        "[desktop] bundle profile={} basemap={} fonts={}",
+        manifest
+            .as_ref()
+            .and_then(|m| m.profile())
+            .unwrap_or("unknown"),
         manifest
             .as_ref()
             .map(|m| m.basemap_present())

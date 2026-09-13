@@ -245,6 +245,20 @@ jobs:
           }
           exit $code
 
+      - name: graph-debugger smoke (real Chromium, no public CDN)
+        # P4R Batch 6B §3 方案 A。该工具此前从 unpkg 加载 maplibre-gl@4.7.1（落在
+        # GHSA-jrc7-96c5-q579 的受影响区间内），且自身脚本存在语法错误、实际不执行。
+        # 本步骤把它改成引用本地构建产物，并在真实 Chromium 上断言：零非回环请求
+        # （即运行期公共 CDN 已移除）、本地版本 ≥ 6.4.1、页面脚本真的执行、PMTiles
+        # 协议真的取到字节。放在本作业是因为这里已安装 Playwright Chromium。
+        working-directory: tools/ets2nav-web
+        shell: powershell
+        run: |
+          npm run build:graph-debugger
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
+          npm run verify:graph-debugger
+          exit $LASTEXITCODE
+
       - name: Upload Playwright diagnostics on failure
         if: failure()
         uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7
@@ -380,6 +394,16 @@ jobs:
         shell: powershell
         run: |
           scripts\regression.ps1 -Suite Desktop -Dataset "$env:ETS2NAV_DATASET" -LogDir "$env:RUNNER_TEMP\harness-logs"
+          exit $LASTEXITCODE
+
+      - name: Job Object fail-closed gate (release profile)
+        # P4R Batch 6B §4。被判定的性质是「**release 构建**在作业对象不可用时 fail
+        # closed」：create/assign 失败必须导致启动失败、sidecar 被立即回收、非零退出，
+        # 且不建窗口。注入构建用独立 target-dir 构建，避免覆盖发布产物；发布产物
+        # 「不含注入面」由同一步的 assemble 阶段以字节扫描断言。
+        shell: powershell
+        run: |
+          scripts\regression.ps1 -Suite JobObject -Dataset "$env:ETS2NAV_DATASET" -LogDir "$env:RUNNER_TEMP\harness-logs"
           exit $LASTEXITCODE
 
       - name: LAN security matrix (informational, non-gating)

@@ -14,11 +14,14 @@
 //   1. WebView 实际加载的页面**就是** sidecar 提供的那个源（host=127.0.0.1，
 //      port=本次协商端口）——这是「同源」这一性质的可观测定义；
 //   2. 页面不是 `tauri.localhost`，即产品不再依赖跨源模型；
-//   3. 保留的 CORS 白名单仍然**按契约工作**：`http://tauri.localhost` 在
-//      `/api/bootstrap` 上被接受并回带许可头，而非白名单 Origin 被拒。
-//      本条与第 2 条并不矛盾：白名单是为兼容既有壳形态而保留的，本脚本同时证明
-//      「它仍然有效」与「当前产品并不使用它」——后者若不说明，白名单会变成一条
-//      无人使用、也无人验证的信任关系。
+//   3. 旧桌面壳的 CORS 白名单条目**已被删除**（Batch 6B §22），因此
+//      `http://tauri.localhost` 在 `/api/bootstrap` 上必须被拒、且不得回带许可头。
+//
+// 第 3 条在 Batch 6A 时是一条**正**对照（「白名单仍然按契约工作」），本轮翻转为
+// 负对照。翻转的依据不是「旧测试过时」，而是产品侧确实不再有生产者：桌面窗口由
+// sidecar 自己提供页面（第 1 条已实测），跨源请求不存在，白名单条目因此没有消费者。
+// 保留一条无人使用、也无人能触发验证的受信条目，等于在受信集合里留下一个未经检验
+// 的入口；删除它，并把「它不再受信」变成每次 CI 都执行的断言。
 //
 // 退出码：0 PASS；1 FAIL；3 NOT VERIFIED（无法执行，例如未构建 bundle 或无窗口环境）。
 // 本脚本不打印令牌。
@@ -141,18 +144,25 @@ async function main() {
     check("页面不再使用 tauri.localhost（跨源模型已退出产品）",
       url.hostname !== "tauri.localhost", `host=${url.hostname}`);
 
-    // 保留契约的正/负对照：白名单 Origin 被接受，非白名单被拒。
-    const good = await rawRequest(port, "/api/bootstrap", "http://tauri.localhost");
-    check("保留契约：白名单 Origin 在 /api/bootstrap 上被接受",
-      good.status === 200 && /Access-Control-Allow-Origin: http:\/\/tauri\.localhost/i.test(good.headers),
-      `status=${good.status} allow-origin=${/Access-Control-Allow-Origin: ([^\r\n]*)/i.exec(good.headers)?.[1] ?? "无"}`);
+    // §22 负对照：已删除的白名单条目不得再取得许可。
+    const removed = await rawRequest(port, "/api/bootstrap", "http://tauri.localhost");
+    check("§22 已删除的受信 origin 在 /api/bootstrap 上被拒（403）",
+      removed.status === 403,
+      `status=${removed.status}`);
+    check("§22 已删除的受信 origin 不得回带许可头",
+      !/Access-Control-Allow-Origin/i.test(removed.headers),
+      `allow-origin=${/Access-Control-Allow-Origin: ([^\r\n]*)/i.exec(removed.headers)?.[1] ?? "无"}`);
     const bad = await rawRequest(port, "/api/bootstrap", "http://evil.example");
-    check("保留契约：非白名单 Origin 被拒且不回许可头",
+    check("非白名单 Origin 被拒且不回许可头",
       bad.status === 403 && !/Access-Control-Allow-Origin/i.test(bad.headers),
       `status=${bad.status}`);
     const wildcard = await rawRequest(port, "/api/bootstrap", "http://evil.example");
-    check("保留契约：任何响应都不得出现通配符许可",
+    check("任何响应都不得出现通配符许可",
       !/Access-Control-Allow-Origin: \*/i.test(wildcard.headers));
+    // 同源页面必须仍然可用：删除白名单不得误伤产品自身的引导路径。
+    const self = await rawRequest(port, "/api/bootstrap", `http://127.0.0.1:${port}`);
+    check("产品自身同源引导路径仍可用（403 只针对被删除的跨源例外）",
+      self.status === 200, `status=${self.status}`);
   } finally {
     try { proc.kill("SIGKILL"); } catch { /* 已退出 */ }
   }

@@ -18,6 +18,21 @@
 //! 1. 作业对象 `KILL_ON_JOB_CLOSE`：Desktop 被强杀也不会留下 sidecar；
 //! 2. `terminate()`：正常退出路径显式终止；
 //! 3. `Child` 的 `wait()` 由监督线程阻塞等待，运行期意外退出可被立即观察。
+//!
+//! ## 作业对象不可用时的 fail closed（Batch 6B §4）
+//!
+//! 上述第 1 条是**发布性质**，不是优化项。作业对象建立或加入失败时，产品剩下的只有
+//! 「窗口关闭时顺手杀掉子进程」，而 Desktop 被强杀（任务管理器、崩溃、断电式终止）后
+//! 会留下一个仍在监听端口的 nav-server——界面消失、服务还在，正是本批次要消除的
+//! zombie 形态之一。
+//!
+//! 因此缺省策略是**要求**作业对象：`create` 或 `assign` 失败即启动失败、立即回收
+//! sidecar、非零退出，并且不开窗口。开发者可以用 `--allow-no-job-object` 显式降级，
+//! 此时必须留下 WARN——降级是产品性质的丧失，不能是静默行为。
+//!
+//! 判据不是「是否 debug 构建」而是「调用方是否显式声明可以不要作业对象」：debug 与
+//! release 走同一条 fail-closed 判据，因为「这次运行是不是发布形态」与「这次运行能不
+//! 能保证清理」是两个无关的问题。
 
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
@@ -25,6 +40,7 @@ use std::process::{Command, Stdio};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::time::{Duration, Instant};
 
+use crate::log::{err, out};
 use crate::winproc::{Job, ProcessRef};
 
 /// 就绪等待上界。数据集加载 + search.db 读取在冷缓存上可能远超 10 s
@@ -44,6 +60,31 @@ pub struct SpawnSpec<'a> {
     pub replay: Option<&'a Path>,
     /// 注入合成灯态剧本（透传 `--fake-signal`）。
     pub fake_signal: bool,
+    /// 是否**要求**作业对象接管 sidecar（§4）。
+    ///
+    /// 缺省应为 `true`。为 `false` 时作业对象失败只降级并告警，仅限开发者显式请求。
+    pub job_required: bool,
+}
+
+/// 启动失败。区分「作业对象不可用」与其余原因，使产品退出码能反映**哪一类**发布性质
+/// 未能建立——把两者都折叠成一个「启动失败」会让「作业对象没生效」在发布检查里不可观测。
+#[derive(Debug)]
+pub enum StartError {
+    /// §4：本次启动要求作业对象，但创建或加入失败。
+    JobRequired { step: String, detail: String },
+    /// 其余启动/就绪失败。
+    Other(String),
+}
+
+impl std::fmt::Display for StartError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            StartError::JobRequired { step, detail } => {
+                write!(f, "作业对象不可用（step={step}）: {detail}")
+            }
+            StartError::Other(e) => write!(f, "{e}"),
+        }
+    }
 }
 
 /// 已启动的 sidecar。
@@ -108,19 +149,59 @@ fn probe_bootstrap(port: u16) -> Option<u16> {
     parts.next()?.parse::<u16>().ok()
 }
 
+/// fail closed：立即终止刚启动的 sidecar、回收它，并返回作业对象失败。
+///
+/// 此处的显式 `terminate` 不可省略。`assign` 失败意味着 sidecar **不在**作业内，关闭
+/// 作业句柄对它没有任何作用——Batch 6A 的变异实验 M2a 正是在这一点上推翻了「作业对象
+/// 可以接管显式终止」的假设：移除显式终止后，作业对象只在句柄关闭时才动手，而句柄关闭
+/// 发生在停机流程之后，于是正常停机收不回子进程。两种机制覆盖的是**不同**性质。
+fn reap_and_fail(
+    child: &mut std::process::Child,
+    proc: Option<&ProcessRef>,
+    step: &str,
+    detail: String,
+) -> StartError {
+    if let Some(p) = proc {
+        p.terminate(1);
+    }
+    let _ = child.kill();
+    let _ = child.wait();
+    StartError::JobRequired {
+        step: step.to_string(),
+        detail,
+    }
+}
+
 impl Sidecar {
     /// 启动并按契约等待就绪。
     ///
     /// `on_unexpected_exit` 在监督线程中被调用一次：sidecar 在**非本次停机**的情况下
     /// 结束（panic、被外部终止、自行退出）时触发。它是 D-06/D-07 的唯一入口——
     /// 没有它，sidecar 死掉后界面会停在最后一帧且没有任何人知道。
-    pub fn start<F>(spec: &SpawnSpec, on_unexpected_exit: F) -> Result<Sidecar, String>
+    pub fn start<F>(spec: &SpawnSpec, on_unexpected_exit: F) -> Result<Sidecar, StartError>
     where
         F: FnOnce(std::process::ExitStatus) + Send + 'static,
     {
         // 作业先建：必须在子进程创建之后立刻加入，避免「创建成功但加入前父进程死亡」
         // 的窗口尽可能小。加入动作紧随 spawn，中间不做任何阻塞操作。
-        let job = Job::create_kill_on_close();
+        //
+        // 创建失败时**尚未派生任何子进程**，fail-closed 路径因此没有需要回收的对象；
+        // 这正是 create 与 assign 两种失败处置不同、且必须分别记录 step 的原因。
+        let job = match Job::create_kill_on_close() {
+            Ok(j) => Some(j),
+            Err(e) => {
+                if spec.job_required {
+                    return Err(StartError::JobRequired {
+                        step: "create".to_string(),
+                        detail: e.to_string(),
+                    });
+                }
+                err(&format!(
+                    "[desktop] WARN kind=job-create-failed detail={e}（--allow-no-job-object：sidecar 清理降级为正常退出路径；Desktop 被强杀时可能残留 sidecar）"
+                ));
+                None
+            }
+        };
 
         let mut cmd = Command::new(spec.exe);
         cmd.arg("server")
@@ -140,40 +221,64 @@ impl Sidecar {
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .current_dir(spec.exe.parent().unwrap_or(Path::new(".")));
-        let mut child = cmd
-            .spawn()
-            .map_err(|e| format!("启动 sidecar 失败（{}）: {e}", spec.exe.display()))?;
+        let mut child = cmd.spawn().map_err(|e| {
+            StartError::Other(format!("启动 sidecar 失败（{}）: {e}", spec.exe.display()))
+        })?;
         let pid = child.id();
 
         let proc = ProcessRef::open(pid);
-        let mut job_state = "none";
-        if let (Some(j), Some(p)) = (job.as_ref(), proc.as_ref()) {
-            match j.assign(p) {
-                Ok(()) => job_state = "assigned",
+        let job_state = match (job.as_ref(), proc.as_ref()) {
+            (Some(j), Some(p)) => match j.assign(p) {
+                Ok(()) => "assigned",
                 Err(code) => {
-                    // 加入失败不致命，但必须显式报告：此时只剩 Drop 守卫，
-                    // 「Desktop 被强杀也不留孤儿」这一条不再成立。
-                    eprintln!("[desktop] WARN kind=job-assign-failed win32_error={code}（sidecar 清理降级为正常退出路径）");
-                    job_state = "assign-failed";
+                    let detail = format!("AssignProcessToJobObject win32_error={code}");
+                    if spec.job_required {
+                        return Err(reap_and_fail(&mut child, proc.as_ref(), "assign", detail));
+                    }
+                    err(&format!(
+                        "[desktop] WARN kind=job-assign-failed win32_error={code}（--allow-no-job-object：sidecar 清理降级为正常退出路径）"
+                    ));
+                    "assign-failed"
                 }
+            },
+            (Some(_), None) => {
+                // 作业已建立但进程句柄打不开 ⇒ 同样无法加入，其后果与 assign 失败一致。
+                // 旧实现把这一支漏在 `else if job.is_none()` 之外，于是「句柄打不开」既
+                // 没有告警也没有判据——一条静默的降级路径。
+                let detail = format!("OpenProcess(pid={pid}) 失败，无法把 sidecar 加入作业对象");
+                if spec.job_required {
+                    return Err(reap_and_fail(&mut child, None, "open-process", detail));
+                }
+                err(&format!(
+                    "[desktop] WARN kind=job-assign-failed step=open-process detail={detail}"
+                ));
+                "assign-failed"
             }
-        } else if job.is_none() {
-            eprintln!("[desktop] WARN kind=job-create-failed（sidecar 清理降级为正常退出路径）");
-        }
-        println!("[desktop] sidecar-job state={job_state} pid={pid}");
+            (None, _) => "create-failed",
+        };
+        out(&format!(
+            "[desktop] sidecar-job state={job_state} required={} pid={pid}",
+            spec.job_required
+        ));
 
-        let stdout = child.stdout.take().ok_or("sidecar stdout 不可用")?;
-        let stderr = child.stderr.take().ok_or("sidecar stderr 不可用")?;
+        let stdout = child
+            .stdout
+            .take()
+            .ok_or_else(|| StartError::Other("sidecar stdout 不可用".to_string()))?;
+        let stderr = child
+            .stderr
+            .take()
+            .ok_or_else(|| StartError::Other("sidecar stderr 不可用".to_string()))?;
 
         // stderr 逐行转发到 Desktop 的 stderr（保留 server 自己的诊断原文）。
         std::thread::Builder::new()
             .name("sidecar-stderr".to_string())
             .spawn(move || {
                 for line in BufReader::new(stderr).lines().map_while(Result::ok) {
-                    eprintln!("[sidecar] {line}");
+                    err(&format!("[sidecar] {line}"));
                 }
             })
-            .map_err(|e| format!("创建 stderr 转发线程失败: {e}"))?;
+            .map_err(|e| StartError::Other(format!("创建 stderr 转发线程失败: {e}")))?;
 
         // stdout：解析端口行，其余行原样转发。
         let (port_tx, port_rx) = mpsc::channel::<u16>();
@@ -189,24 +294,26 @@ impl Sidecar {
                             continue;
                         }
                     }
-                    println!("[sidecar] {line}");
+                    out(&format!("[sidecar] {line}"));
                 }
             })
-            .map_err(|e| format!("创建 stdout 解析线程失败: {e}"))?;
+            .map_err(|e| StartError::Other(format!("创建 stdout 解析线程失败: {e}")))?;
 
         let started = Instant::now();
         let port = match port_rx.recv_timeout(READY_TIMEOUT) {
             Ok(p) => p,
             Err(RecvTimeoutError::Timeout) => {
                 let _ = child.kill();
-                return Err(format!(
+                return Err(StartError::Other(format!(
                     "sidecar 未在 {} s 内报告端口（stdout 未出现 \"[server] port=<n>\"）",
                     READY_TIMEOUT.as_secs()
-                ));
+                )));
             }
             Err(RecvTimeoutError::Disconnected) => {
                 let _ = child.kill();
-                return Err("sidecar 在报告端口之前即结束（见其 stderr 诊断）".to_string());
+                return Err(StartError::Other(
+                    "sidecar 在报告端口之前即结束（见其 stderr 诊断）".to_string(),
+                ));
             }
         };
 
@@ -230,10 +337,10 @@ impl Sidecar {
             if let Some(p) = proc.as_ref() {
                 p.terminate(1);
             }
-            return Err(format!(
+            return Err(StartError::Other(format!(
                 "sidecar 已在 :{port} 报告端口，但 bootstrap 在 {} s 内未返回 200（最后一次 status={last:?}）",
                 READY_TIMEOUT.as_secs()
-            ));
+            )));
         }
         let ready_ms = started.elapsed().as_millis();
 
@@ -254,11 +361,13 @@ impl Sidecar {
                         }
                     }
                     Err(e) => {
-                        eprintln!("[desktop] ERROR kind=sidecar-wait-failed detail={e}");
+                        err(&format!(
+                            "[desktop] ERROR kind=sidecar-wait-failed detail={e}"
+                        ));
                     }
                 }
             })
-            .map_err(|e| format!("创建 sidecar 监督线程失败: {e}"))?;
+            .map_err(|e| StartError::Other(format!("创建 sidecar 监督线程失败: {e}")))?;
 
         Ok(Sidecar {
             exe: spec.exe.to_path_buf(),

@@ -1,0 +1,2371 @@
+================================================================================
+ETS2Nav 第三方组件与许可清单（THIRD_PARTY_NOTICES）
+================================================================================
+
+本文件由脚本生成，不得手工编辑：
+  scripts/generate-third-party-notices.ps1          生成
+  scripts/generate-third-party-notices.ps1 -Check   校验已提交内容是否为最新
+
+所有许可事实均取自仓库工作树中实际存在的文件（锁文件、已安装包的 package.json 与
+LICENSE 文件、crate 元数据、SDK 归档内的许可文本）。无证据的条目记为 UNKNOWN 或
+PENDING，不以推测填充。文件不含时间戳：相同输入必然生成相同字节。行尾为 CRLF；
+被逐字收录的许可文本其行尾已从原文件的 LF 归一化为 CRLF，字词与空白未作改动。
+
+自校验摘要（不是签名，只用于 -Check 判断内容是否变化）：
+  notices-body-sha256: <见文件末尾>
+
+--------------------------------------------------------------------------------
+[0] 本项目自身许可
+--------------------------------------------------------------------------------
+
+  项目          : ETS2Nav
+  声明许可      : GPL-3.0-only
+  声明来源      : tools/ets2nav-web/package.json 的 license 字段
+  LICENSE 文件  : LICENSE（Git 跟踪，LICENSE）
+  LICENSE sha256: 230184f60bae2feaf244f10a8bac053c8ff33a183bcc365b4d8b876d2b7f4809
+  LICENSE 首行  : GNU GENERAL PUBLIC LICENSE
+
+  声明与文本的核对结论：
+    LICENSE 文件收录的是 GNU GPL v3 的逐字全文（首两行：'GNU GENERAL PUBLIC LICENSE'
+    / 'Version 3, 29 June 2007'），正文第 566-580 行讨论 'or any later version'
+    只是条款本身，并未对本项目作出任何版本选择声明；文件与仓库内其它位置都不存在
+    'either version 3 of the License, or (at your option) any later version'
+    这句话。因此该文件本身既未选择 GPL-3.0-only，也未选择
+    GPL-3.0-or-later。把本项目登记为 GPL-3.0-only 的判据来自
+    tools/ets2nav-web/package.json 的 license 字段，以及 commit a3d41f2（'决策 D2
+    修订：项目许可证 MIT -> GPL-3.0'）的提交意图，而不是 LICENSE
+    文本。二者不构成冲突，但 LICENSE
+    缺少开发者选择声明，属于声明与文本之间的空缺。
+
+  覆盖范围：仓库内自有源码与其构建产物，包括 nav-core 的 8 个 workspace 成员
+  （6 个库 crate、nav-core-cli、构建工具 od-corpus；它们的 Cargo.toml 均未声明
+  license 字段，故在 [2] 末的「source 为空」清单中同时出现）、desktop
+  （ets2nav-desktop）以及 telemetry-plugin/ 下两个插件的源码与其提交的 DLL。
+  上述包在 crate 数据中 source 为空，属本项目自有代码，不构成第三方依赖。
+
+  以下是 LICENSE 文件的完整逐字内容。
+
+# LICENSE（逐字收录，sha256 如上）
+# ---------------------------------------------------------------------------
+#                       GNU GENERAL PUBLIC LICENSE
+#                          Version 3, 29 June 2007
+#
+#    Copyright (C) 2007 Free Software Foundation, Inc. <https://fsf.org/>
+#    Everyone is permitted to copy and distribute verbatim copies
+#    of this license document, but changing it is not allowed.
+#
+#                               Preamble
+#
+#     The GNU General Public License is a free, copyleft license for
+#   software and other kinds of works.
+#
+#     The licenses for most software and other practical works are designed
+#   to take away your freedom to share and change the works.  By contrast,
+#   the GNU General Public License is intended to guarantee your freedom to
+#   share and change all versions of a program--to make sure it remains free
+#   software for all its users.  We, the Free Software Foundation, use the
+#   GNU General Public License for most of our software; it applies also to
+#   any other work released this way by its authors.  You can apply it to
+#   your programs, too.
+#
+#     When we speak of free software, we are referring to freedom, not
+#   price.  Our General Public Licenses are designed to make sure that you
+#   have the freedom to distribute copies of free software (and charge for
+#   them if you wish), that you receive source code or can get it if you
+#   want it, that you can change the software or use pieces of it in new
+#   free programs, and that you know you can do these things.
+#
+#     To protect your rights, we need to prevent others from denying you
+#   these rights or asking you to surrender the rights.  Therefore, you have
+#   certain responsibilities if you distribute copies of the software, or if
+#   you modify it: responsibilities to respect the freedom of others.
+#
+#     For example, if you distribute copies of such a program, whether
+#   gratis or for a fee, you must pass on to the recipients the same
+#   freedoms that you received.  You must make sure that they, too, receive
+#   or can get the source code.  And you must show them these terms so they
+#   know their rights.
+#
+#     Developers that use the GNU GPL protect your rights with two steps:
+#   (1) assert copyright on the software, and (2) offer you this License
+#   giving you legal permission to copy, distribute and/or modify it.
+#
+#     For the developers' and authors' protection, the GPL clearly explains
+#   that there is no warranty for this free software.  For both users' and
+#   authors' sake, the GPL requires that modified versions be marked as
+#   changed, so that their problems will not be attributed erroneously to
+#   authors of previous versions.
+#
+#     Some devices are designed to deny users access to install or run
+#   modified versions of the software inside them, although the manufacturer
+#   can do so.  This is fundamentally incompatible with the aim of
+#   protecting users' freedom to change the software.  The systematic
+#   pattern of such abuse occurs in the area of products for individuals to
+#   use, which is precisely where it is most unacceptable.  Therefore, we
+#   have designed this version of the GPL to prohibit the practice for those
+#   products.  If such problems arise substantially in other domains, we
+#   stand ready to extend this provision to those domains in future versions
+#   of the GPL, as needed to protect the freedom of users.
+#
+#     Finally, every program is threatened constantly by software patents.
+#   States should not allow patents to restrict development and use of
+#   software on general-purpose computers, but in those that do, we wish to
+#   avoid the special danger that patents applied to a free program could
+#   make it effectively proprietary.  To prevent this, the GPL assures that
+#   patents cannot be used to render the program non-free.
+#
+#     The precise terms and conditions for copying, distribution and
+#   modification follow.
+#
+#                          TERMS AND CONDITIONS
+#
+#     0. Definitions.
+#
+#     "This License" refers to version 3 of the GNU General Public License.
+#
+#     "Copyright" also means copyright-like laws that apply to other kinds of
+#   works, such as semiconductor masks.
+#
+#     "The Program" refers to any copyrightable work licensed under this
+#   License.  Each licensee is addressed as "you".  "Licensees" and
+#   "recipients" may be individuals or organizations.
+#
+#     To "modify" a work means to copy from or adapt all or part of the work
+#   in a fashion requiring copyright permission, other than the making of an
+#   exact copy.  The resulting work is called a "modified version" of the
+#   earlier work or a work "based on" the earlier work.
+#
+#     A "covered work" means either the unmodified Program or a work based
+#   on the Program.
+#
+#     To "propagate" a work means to do anything with it that, without
+#   permission, would make you directly or secondarily liable for
+#   infringement under applicable copyright law, except executing it on a
+#   computer or modifying a private copy.  Propagation includes copying,
+#   distribution (with or without modification), making available to the
+#   public, and in some countries other activities as well.
+#
+#     To "convey" a work means any kind of propagation that enables other
+#   parties to make or receive copies.  Mere interaction with a user through
+#   a computer network, with no transfer of a copy, is not conveying.
+#
+#     An interactive user interface displays "Appropriate Legal Notices"
+#   to the extent that it includes a convenient and prominently visible
+#   feature that (1) displays an appropriate copyright notice, and (2)
+#   tells the user that there is no warranty for the work (except to the
+#   extent that warranties are provided), that licensees may convey the
+#   work under this License, and how to view a copy of this License.  If
+#   the interface presents a list of user commands or options, such as a
+#   menu, a prominent item in the list meets this criterion.
+#
+#     1. Source Code.
+#
+#     The "source code" for a work means the preferred form of the work
+#   for making modifications to it.  "Object code" means any non-source
+#   form of a work.
+#
+#     A "Standard Interface" means an interface that either is an official
+#   standard defined by a recognized standards body, or, in the case of
+#   interfaces specified for a particular programming language, one that
+#   is widely used among developers working in that language.
+#
+#     The "System Libraries" of an executable work include anything, other
+#   than the work as a whole, that (a) is included in the normal form of
+#   packaging a Major Component, but which is not part of that Major
+#   Component, and (b) serves only to enable use of the work with that
+#   Major Component, or to implement a Standard Interface for which an
+#   implementation is available to the public in source code form.  A
+#   "Major Component", in this context, means a major essential component
+#   (kernel, window system, and so on) of the specific operating system
+#   (if any) on which the executable work runs, or a compiler used to
+#   produce the work, or an object code interpreter used to run it.
+#
+#     The "Corresponding Source" for a work in object code form means all
+#   the source code needed to generate, install, and (for an executable
+#   work) run the object code and to modify the work, including scripts to
+#   control those activities.  However, it does not include the work's
+#   System Libraries, or general-purpose tools or generally available free
+#   programs which are used unmodified in performing those activities but
+#   which are not part of the work.  For example, Corresponding Source
+#   includes interface definition files associated with source files for
+#   the work, and the source code for shared libraries and dynamically
+#   linked subprograms that the work is specifically designed to require,
+#   such as by intimate data communication or control flow between those
+#   subprograms and other parts of the work.
+#
+#     The Corresponding Source need not include anything that users
+#   can regenerate automatically from other parts of the Corresponding
+#   Source.
+#
+#     The Corresponding Source for a work in source code form is that
+#   same work.
+#
+#     2. Basic Permissions.
+#
+#     All rights granted under this License are granted for the term of
+#   copyright on the Program, and are irrevocable provided the stated
+#   conditions are met.  This License explicitly affirms your unlimited
+#   permission to run the unmodified Program.  The output from running a
+#   covered work is covered by this License only if the output, given its
+#   content, constitutes a covered work.  This License acknowledges your
+#   rights of fair use or other equivalent, as provided by copyright law.
+#
+#     You may make, run and propagate covered works that you do not
+#   convey, without conditions so long as your license otherwise remains
+#   in force.  You may convey covered works to others for the sole purpose
+#   of having them make modifications exclusively for you, or provide you
+#   with facilities for running those works, provided that you comply with
+#   the terms of this License in conveying all material for which you do
+#   not control copyright.  Those thus making or running the covered works
+#   for you must do so exclusively on your behalf, under your direction
+#   and control, on terms that prohibit them from making any copies of
+#   your copyrighted material outside their relationship with you.
+#
+#     Conveying under any other circumstances is permitted solely under
+#   the conditions stated below.  Sublicensing is not allowed; section 10
+#   makes it unnecessary.
+#
+#     3. Protecting Users' Legal Rights From Anti-Circumvention Law.
+#
+#     No covered work shall be deemed part of an effective technological
+#   measure under any applicable law fulfilling obligations under article
+#   11 of the WIPO copyright treaty adopted on 20 December 1996, or
+#   similar laws prohibiting or restricting circumvention of such
+#   measures.
+#
+#     When you convey a covered work, you waive any legal power to forbid
+#   circumvention of technological measures to the extent such circumvention
+#   is effected by exercising rights under this License with respect to
+#   the covered work, and you disclaim any intention to limit operation or
+#   modification of the work as a means of enforcing, against the work's
+#   users, your or third parties' legal rights to forbid circumvention of
+#   technological measures.
+#
+#     4. Conveying Verbatim Copies.
+#
+#     You may convey verbatim copies of the Program's source code as you
+#   receive it, in any medium, provided that you conspicuously and
+#   appropriately publish on each copy an appropriate copyright notice;
+#   keep intact all notices stating that this License and any
+#   non-permissive terms added in accord with section 7 apply to the code;
+#   keep intact all notices of the absence of any warranty; and give all
+#   recipients a copy of this License along with the Program.
+#
+#     You may charge any price or no price for each copy that you convey,
+#   and you may offer support or warranty protection for a fee.
+#
+#     5. Conveying Modified Source Versions.
+#
+#     You may convey a work based on the Program, or the modifications to
+#   produce it from the Program, in the form of source code under the
+#   terms of section 4, provided that you also meet all of these conditions:
+#
+#       a) The work must carry prominent notices stating that you modified
+#       it, and giving a relevant date.
+#
+#       b) The work must carry prominent notices stating that it is
+#       released under this License and any conditions added under section
+#       7.  This requirement modifies the requirement in section 4 to
+#       "keep intact all notices".
+#
+#       c) You must license the entire work, as a whole, under this
+#       License to anyone who comes into possession of a copy.  This
+#       License will therefore apply, along with any applicable section 7
+#       additional terms, to the whole of the work, and all its parts,
+#       regardless of how they are packaged.  This License gives no
+#       permission to license the work in any other way, but it does not
+#       invalidate such permission if you have separately received it.
+#
+#       d) If the work has interactive user interfaces, each must display
+#       Appropriate Legal Notices; however, if the Program has interactive
+#       interfaces that do not display Appropriate Legal Notices, your
+#       work need not make them do so.
+#
+#     A compilation of a covered work with other separate and independent
+#   works, which are not by their nature extensions of the covered work,
+#   and which are not combined with it such as to form a larger program,
+#   in or on a volume of a storage or distribution medium, is called an
+#   "aggregate" if the compilation and its resulting copyright are not
+#   used to limit the access or legal rights of the compilation's users
+#   beyond what the individual works permit.  Inclusion of a covered work
+#   in an aggregate does not cause this License to apply to the other
+#   parts of the aggregate.
+#
+#     6. Conveying Non-Source Forms.
+#
+#     You may convey a covered work in object code form under the terms
+#   of sections 4 and 5, provided that you also convey the
+#   machine-readable Corresponding Source under the terms of this License,
+#   in one of these ways:
+#
+#       a) Convey the object code in, or embodied in, a physical product
+#       (including a physical distribution medium), accompanied by the
+#       Corresponding Source fixed on a durable physical medium
+#       customarily used for software interchange.
+#
+#       b) Convey the object code in, or embodied in, a physical product
+#       (including a physical distribution medium), accompanied by a
+#       written offer, valid for at least three years and valid for as
+#       long as you offer spare parts or customer support for that product
+#       model, to give anyone who possesses the object code either (1) a
+#       copy of the Corresponding Source for all the software in the
+#       product that is covered by this License, on a durable physical
+#       medium customarily used for software interchange, for a price no
+#       more than your reasonable cost of physically performing this
+#       conveying of source, or (2) access to copy the
+#       Corresponding Source from a network server at no charge.
+#
+#       c) Convey individual copies of the object code with a copy of the
+#       written offer to provide the Corresponding Source.  This
+#       alternative is allowed only occasionally and noncommercially, and
+#       only if you received the object code with such an offer, in accord
+#       with subsection 6b.
+#
+#       d) Convey the object code by offering access from a designated
+#       place (gratis or for a charge), and offer equivalent access to the
+#       Corresponding Source in the same way through the same place at no
+#       further charge.  You need not require recipients to copy the
+#       Corresponding Source along with the object code.  If the place to
+#       copy the object code is a network server, the Corresponding Source
+#       may be on a different server (operated by you or a third party)
+#       that supports equivalent copying facilities, provided you maintain
+#       clear directions next to the object code saying where to find the
+#       Corresponding Source.  Regardless of what server hosts the
+#       Corresponding Source, you remain obligated to ensure that it is
+#       available for as long as needed to satisfy these requirements.
+#
+#       e) Convey the object code using peer-to-peer transmission, provided
+#       you inform other peers where the object code and Corresponding
+#       Source of the work are being offered to the general public at no
+#       charge under subsection 6d.
+#
+#     A separable portion of the object code, whose source code is excluded
+#   from the Corresponding Source as a System Library, need not be
+#   included in conveying the object code work.
+#
+#     A "User Product" is either (1) a "consumer product", which means any
+#   tangible personal property which is normally used for personal, family,
+#   or household purposes, or (2) anything designed or sold for incorporation
+#   into a dwelling.  In determining whether a product is a consumer product,
+#   doubtful cases shall be resolved in favor of coverage.  For a particular
+#   product received by a particular user, "normally used" refers to a
+#   typical or common use of that class of product, regardless of the status
+#   of the particular user or of the way in which the particular user
+#   actually uses, or expects or is expected to use, the product.  A product
+#   is a consumer product regardless of whether the product has substantial
+#   commercial, industrial or non-consumer uses, unless such uses represent
+#   the only significant mode of use of the product.
+#
+#     "Installation Information" for a User Product means any methods,
+#   procedures, authorization keys, or other information required to install
+#   and execute modified versions of a covered work in that User Product from
+#   a modified version of its Corresponding Source.  The information must
+#   suffice to ensure that the continued functioning of the modified object
+#   code is in no case prevented or interfered with solely because
+#   modification has been made.
+#
+#     If you convey an object code work under this section in, or with, or
+#   specifically for use in, a User Product, and the conveying occurs as
+#   part of a transaction in which the right of possession and use of the
+#   User Product is transferred to the recipient in perpetuity or for a
+#   fixed term (regardless of how the transaction is characterized), the
+#   Corresponding Source conveyed under this section must be accompanied
+#   by the Installation Information.  But this requirement does not apply
+#   if neither you nor any third party retains the ability to install
+#   modified object code on the User Product (for example, the work has
+#   been installed in ROM).
+#
+#     The requirement to provide Installation Information does not include a
+#   requirement to continue to provide support service, warranty, or updates
+#   for a work that has been modified or installed by the recipient, or for
+#   the User Product in which it has been modified or installed.  Access to a
+#   network may be denied when the modification itself materially and
+#   adversely affects the operation of the network or violates the rules and
+#   protocols for communication across the network.
+#
+#     Corresponding Source conveyed, and Installation Information provided,
+#   in accord with this section must be in a format that is publicly
+#   documented (and with an implementation available to the public in
+#   source code form), and must require no special password or key for
+#   unpacking, reading or copying.
+#
+#     7. Additional Terms.
+#
+#     "Additional permissions" are terms that supplement the terms of this
+#   License by making exceptions from one or more of its conditions.
+#   Additional permissions that are applicable to the entire Program shall
+#   be treated as though they were included in this License, to the extent
+#   that they are valid under applicable law.  If additional permissions
+#   apply only to part of the Program, that part may be used separately
+#   under those permissions, but the entire Program remains governed by
+#   this License without regard to the additional permissions.
+#
+#     When you convey a copy of a covered work, you may at your option
+#   remove any additional permissions from that copy, or from any part of
+#   it.  (Additional permissions may be written to require their own
+#   removal in certain cases when you modify the work.)  You may place
+#   additional permissions on material, added by you to a covered work,
+#   for which you have or can give appropriate copyright permission.
+#
+#     Notwithstanding any other provision of this License, for material you
+#   add to a covered work, you may (if authorized by the copyright holders of
+#   that material) supplement the terms of this License with terms:
+#
+#       a) Disclaiming warranty or limiting liability differently from the
+#       terms of sections 15 and 16 of this License; or
+#
+#       b) Requiring preservation of specified reasonable legal notices or
+#       author attributions in that material or in the Appropriate Legal
+#       Notices displayed by works containing it; or
+#
+#       c) Prohibiting misrepresentation of the origin of that material, or
+#       requiring that modified versions of such material be marked in
+#       reasonable ways as different from the original version; or
+#
+#       d) Limiting the use for publicity purposes of names of licensors or
+#       authors of the material; or
+#
+#       e) Declining to grant rights under trademark law for use of some
+#       trade names, trademarks, or service marks; or
+#
+#       f) Requiring indemnification of licensors and authors of that
+#       material by anyone who conveys the material (or modified versions of
+#       it) with contractual assumptions of liability to the recipient, for
+#       any liability that these contractual assumptions directly impose on
+#       those licensors and authors.
+#
+#     All other non-permissive additional terms are considered "further
+#   restrictions" within the meaning of section 10.  If the Program as you
+#   received it, or any part of it, contains a notice stating that it is
+#   governed by this License along with a term that is a further
+#   restriction, you may remove that term.  If a license document contains
+#   a further restriction but permits relicensing or conveying under this
+#   License, you may add to a covered work material governed by the terms
+#   of that license document, provided that the further restriction does
+#   not survive such relicensing or conveying.
+#
+#     If you add terms to a covered work in accord with this section, you
+#   must place, in the relevant source files, a statement of the
+#   additional terms that apply to those files, or a notice indicating
+#   where to find the applicable terms.
+#
+#     Additional terms, permissive or non-permissive, may be stated in the
+#   form of a separately written license, or stated as exceptions;
+#   the above requirements apply either way.
+#
+#     8. Termination.
+#
+#     You may not propagate or modify a covered work except as expressly
+#   provided under this License.  Any attempt otherwise to propagate or
+#   modify it is void, and will automatically terminate your rights under
+#   this License (including any patent licenses granted under the third
+#   paragraph of section 11).
+#
+#     However, if you cease all violation of this License, then your
+#   license from a particular copyright holder is reinstated (a)
+#   provisionally, unless and until the copyright holder explicitly and
+#   finally terminates your license, and (b) permanently, if the copyright
+#   holder fails to notify you of the violation by some reasonable means
+#   prior to 60 days after the cessation.
+#
+#     Moreover, your license from a particular copyright holder is
+#   reinstated permanently if the copyright holder notifies you of the
+#   violation by some reasonable means, this is the first time you have
+#   received notice of violation of this License (for any work) from that
+#   copyright holder, and you cure the violation prior to 30 days after
+#   your receipt of the notice.
+#
+#     Termination of your rights under this section does not terminate the
+#   licenses of parties who have received copies or rights from you under
+#   this License.  If your rights have been terminated and not permanently
+#   reinstated, you do not qualify to receive new licenses for the same
+#   material under section 10.
+#
+#     9. Acceptance Not Required for Having Copies.
+#
+#     You are not required to accept this License in order to receive or
+#   run a copy of the Program.  Ancillary propagation of a covered work
+#   occurring solely as a consequence of using peer-to-peer transmission
+#   to receive a copy likewise does not require acceptance.  However,
+#   nothing other than this License grants you permission to propagate or
+#   modify any covered work.  These actions infringe copyright if you do
+#   not accept this License.  Therefore, by modifying or propagating a
+#   covered work, you indicate your acceptance of this License to do so.
+#
+#     10. Automatic Licensing of Downstream Recipients.
+#
+#     Each time you convey a covered work, the recipient automatically
+#   receives a license from the original licensors, to run, modify and
+#   propagate that work, subject to this License.  You are not responsible
+#   for enforcing compliance by third parties with this License.
+#
+#     An "entity transaction" is a transaction transferring control of an
+#   organization, or substantially all assets of one, or subdividing an
+#   organization, or merging organizations.  If propagation of a covered
+#   work results from an entity transaction, each party to that
+#   transaction who receives a copy of the work also receives whatever
+#   licenses to the work the party's predecessor in interest had or could
+#   give under the previous paragraph, plus a right to possession of the
+#   Corresponding Source of the work from the predecessor in interest, if
+#   the predecessor has it or can get it with reasonable efforts.
+#
+#     You may not impose any further restrictions on the exercise of the
+#   rights granted or affirmed under this License.  For example, you may
+#   not impose a license fee, royalty, or other charge for exercise of
+#   rights granted under this License, and you may not initiate litigation
+#   (including a cross-claim or counterclaim in a lawsuit) alleging that
+#   any patent claim is infringed by making, using, selling, offering for
+#   sale, or importing the Program or any portion of it.
+#
+#     11. Patents.
+#
+#     A "contributor" is a copyright holder who authorizes use under this
+#   License of the Program or a work on which the Program is based.  The
+#   work thus licensed is called the contributor's "contributor version".
+#
+#     A contributor's "essential patent claims" are all patent claims
+#   owned or controlled by the contributor, whether already acquired or
+#   hereafter acquired, that would be infringed by some manner, permitted
+#   by this License, of making, using, or selling its contributor version,
+#   but do not include claims that would be infringed only as a
+#   consequence of further modification of the contributor version.  For
+#   purposes of this definition, "control" includes the right to grant
+#   patent sublicenses in a manner consistent with the requirements of
+#   this License.
+#
+#     Each contributor grants you a non-exclusive, worldwide, royalty-free
+#   patent license under the contributor's essential patent claims, to
+#   make, use, sell, offer for sale, import and otherwise run, modify and
+#   propagate the contents of its contributor version.
+#
+#     In the following three paragraphs, a "patent license" is any express
+#   agreement or commitment, however denominated, not to enforce a patent
+#   (such as an express permission to practice a patent or covenant not to
+#   sue for patent infringement).  To "grant" such a patent license to a
+#   party means to make such an agreement or commitment not to enforce a
+#   patent against the party.
+#
+#     If you convey a covered work, knowingly relying on a patent license,
+#   and the Corresponding Source of the work is not available for anyone
+#   to copy, free of charge and under the terms of this License, through a
+#   publicly available network server or other readily accessible means,
+#   then you must either (1) cause the Corresponding Source to be so
+#   available, or (2) arrange to deprive yourself of the benefit of the
+#   patent license for this particular work, or (3) arrange, in a manner
+#   consistent with the requirements of this License, to extend the patent
+#   license to downstream recipients.  "Knowingly relying" means you have
+#   actual knowledge that, but for the patent license, your conveying the
+#   covered work in a country, or your recipient's use of the covered work
+#   in a country, would infringe one or more identifiable patents in that
+#   country that you have reason to believe are valid.
+#
+#     If, pursuant to or in connection with a single transaction or
+#   arrangement, you convey, or propagate by procuring conveyance of, a
+#   covered work, and grant a patent license to some of the parties
+#   receiving the covered work authorizing them to use, propagate, modify
+#   or convey a specific copy of the covered work, then the patent license
+#   you grant is automatically extended to all recipients of the covered
+#   work and works based on it.
+#
+#     A patent license is "discriminatory" if it does not include within
+#   the scope of its coverage, prohibits the exercise of, or is
+#   conditioned on the non-exercise of one or more of the rights that are
+#   specifically granted under this License.  You may not convey a covered
+#   work if you are a party to an arrangement with a third party that is
+#   in the business of distributing software, under which you make payment
+#   to the third party based on the extent of your activity of conveying
+#   the work, and under which the third party grants, to any of the
+#   parties who would receive the covered work from you, a discriminatory
+#   patent license (a) in connection with copies of the covered work
+#   conveyed by you (or copies made from those copies), or (b) primarily
+#   for and in connection with specific products or compilations that
+#   contain the covered work, unless you entered into that arrangement,
+#   or that patent license was granted, prior to 28 March 2007.
+#
+#     Nothing in this License shall be construed as excluding or limiting
+#   any implied license or other defenses to infringement that may
+#   otherwise be available to you under applicable patent law.
+#
+#     12. No Surrender of Others' Freedom.
+#
+#     If conditions are imposed on you (whether by court order, agreement or
+#   otherwise) that contradict the conditions of this License, they do not
+#   excuse you from the conditions of this License.  If you cannot convey a
+#   covered work so as to satisfy simultaneously your obligations under this
+#   License and any other pertinent obligations, then as a consequence you may
+#   not convey it at all.  For example, if you agree to terms that obligate you
+#   to collect a royalty for further conveying from those to whom you convey
+#   the Program, the only way you could satisfy both those terms and this
+#   License would be to refrain entirely from conveying the Program.
+#
+#     13. Use with the GNU Affero General Public License.
+#
+#     Notwithstanding any other provision of this License, you have
+#   permission to link or combine any covered work with a work licensed
+#   under version 3 of the GNU Affero General Public License into a single
+#   combined work, and to convey the resulting work.  The terms of this
+#   License will continue to apply to the part which is the covered work,
+#   but the special requirements of the GNU Affero General Public License,
+#   section 13, concerning interaction through a network will apply to the
+#   combination as such.
+#
+#     14. Revised Versions of this License.
+#
+#     The Free Software Foundation may publish revised and/or new versions of
+#   the GNU General Public License from time to time.  Such new versions will
+#   be similar in spirit to the present version, but may differ in detail to
+#   address new problems or concerns.
+#
+#     Each version is given a distinguishing version number.  If the
+#   Program specifies that a certain numbered version of the GNU General
+#   Public License "or any later version" applies to it, you have the
+#   option of following the terms and conditions either of that numbered
+#   version or of any later version published by the Free Software
+#   Foundation.  If the Program does not specify a version number of the
+#   GNU General Public License, you may choose any version ever published
+#   by the Free Software Foundation.
+#
+#     If the Program specifies that a proxy can decide which future
+#   versions of the GNU General Public License can be used, that proxy's
+#   public statement of acceptance of a version permanently authorizes you
+#   to choose that version for the Program.
+#
+#     Later license versions may give you additional or different
+#   permissions.  However, no additional obligations are imposed on any
+#   author or copyright holder as a result of your choosing to follow a
+#   later version.
+#
+#     15. Disclaimer of Warranty.
+#
+#     THERE IS NO WARRANTY FOR THE PROGRAM, TO THE EXTENT PERMITTED BY
+#   APPLICABLE LAW.  EXCEPT WHEN OTHERWISE STATED IN WRITING THE COPYRIGHT
+#   HOLDERS AND/OR OTHER PARTIES PROVIDE THE PROGRAM "AS IS" WITHOUT WARRANTY
+#   OF ANY KIND, EITHER EXPRESSED OR IMPLIED, INCLUDING, BUT NOT LIMITED TO,
+#   THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+#   PURPOSE.  THE ENTIRE RISK AS TO THE QUALITY AND PERFORMANCE OF THE PROGRAM
+#   IS WITH YOU.  SHOULD THE PROGRAM PROVE DEFECTIVE, YOU ASSUME THE COST OF
+#   ALL NECESSARY SERVICING, REPAIR OR CORRECTION.
+#
+#     16. Limitation of Liability.
+#
+#     IN NO EVENT UNLESS REQUIRED BY APPLICABLE LAW OR AGREED TO IN WRITING
+#   WILL ANY COPYRIGHT HOLDER, OR ANY OTHER PARTY WHO MODIFIES AND/OR CONVEYS
+#   THE PROGRAM AS PERMITTED ABOVE, BE LIABLE TO YOU FOR DAMAGES, INCLUDING ANY
+#   GENERAL, SPECIAL, INCIDENTAL OR CONSEQUENTIAL DAMAGES ARISING OUT OF THE
+#   USE OR INABILITY TO USE THE PROGRAM (INCLUDING BUT NOT LIMITED TO LOSS OF
+#   DATA OR DATA BEING RENDERED INACCURATE OR LOSSES SUSTAINED BY YOU OR THIRD
+#   PARTIES OR A FAILURE OF THE PROGRAM TO OPERATE WITH ANY OTHER PROGRAMS),
+#   EVEN IF SUCH HOLDER OR OTHER PARTY HAS BEEN ADVISED OF THE POSSIBILITY OF
+#   SUCH DAMAGES.
+#
+#     17. Interpretation of Sections 15 and 16.
+#
+#     If the disclaimer of warranty and limitation of liability provided
+#   above cannot be given local legal effect according to their terms,
+#   reviewing courts shall apply local law that most closely approximates
+#   an absolute waiver of all civil liability in connection with the
+#   Program, unless a warranty or assumption of liability accompanies a
+#   copy of the Program in return for a fee.
+#
+#                        END OF TERMS AND CONDITIONS
+#
+#               How to Apply These Terms to Your New Programs
+#
+#     If you develop a new program, and you want it to be of the greatest
+#   possible use to the public, the best way to achieve this is to make it
+#   free software which everyone can redistribute and change under these terms.
+#
+#     To do so, attach the following notices to the program.  It is safest
+#   to attach them to the start of each source file to most effectively
+#   state the exclusion of warranty; and each file should have at least
+#   the "copyright" line and a pointer to where the full notice is found.
+#
+#       <one line to give the program's name and a brief idea of what it does.>
+#       Copyright (C) <year>  <name of author>
+#
+#       This program is free software: you can redistribute it and/or modify
+#       it under the terms of the GNU General Public License as published by
+#       the Free Software Foundation, either version 3 of the License, or
+#       (at your option) any later version.
+#
+#       This program is distributed in the hope that it will be useful,
+#       but WITHOUT ANY WARRANTY; without even the implied warranty of
+#       MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+#       GNU General Public License for more details.
+#
+#       You should have received a copy of the GNU General Public License
+#       along with this program.  If not, see <https://www.gnu.org/licenses/>.
+#
+#   Also add information on how to contact you by electronic and paper mail.
+#
+#     If the program does terminal interaction, make it output a short
+#   notice like this when it starts in an interactive mode:
+#
+#       <program>  Copyright (C) <year>  <name of author>
+#       This program comes with ABSOLUTELY NO WARRANTY; for details type `show w'.
+#       This is free software, and you are welcome to redistribute it
+#       under certain conditions; type `show c' for details.
+#
+#   The hypothetical commands `show w' and `show c' should show the appropriate
+#   parts of the General Public License.  Of course, your program's commands
+#   might be different; for a GUI interface, you would use an "about box".
+#
+#     You should also get your employer (if you work as a programmer) or school,
+#   if any, to sign a "copyright disclaimer" for the program, if necessary.
+#   For more information on this, and how to apply and follow the GNU GPL, see
+#   <https://www.gnu.org/licenses/>.
+#
+#     The GNU General Public License does not permit incorporating your program
+#   into proprietary programs.  If your program is a subroutine library, you
+#   may consider it more useful to permit linking proprietary applications with
+#   the library.  If this is what you want to do, use the GNU Lesser General
+#   Public License instead of this License.  But first, please read
+#   <https://www.gnu.org/licenses/why-not-lgpl.html>.
+#
+
+--------------------------------------------------------------------------------
+[1] Web 前端组件（npm，锁定安装）
+--------------------------------------------------------------------------------
+
+  锁定来源：tools/ets2nav-web/package.json + tools/ets2nav-web/package-lock.json
+  锁定文件 sha256：ff49e894f85de24e5a7f57e1f1943b5eb1128f1a5e698f6ff0ed18dc728bb2d6
+  事实来源：node_modules/<pkg>/package.json 的 version 与 license 字段，
+            以及 node_modules/<pkg>/LICENSE* 文件（下表逐条给出路径）。
+
+  组件                              版本       许可（上游声明）     shipped  事实来源
+  --------------------------------  ---------  -------------------  -------  ----------------------------------------------------------------
+  maplibre-gl                       6.4.1      BSD-3-Clause         true  package.json + package-lock.json
+    └ 许可文本: node_modules/maplibre-gl/LICENSE.txt
+    └ 产物: dist/vendor/maplibre-gl.js （完整 sha256 见本节末）
+    └ 打包入口: esbuild IIFE <-
+                                                                               node_modules/maplibre-gl/dist/maplibre-gl.mjs（worker 另走
+                                                                               dist/maplibre-gl-worker.mjs）
+  pmtiles                           4.5.0      BSD-3-Clause         true  package.json + package-lock.json
+    └ 许可文本: （包内无 LICENSE 文件）
+    └ 产物: dist/vendor/pmtiles.js （完整 sha256 见本节末）
+    └ 打包入口: 直接复制上游
+                                                                               node_modules/pmtiles/dist/pmtiles.js（不经 esbuild）
+  qrcode                            1.5.4      MIT                  true  package.json + package-lock.json
+    └ 许可文本: node_modules/qrcode/LICENSE
+    └ 产物: dist/vendor/qrcode.min.js （完整 sha256 见本节末）
+    └ 打包入口: esbuild IIFE <-
+                                                                               node_modules/qrcode/lib/browser.js（上游只发 CommonJS）
+  @mapbox/point-geometry            1.1.0      ISC                  true  node_modules/package.json（传递依赖，随打包进入产物）
+    └ 许可文本: node_modules/@mapbox/point-geometry/LICENSE
+  @mapbox/tiny-sdf                  2.2.0      BSD-2-Clause         true  node_modules/package.json（传递依赖，随打包进入产物）
+    └ 许可文本: node_modules/@mapbox/tiny-sdf/LICENSE.txt
+  @mapbox/unitbezier                1.0.0      BSD-2-Clause         true  node_modules/package.json（传递依赖，随打包进入产物）
+    └ 许可文本: node_modules/@mapbox/unitbezier/LICENSE
+  @mapbox/vector-tile               3.0.0      BSD-3-Clause         true  node_modules/package.json（传递依赖，随打包进入产物）
+    └ 许可文本: node_modules/@mapbox/vector-tile/LICENSE.txt
+  @maplibre/geojson-vt              6.1.1      ISC                  true  node_modules/package.json（传递依赖，随打包进入产物）
+    └ 许可文本: node_modules/@maplibre/geojson-vt/LICENSE
+  @maplibre/maplibre-gl-style-spec  26.4.2     ISC                  true  node_modules/package.json（传递依赖，随打包进入产物）
+    └ 许可文本:
+                                                                               node_modules/@maplibre/maplibre-gl-style-spec/LICENSE.txt
+  @maplibre/mlt                     1.3.0      (MIT OR Apache-2.0)  true  node_modules/package.json（传递依赖，随打包进入产物）
+    └ 许可文本: node_modules/@maplibre/mlt/LICENSE.txt
+  @maplibre/vt-pbf                  4.3.2      MIT                  true  node_modules/package.json（传递依赖，随打包进入产物）
+    └ 许可文本: node_modules/@maplibre/vt-pbf/LICENSE
+  @types/geojson                    7946.0.16  MIT                  true  node_modules/package.json（传递依赖，随打包进入产物）
+    └ 许可文本: node_modules/@types/geojson/LICENSE
+  earcut                            3.2.3      ISC                  true  node_modules/package.json（传递依赖，随打包进入产物）
+    └ 许可文本: node_modules/earcut/LICENSE
+  gl-matrix                         3.4.4      MIT                  true  node_modules/package.json（传递依赖，随打包进入产物）
+    └ 许可文本: node_modules/gl-matrix/LICENSE.md
+  kdbush                            4.1.0      ISC                  true  node_modules/package.json（传递依赖，随打包进入产物）
+    └ 许可文本: node_modules/kdbush/LICENSE
+  murmurhash-js                     1.0.0      MIT                  true  node_modules/package.json（传递依赖，随打包进入产物）
+    └ 许可文本: （包内无 LICENSE 文件）
+  pbf                               5.1.2      BSD-3-Clause         true  node_modules/package.json（传递依赖，随打包进入产物）
+    └ 许可文本: node_modules/pbf/LICENSE
+  potpack                           2.1.0      ISC                  true  node_modules/package.json（传递依赖，随打包进入产物）
+    └ 许可文本: node_modules/potpack/LICENSE
+  quickselect                       3.0.0      ISC                  true  node_modules/package.json（传递依赖，随打包进入产物）
+    └ 许可文本: node_modules/quickselect/LICENSE
+  tinyqueue                         3.0.0      ISC                  true  node_modules/package.json（传递依赖，随打包进入产物）
+    └ 许可文本: node_modules/tinyqueue/LICENSE
+  fflate                            0.8.3      MIT                  true  node_modules/package.json（传递依赖，随打包进入产物）
+    └ 许可文本: node_modules/fflate/LICENSE
+  esbuild                           0.28.2     MIT                  false  node_modules/package.json（devDependency）
+    └ 事实来源:
+                                                                               node_modules/esbuild/LICENSE.md；构建期打包器（build.mjs
+                                                                               依赖），不进入产物
+  @playwright/test                  1.63.0     Apache-2.0           false  node_modules/package.json（devDependency）
+    └ 事实来源:
+                                                                               node_modules/@playwright/test/LICENSE；测试框架（playwright.conf
+                                                                               ig.mjs 依赖），不进入产物
+
+  shipped=true 的组件数：3（与 dist/build-manifest.json 的 dependencies 记录一致）
+
+  随物分发的 vendor 产物与其完整 sha256（与 dist/build-manifest.json 的 artifacts 同源）：
+    dist/vendor/maplibre-gl.js  b2fd3ee3d29e0f4c9a0bb7b245178702141de87403b52b70c52004df1b18f305
+    dist/vendor/pmtiles.js  caf981bc46f6327ee7e65d5dc964d89d38a69f60edca2bd4c5c890c21b554c6c
+    dist/vendor/qrcode.min.js  b054bbeb191ad4c130b53f534e2ebd18b805f903d8fb4b7f2b4ea5b25c27b5d6
+    dist/vendor/maplibre-gl-worker.js  d16bf76a2bb2fd8eb9a14421b17816b982fa55eef3a060c2a0f2dcbcbead6513
+    dist/vendor/maplibre-gl.css（maplibre-gl 6.4.1 的样式表，BSD-3-Clause 同上）  8e2dbbab312dc57656fbb76e9fa5308c75c9d7c7ba5808a7d55bcdb64cc813fa
+  esbuild 的平台二进制包（已安装的 @esbuild/win32-x64 0.28.2，MIT）只在本机构建时
+  执行，不进入 dist/，故未登记为随物分发组件。
+
+  许可声明证据缺口（不是许可缺失，而是包内缺少可逐字收录的文本）：
+    - pmtiles 4.5.0 的 npm 包内不存在 LICENSE/COPYING 文件，许可仅依据其
+      package.json 的 license 字段（BSD-3-Clause）。
+    - murmurhash-js 1.0.0 的 npm 包内不存在 LICENSE/COPYING 文件，许可仅依据其
+      package.json 的 license 字段（MIT）。
+
+  以下逐字收录随物分发组件自身携带的许可文本。
+
+# maplibre-gl 6.4.1 —— LICENSE.txt（逐字收录）
+# ---------------------------------------------------------------------------
+#   Copyright (c) 2023, MapLibre contributors
+#
+#   All rights reserved.
+#
+#   Redistribution and use in source and binary forms, with or without modification,
+#   are permitted provided that the following conditions are met:
+#
+#       * Redistributions of source code must retain the above copyright notice,
+#         this list of conditions and the following disclaimer.
+#       * Redistributions in binary form must reproduce the above copyright notice,
+#         this list of conditions and the following disclaimer in the documentation
+#         and/or other materials provided with the distribution.
+#       * Neither the name of MapLibre GL JS nor the names of its contributors
+#         may be used to endorse or promote products derived from this software
+#         without specific prior written permission.
+#
+#   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+#   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+#   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+#   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+#   CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+#   EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+#   PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+#   PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+#   LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+#   NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+#   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+#
+#   -------------------------------------------------------------------------------
+#
+#   Contains code from mapbox-gl-js v1.13 and earlier
+#
+#   Version v1.13 of mapbox-gl-js and earlier are licensed under a BSD-3-Clause license
+#
+#   Copyright (c) 2020, Mapbox
+#   Redistribution and use in source and binary forms, with or without modification,
+#   are permitted provided that the following conditions are met:
+#
+#   * Redistributions of source code must retain the above copyright notice,
+#     this list of conditions and the following disclaimer.
+#   * Redistributions in binary form must reproduce the above copyright notice,
+#     this list of conditions and the following disclaimer in the documentation
+#     and/or other materials provided with the distribution.
+#   * Neither the name of Mapbox GL JS nor the names of its contributors
+#     may be used to endorse or promote products derived from this software
+#     without specific prior written permission.
+#
+#   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+#   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+#   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+#   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+#   CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+#   EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+#   PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+#   PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+#   LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+#   NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
+#   EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+#
+#   -------------------------------------------------------------------------------
+#
+#   Contains code from glfx.js
+#
+#   Copyright (C) 2011 by Evan Wallace
+#
+#   Permission is hereby granted, free of charge, to any person obtaining a copy
+#   of this software and associated documentation files (the "Software"), to deal
+#   in the Software without restriction, including without limitation the rights
+#   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+#   copies of the Software, and to permit persons to whom the Software is
+#   furnished to do so, subject to the following conditions:
+#
+#   The above copyright notice and this permission notice shall be included in
+#   all copies or substantial portions of the Software.
+#
+#   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+#   THE SOFTWARE.
+#
+#   --------------------------------------------------------------------------------
+#
+#   Contains a portion of d3-color https://github.com/d3/d3-color
+#
+#   Copyright 2010-2016 Mike Bostock
+#   All rights reserved.
+#
+#   Redistribution and use in source and binary forms, with or without modification,
+#   are permitted provided that the following conditions are met:
+#
+#   * Redistributions of source code must retain the above copyright notice, this
+#     list of conditions and the following disclaimer.
+#
+#   * Redistributions in binary form must reproduce the above copyright notice,
+#     this list of conditions and the following disclaimer in the documentation
+#     and/or other materials provided with the distribution.
+#
+#   * Neither the name of the author nor the names of contributors may be used to
+#     endorse or promote products derived from this software without specific prior
+#     written permission.
+#
+#   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+#   ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+#   WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+#   DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+#   ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+#   (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+#   LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+#   ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+#   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+#   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+
+# qrcode 1.5.4 —— LICENSE（逐字收录）
+# ---------------------------------------------------------------------------
+#   The MIT License (MIT)
+#
+#   Copyright (c) 2012 Ryan Day
+#
+#   Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the "Software"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:
+#
+#   The above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.
+#
+#   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+#
+#
+
+# @mapbox/point-geometry 1.1.0 —— LICENSE（逐字收录）
+# ---------------------------------------------------------------------------
+#   Copyright (c) 2024, Mapbox
+#
+#   Permission to use, copy, modify, and/or distribute this software for any
+#   purpose with or without fee is hereby granted, provided that the above
+#   copyright notice and this permission notice appear in all copies.
+#
+#   THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES
+#   WITH REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF
+#   MERCHANTABILITY AND FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR
+#   ANY SPECIAL, DIRECT, INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES
+#   WHATSOEVER RESULTING FROM LOSS OF USE, DATA OR PROFITS, WHETHER IN AN
+#   ACTION OF CONTRACT, NEGLIGENCE OR OTHER TORTIOUS ACTION, ARISING OUT OF
+#   OR IN CONNECTION WITH THE USE OR PERFORMANCE OF THIS SOFTWARE.
+#
+
+# @mapbox/tiny-sdf 2.2.0 —— LICENSE.txt（逐字收录）
+# ---------------------------------------------------------------------------
+#   BSD-2-Clause
+#   Copyright (c) 2016-2024 Mapbox, Inc.
+#
+#   Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:
+#
+#   1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.
+#   2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.
+#
+#   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS “AS IS” AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+
+# @mapbox/unitbezier 1.0.0 —— LICENSE（逐字收录）
+# ---------------------------------------------------------------------------
+#   BSD-2-Clause
+#
+#   Copyright (C) 2008 Apple Inc. All Rights Reserved.
+#
+#   Redistribution and use in source and binary forms, with or without
+#   modification, are permitted provided that the following conditions
+#   are met:
+#
+#   1. Redistributions of source code must retain the above copyright
+#      notice, this list of conditions and the following disclaimer.
+#   2. Redistributions in binary form must reproduce the above copyright
+#      notice, this list of conditions and the following disclaimer in the
+#      documentation and/or other materials provided with the distribution.
+#
+#   THIS SOFTWARE IS PROVIDED BY APPLE INC. ``AS IS'' AND ANY
+#   EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+#   IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR
+#   PURPOSE ARE DISCLAIMED.  IN NO EVENT SHALL APPLE INC. OR
+#   CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+#   EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+#   PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+#   PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY
+#   OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+#   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+#   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+#   Ported from Webkit
+#   http://svn.webkit.org/repository/webkit/trunk/Source/WebCore/platform/graphics/UnitBezier.h
+#
+
+# @mapbox/vector-tile 3.0.0 —— LICENSE.txt（逐字收录）
+# ---------------------------------------------------------------------------
+#   Copyright (c) 2024, Mapbox
+#
+#   All rights reserved.
+#
+#   Redistribution and use in source and binary forms, with or without modification,
+#   are permitted provided that the following conditions are met:
+#
+#       * Redistributions of source code must retain the above copyright notice,
+#         this list of conditions and the following disclaimer.
+#       * Redistributions in binary form must reproduce the above copyright notice,
+#         this list of conditions and the following disclaimer in the documentation
+#         and/or other materials provided with the distribution.
+#       * Neither the name of Mapbox nor the names of its contributors
+#         may be used to endorse or promote products derived from this software
+#         without specific prior written permission.
+#
+#   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+#   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+#   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+#   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+#   CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+#   EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+#   PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+#   PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+#   LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+#   NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+#   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+
+# @maplibre/geojson-vt 6.1.1 —— LICENSE（逐字收录）
+# ---------------------------------------------------------------------------
+#   The MIT License (MIT)
+#
+#   Copyright (c) 2025 MapLibre contributors
+#
+#   Permission is hereby granted, free of charge, to any person obtaining a copy
+#   of this software and associated documentation files (the "Software"), to deal
+#   in the Software without restriction, including without limitation the rights
+#   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+#   copies of the Software, and to permit persons to whom the Software is
+#   furnished to do so, subject to the following conditions:
+#
+#   The above copyright notice and this permission notice shall be included in all
+#   copies or substantial portions of the Software.
+#
+#   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+#   SOFTWARE.
+#
+#   --------------------------------------------------------------------------------
+#
+#   ISC License
+#
+#   Copyright (c) 2024, Mapbox
+#
+#   Permission to use, copy, modify, and/or distribute this software for any purpose
+#   with or without fee is hereby granted, provided that the above copyright notice
+#   and this permission notice appear in all copies.
+#
+#   THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+#   REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+#   FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+#   INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+#   OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+#   TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+#   THIS SOFTWARE.
+#
+
+# @maplibre/maplibre-gl-style-spec 26.4.2 —— LICENSE.txt（逐字收录）
+# ---------------------------------------------------------------------------
+#   Copyright (c) 2020, MapLibre contributors
+#
+#   All rights reserved.
+#
+#   Redistribution and use in source and binary forms, with or without modification,
+#   are permitted provided that the following conditions are met:
+#
+#       * Redistributions of source code must retain the above copyright notice,
+#         this list of conditions and the following disclaimer.
+#       * Redistributions in binary form must reproduce the above copyright notice,
+#         this list of conditions and the following disclaimer in the documentation
+#         and/or other materials provided with the distribution.
+#       * Neither the name of MapLibre GL JS nor the names of its contributors
+#         may be used to endorse or promote products derived from this software
+#         without specific prior written permission.
+#
+#   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+#   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+#   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+#   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+#   CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+#   EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+#   PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+#   PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+#   LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+#   NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+#   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+#
+#   -------------------------------------------------------------------------------
+#
+#   Contains code from mapbox-gl-js v1.13 and earlier
+#
+#   Version v1.13 of mapbox-gl-js and earlier are licensed under a BSD-3-Clause license
+#
+#   Copyright (c) 2020, Mapbox
+#   Redistribution and use in source and binary forms, with or without modification,
+#   are permitted provided that the following conditions are met:
+#
+#   * Redistributions of source code must retain the above copyright notice,
+#     this list of conditions and the following disclaimer.
+#   * Redistributions in binary form must reproduce the above copyright notice,
+#     this list of conditions and the following disclaimer in the documentation
+#     and/or other materials provided with the distribution.
+#   * Neither the name of Mapbox GL JS nor the names of its contributors
+#     may be used to endorse or promote products derived from this software
+#     without specific prior written permission.
+#
+#   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+#   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+#   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+#   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+#   CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+#   EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+#   PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+#   PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+#   LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+#   NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE,
+#   EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+#
+#   -------------------------------------------------------------------------------
+#
+#   Contains code from glfx.js
+#
+#   Copyright (C) 2011 by Evan Wallace
+#
+#   Permission is hereby granted, free of charge, to any person obtaining a copy
+#   of this software and associated documentation files (the "Software"), to deal
+#   in the Software without restriction, including without limitation the rights
+#   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+#   copies of the Software, and to permit persons to whom the Software is
+#   furnished to do so, subject to the following conditions:
+#
+#   The above copyright notice and this permission notice shall be included in
+#   all copies or substantial portions of the Software.
+#
+#   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+#   THE SOFTWARE.
+#
+#   --------------------------------------------------------------------------------
+#
+#   Contains a portion of d3-color https://github.com/d3/d3-color
+#
+#   Copyright 2010-2016 Mike Bostock
+#   All rights reserved.
+#
+#   Redistribution and use in source and binary forms, with or without modification,
+#   are permitted provided that the following conditions are met:
+#
+#   * Redistributions of source code must retain the above copyright notice, this
+#     list of conditions and the following disclaimer.
+#
+#   * Redistributions in binary form must reproduce the above copyright notice,
+#     this list of conditions and the following disclaimer in the documentation
+#     and/or other materials provided with the distribution.
+#
+#   * Neither the name of the author nor the names of contributors may be used to
+#     endorse or promote products derived from this software without specific prior
+#     written permission.
+#
+#   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS" AND
+#   ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED
+#   WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+#   DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR CONTRIBUTORS BE LIABLE FOR
+#   ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES
+#   (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES;
+#   LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON
+#   ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT
+#   (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+#   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+
+# @maplibre/mlt 1.3.0 —— LICENSE.txt（逐字收录）
+# ---------------------------------------------------------------------------
+#   ===== MIT License =====
+#   MIT License
+#
+#   Copyright (c) 2024 MapLibre contributors
+#
+#   Permission is hereby granted, free of charge, to any
+#   person obtaining a copy of this software and associated
+#   documentation files (the "Software"), to deal in the
+#   Software without restriction, including without
+#   limitation the rights to use, copy, modify, merge,
+#   publish, distribute, sublicense, and/or sell copies of
+#   the Software, and to permit persons to whom the Software
+#   is furnished to do so, subject to the following
+#   conditions:
+#
+#   The above copyright notice and this permission notice
+#   shall be included in all copies or substantial portions
+#   of the Software.
+#
+#   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF
+#   ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED
+#   TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A
+#   PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT
+#   SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY
+#   CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION
+#   OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+#   IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER
+#   DEALINGS IN THE SOFTWARE.
+#
+#   ===== Apache License 2.0 =====
+#                                 Apache License
+#                           Version 2.0, January 2004
+#                        http://www.apache.org/licenses/
+#
+#   TERMS AND CONDITIONS FOR USE, REPRODUCTION, AND DISTRIBUTION
+#
+#   1. Definitions.
+#
+#      "License" shall mean the terms and conditions for use, reproduction,
+#      and distribution as defined by Sections 1 through 9 of this document.
+#
+#      "Licensor" shall mean the copyright owner or entity authorized by
+#      the copyright owner that is granting the License.
+#
+#      "Legal Entity" shall mean the union of the acting entity and all
+#      other entities that control, are controlled by, or are under common
+#      control with that entity. For the purposes of this definition,
+#      "control" means (i) the power, direct or indirect, to cause the
+#      direction or management of such entity, whether by contract or
+#      otherwise, or (ii) ownership of fifty percent (50%) or more of the
+#      outstanding shares, or (iii) beneficial ownership of such entity.
+#
+#      "You" (or "Your") shall mean an individual or Legal Entity
+#      exercising permissions granted by this License.
+#
+#      "Source" form shall mean the preferred form for making modifications,
+#      including but not limited to software source code, documentation
+#      source, and configuration files.
+#
+#      "Object" form shall mean any form resulting from mechanical
+#      transformation or translation of a Source form, including but
+#      not limited to compiled object code, generated documentation,
+#      and conversions to other media types.
+#
+#      "Work" shall mean the work of authorship, whether in Source or
+#      Object form, made available under the License, as indicated by a
+#      copyright notice that is included in or attached to the work
+#      (an example is provided in the Appendix below).
+#
+#      "Derivative Works" shall mean any work, whether in Source or Object
+#      form, that is based on (or derived from) the Work and for which the
+#      editorial revisions, annotations, elaborations, or other modifications
+#      represent, as a whole, an original work of authorship. For the purposes
+#      of this License, Derivative Works shall not include works that remain
+#      separable from, or merely link (or bind by name) to the interfaces of,
+#      the Work and Derivative Works thereof.
+#
+#      "Contribution" shall mean any work of authorship, including
+#      the original version of the Work and any modifications or additions
+#      to that Work or Derivative Works thereof, that is intentionally
+#      submitted to Licensor for inclusion in the Work by the copyright owner
+#      or by an individual or Legal Entity authorized to submit on behalf of
+#      the copyright owner. For the purposes of this definition, "submitted"
+#      means any form of electronic, verbal, or written communication sent
+#      to the Licensor or its representatives, including but not limited to
+#      communication on electronic mailing lists, source code control systems,
+#      and issue tracking systems that are managed by, or on behalf of, the
+#      Licensor for the purpose of discussing and improving the Work, but
+#      excluding communication that is conspicuously marked or otherwise
+#      designated in writing by the copyright owner as "Not a Contribution."
+#
+#      "Contributor" shall mean Licensor and any individual or Legal Entity
+#      on behalf of whom a Contribution has been received by Licensor and
+#      subsequently incorporated within the Work.
+#
+#   2. Grant of Copyright License. Subject to the terms and conditions of
+#      this License, each Contributor hereby grants to You a perpetual,
+#      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+#      copyright license to reproduce, prepare Derivative Works of,
+#      publicly display, publicly perform, sublicense, and distribute the
+#      Work and such Derivative Works in Source or Object form.
+#
+#   3. Grant of Patent License. Subject to the terms and conditions of
+#      this License, each Contributor hereby grants to You a perpetual,
+#      worldwide, non-exclusive, no-charge, royalty-free, irrevocable
+#      (except as stated in this section) patent license to make, have made,
+#      use, offer to sell, sell, import, and otherwise transfer the Work,
+#      where such license applies only to those patent claims licensable
+#      by such Contributor that are necessarily infringed by their
+#      Contribution(s) alone or by combination of their Contribution(s)
+#      with the Work to which such Contribution(s) was submitted. If You
+#      institute patent litigation against any entity (including a
+#      cross-claim or counterclaim in a lawsuit) alleging that the Work
+#      or a Contribution incorporated within the Work constitutes direct
+#      or contributory patent infringement, then any patent licenses
+#      granted to You under this License for that Work shall terminate
+#      as of the date such litigation is filed.
+#
+#   4. Redistribution. You may reproduce and distribute copies of the
+#      Work or Derivative Works thereof in any medium, with or without
+#      modifications, and in Source or Object form, provided that You
+#      meet the following conditions:
+#
+#      (a) You must give any other recipients of the Work or
+#          Derivative Works a copy of this License; and
+#
+#      (b) You must cause any modified files to carry prominent notices
+#          stating that You changed the files; and
+#
+#      (c) You must retain, in the Source form of any Derivative Works
+#          that You distribute, all copyright, patent, trademark, and
+#          attribution notices from the Source form of the Work,
+#          excluding those notices that do not pertain to any part of
+#          the Derivative Works; and
+#
+#      (d) If the Work includes a "NOTICE" text file as part of its
+#          distribution, then any Derivative Works that You distribute must
+#          include a readable copy of the attribution notices contained
+#          within such NOTICE file, excluding those notices that do not
+#          pertain to any part of the Derivative Works, in at least one
+#          of the following places: within a NOTICE text file distributed
+#          as part of the Derivative Works; within the Source form or
+#          documentation, if provided along with the Derivative Works; or,
+#          within a display generated by the Derivative Works, if and
+#          wherever such third-party notices normally appear. The contents
+#          of the NOTICE file are for informational purposes only and
+#          do not modify the License. You may add Your own attribution
+#          notices within Derivative Works that You distribute, alongside
+#          or as an addendum to the NOTICE text from the Work, provided
+#          that such additional attribution notices cannot be construed
+#          as modifying the License.
+#
+#      You may add Your own copyright statement to Your modifications and
+#      may provide additional or different license terms and conditions
+#      for use, reproduction, or distribution of Your modifications, or
+#      for any such Derivative Works as a whole, provided Your use,
+#      reproduction, and distribution of the Work otherwise complies with
+#      the conditions stated in this License.
+#
+#   5. Submission of Contributions. Unless You explicitly state otherwise,
+#      any Contribution intentionally submitted for inclusion in the Work
+#      by You to the Licensor shall be under the terms and conditions of
+#      this License, without any additional terms or conditions.
+#      Notwithstanding the above, nothing herein shall supersede or modify
+#      the terms of any separate license agreement you may have executed
+#      with Licensor regarding such Contributions.
+#
+#   6. Trademarks. This License does not grant permission to use the trade
+#      names, trademarks, service marks, or product names of the Licensor,
+#      except as required for reasonable and customary use in describing the
+#      origin of the Work and reproducing the content of the NOTICE file.
+#
+#   7. Disclaimer of Warranty. Unless required by applicable law or
+#      agreed to in writing, Licensor provides the Work (and each
+#      Contributor provides its Contributions) on an "AS IS" BASIS,
+#      WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or
+#      implied, including, without limitation, any warranties or conditions
+#      of TITLE, NON-INFRINGEMENT, MERCHANTABILITY, or FITNESS FOR A
+#      PARTICULAR PURPOSE. You are solely responsible for determining the
+#      appropriateness of using or redistributing the Work and assume any
+#      risks associated with Your exercise of permissions under this License.
+#
+#   8. Limitation of Liability. In no event and under no legal theory,
+#      whether in tort (including negligence), contract, or otherwise,
+#      unless required by applicable law (such as deliberate and grossly
+#      negligent acts) or agreed to in writing, shall any Contributor be
+#      liable to You for damages, including any direct, indirect, special,
+#      incidental, or consequential damages of any character arising as a
+#      result of this License or out of the use or inability to use the
+#      Work (including but not limited to damages for loss of goodwill,
+#      work stoppage, computer failure or malfunction, or any and all
+#      other commercial damages or losses), even if such Contributor
+#      has been advised of the possibility of such damages.
+#
+#   9. Accepting Warranty or Additional Liability. While redistributing
+#      the Work or Derivative Works thereof, You may choose to offer,
+#      and charge a fee for, acceptance of support, warranty, indemnity,
+#      or other liability obligations and/or rights consistent with this
+#      License. However, in accepting such obligations, You may act only
+#      on Your own behalf and on Your sole responsibility, not on behalf
+#      of any other Contributor, and only if You agree to indemnify,
+#      defend, and hold each Contributor harmless for any liability
+#      incurred by, or claims asserted against, such Contributor by reason
+#      of your accepting any such warranty or additional liability.
+#
+#   END OF TERMS AND CONDITIONS
+#
+#   APPENDIX: How to apply the Apache License to your work.
+#
+#      To apply the Apache License to your work, attach the following
+#      boilerplate notice, with the fields enclosed by brackets "[]"
+#      replaced with your own identifying information. (Don't include
+#      the brackets!)  The text should be enclosed in the appropriate
+#      comment syntax for the file format. We also recommend that a
+#      file or class name and description of purpose be included on the
+#      same "printed page" as the copyright notice for easier
+#      identification within third-party archives.
+#
+#   Copyright 2024 MapLibre contributors
+#
+#   Licensed under the Apache License, Version 2.0 (the "License");
+#   you may not use this file except in compliance with the License.
+#   You may obtain a copy of the License at
+#
+#       http://www.apache.org/licenses/LICENSE-2.0
+#
+#   Unless required by applicable law or agreed to in writing, software
+#   distributed under the License is distributed on an "AS IS" BASIS,
+#   WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+#   See the License for the specific language governing permissions and
+#   limitations under the License.
+#
+
+# @maplibre/vt-pbf 4.3.2 —— LICENSE（逐字收录）
+# ---------------------------------------------------------------------------
+#   The MIT License (MIT)
+#
+#   Copyright (c) 2025 MapLibre contributors
+#
+#   Copyright (c) 2015 Anand Thakker
+#
+#   Permission is hereby granted, free of charge, to any person obtaining a copy
+#   of this software and associated documentation files (the "Software"), to deal
+#   in the Software without restriction, including without limitation the rights
+#   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+#   copies of the Software, and to permit persons to whom the Software is
+#   furnished to do so, subject to the following conditions:
+#
+#   The above copyright notice and this permission notice shall be included in all
+#   copies or substantial portions of the Software.
+#
+#   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+#   SOFTWARE.
+#
+#   --------------------------------------------------------------------------------
+#
+#   Contains geojson_wrapper.js from https://github.com/mapbox/mapbox-gl-js
+#
+#   Copyright (c) 2014, Mapbox
+#
+#   All rights reserved.
+#
+#   Redistribution and use in source and binary forms, with or without modification,
+#   are permitted provided that the following conditions are met:
+#
+#       * Redistributions of source code must retain the above copyright notice,
+#         this list of conditions and the following disclaimer.
+#       * Redistributions in binary form must reproduce the above copyright notice,
+#         this list of conditions and the following disclaimer in the documentation
+#         and/or other materials provided with the distribution.
+#       * Neither the name of Mapbox GL JS nor the names of its contributors
+#         may be used to endorse or promote products derived from this software
+#         without specific prior written permission.
+#
+#   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS
+#   "AS IS" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT
+#   LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR
+#   A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT OWNER OR
+#   CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL,
+#   EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO,
+#   PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR
+#   PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF
+#   LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING
+#   NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS
+#   SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+#
+
+# @types/geojson 7946.0.16 —— LICENSE（逐字收录）
+# ---------------------------------------------------------------------------
+#       MIT License
+#
+#       Copyright (c) Microsoft Corporation.
+#
+#       Permission is hereby granted, free of charge, to any person obtaining a copy
+#       of this software and associated documentation files (the "Software"), to deal
+#       in the Software without restriction, including without limitation the rights
+#       to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+#       copies of the Software, and to permit persons to whom the Software is
+#       furnished to do so, subject to the following conditions:
+#
+#       The above copyright notice and this permission notice shall be included in all
+#       copies or substantial portions of the Software.
+#
+#       THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#       IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#       FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#       AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#       LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#       OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+#       SOFTWARE
+#
+
+# earcut 3.2.3 —— LICENSE（逐字收录）
+# ---------------------------------------------------------------------------
+#   ISC License
+#
+#   Copyright (c) 2026, Mapbox
+#
+#   Permission to use, copy, modify, and/or distribute this software for any purpose
+#   with or without fee is hereby granted, provided that the above copyright notice
+#   and this permission notice appear in all copies.
+#
+#   THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+#   REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+#   FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+#   INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+#   OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+#   TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+#   THIS SOFTWARE.
+#
+
+# gl-matrix 3.4.4 —— LICENSE.md（逐字收录）
+# ---------------------------------------------------------------------------
+#   Copyright (c) 2015-2025, Brandon Jones, Colin MacKenzie IV.
+#
+#   Permission is hereby granted, free of charge, to any person obtaining a copy
+#   of this software and associated documentation files (the "Software"), to deal
+#   in the Software without restriction, including without limitation the rights
+#   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+#   copies of the Software, and to permit persons to whom the Software is
+#   furnished to do so, subject to the following conditions:
+#
+#   The above copyright notice and this permission notice shall be included in
+#   all copies or substantial portions of the Software.
+#
+#   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+#   THE SOFTWARE.
+
+# kdbush 4.1.0 —— LICENSE（逐字收录）
+# ---------------------------------------------------------------------------
+#   ISC License
+#
+#   Copyright (c) 2026, Vladimir Agafonkin
+#
+#   Permission to use, copy, modify, and/or distribute this software for any purpose
+#   with or without fee is hereby granted, provided that the above copyright notice
+#   and this permission notice appear in all copies.
+#
+#   THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+#   REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+#   FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+#   INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+#   OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+#   TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+#   THIS SOFTWARE.
+#
+
+# pbf 5.1.2 —— LICENSE（逐字收录）
+# ---------------------------------------------------------------------------
+#   Copyright (c) 2026, Mapbox
+#   All rights reserved.
+#
+#   Redistribution and use in source and binary forms, with or without
+#   modification, are permitted provided that the following conditions are met:
+#
+#   * Redistributions of source code must retain the above copyright notice, this
+#     list of conditions and the following disclaimer.
+#
+#   * Redistributions in binary form must reproduce the above copyright notice,
+#     this list of conditions and the following disclaimer in the documentation
+#     and/or other materials provided with the distribution.
+#
+#   * Neither the name of pbf nor the names of its
+#     contributors may be used to endorse or promote products derived from
+#     this software without specific prior written permission.
+#
+#   THIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS "AS IS"
+#   AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE
+#   IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE
+#   DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE
+#   FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL
+#   DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR
+#   SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER
+#   CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY,
+#   OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE
+#   OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
+#
+
+# potpack 2.1.0 —— LICENSE（逐字收录）
+# ---------------------------------------------------------------------------
+#   ISC License
+#
+#   Copyright (c) 2025, Mapbox
+#
+#   Permission to use, copy, modify, and/or distribute this software for any purpose
+#   with or without fee is hereby granted, provided that the above copyright notice
+#   and this permission notice appear in all copies.
+#
+#   THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+#   REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+#   FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+#   INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+#   OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+#   TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+#   THIS SOFTWARE.
+#
+
+# quickselect 3.0.0 —— LICENSE（逐字收录）
+# ---------------------------------------------------------------------------
+#   ISC License
+#
+#   Copyright (c) 2024, Vladimir Agafonkin
+#
+#   Permission to use, copy, modify, and/or distribute this software for any purpose
+#   with or without fee is hereby granted, provided that the above copyright notice
+#   and this permission notice appear in all copies.
+#
+#   THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+#   REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+#   FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+#   INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+#   OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+#   TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+#   THIS SOFTWARE.
+#
+
+# tinyqueue 3.0.0 —— LICENSE（逐字收录）
+# ---------------------------------------------------------------------------
+#   ISC License
+#
+#   Copyright (c) 2017, Vladimir Agafonkin
+#
+#   Permission to use, copy, modify, and/or distribute this software for any purpose
+#   with or without fee is hereby granted, provided that the above copyright notice
+#   and this permission notice appear in all copies.
+#
+#   THE SOFTWARE IS PROVIDED "AS IS" AND THE AUTHOR DISCLAIMS ALL WARRANTIES WITH
+#   REGARD TO THIS SOFTWARE INCLUDING ALL IMPLIED WARRANTIES OF MERCHANTABILITY AND
+#   FITNESS. IN NO EVENT SHALL THE AUTHOR BE LIABLE FOR ANY SPECIAL, DIRECT,
+#   INDIRECT, OR CONSEQUENTIAL DAMAGES OR ANY DAMAGES WHATSOEVER RESULTING FROM LOSS
+#   OF USE, DATA OR PROFITS, WHETHER IN AN ACTION OF CONTRACT, NEGLIGENCE OR OTHER
+#   TORTIOUS ACTION, ARISING OUT OF OR IN CONNECTION WITH THE USE OR PERFORMANCE OF
+#   THIS SOFTWARE.
+#
+
+# fflate 0.8.3 —— LICENSE（逐字收录）
+# ---------------------------------------------------------------------------
+#   MIT License
+#
+#   Copyright (c) 2026 Arjun Barrett
+#
+#   Permission is hereby granted, free of charge, to any person obtaining a copy
+#   of this software and associated documentation files (the "Software"), to deal
+#   in the Software without restriction, including without limitation the rights
+#   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+#   copies of the Software, and to permit persons to whom the Software is
+#   furnished to do so, subject to the following conditions:
+#
+#   The above copyright notice and this permission notice shall be included in all
+#   copies or substantial portions of the Software.
+#
+#   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+#   SOFTWARE.
+
+--------------------------------------------------------------------------------
+[2] Rust crates（链接进 nav-core-cli.exe 与 ets2nav-desktop.exe）
+--------------------------------------------------------------------------------
+
+  数据来源：scripts/crate-licenses.json，由 `cargo metadata --format-version 1` 对
+  desktop/Cargo.toml 与 nav-core/Cargo.toml 求解后合并，取每个 crate 上游 manifest 的
+  license 字段（逐字）。cargo 的解析版本与 Cargo.lock 逐条核对一致（见下）。
+
+  desktop/Cargo.lock  sha256=4dacc9cca88cd30125326ae1eb149e423920b699d59b143a6f6b788da679d4ae
+  nav-core/Cargo.lock  sha256=97494094a5b0e8034a2ec076dc91c72b58e6454e1584a2f7c13a36cc717a390f
+
+  核对：desktop/Cargo.lock 的 429 个 [[package]] 条目全部对应到 desktop 依赖闭包中的包。
+  核对：nav-core/Cargo.lock 的 45 个 [[package]] 条目全部对应到 nav_core 依赖闭包中的包。
+
+  不同 crate 总数（按 name+version 去重，两个 workspace 合并）：448
+    · ets2nav-desktop 依赖闭包：429 个
+    · nav-core-cli 依赖闭包：45 个
+    · 来自 registry 的第三方 crate：439 个
+    · 本项目自有（source 为空）的 workspace 内 crate：9 个
+    · 仅经 build-dependency 边可达：desktop 6 个 / nav-core 4 个
+
+  许可集合（按上游声明的 SPDX 表达式字面量分组，计数为第三方 crate 数）：
+     204  MIT OR Apache-2.0
+     101  MIT
+      32  Apache-2.0 OR MIT
+      21  MIT/Apache-2.0
+      18  Unicode-3.0
+      17  Zlib OR Apache-2.0 OR MIT
+       9  Unlicense OR MIT
+       5  MPL-2.0
+       3  Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT
+       3  Apache-2.0/MIT
+       2  Apache-2.0
+       2  BSD-2-Clause OR Apache-2.0 OR MIT
+       2  BSD-3-Clause
+       2  BSD-3-Clause OR MIT OR Apache-2.0
+       2  MIT OR Apache-2.0 OR LGPL-2.1-or-later
+       2  MIT OR Apache-2.0 OR Zlib
+       2  Unlicense/MIT
+       1  (MIT OR Apache-2.0) AND Unicode-3.0
+       1  0BSD OR MIT OR Apache-2.0
+       1  Apache-2.0 / MIT
+       1  Apache-2.0 AND MIT
+       1  Apache-2.0 WITH LLVM-exception
+       1  BSD-3-Clause AND MIT
+       1  BSD-3-Clause/MIT
+       1  CC0-1.0 OR MIT-0 OR Apache-2.0
+       1  ISC
+       1  MIT OR BSD-3-Clause
+       1  MIT OR Zlib OR Apache-2.0
+       1  Zlib
+
+  ── 风险清单 A：许可不在允许清单内的第三方 crate ──
+  判据：SPDX 表达式按 ' AND ' 分组的每一项都必须有一个标识符落在允许清单内；
+  ' OR ' 分支只要有一支命中即可。允许清单为：
+    MIT / Apache-2.0 / BSD-2-Clause / BSD-3-Clause / ISC / Zlib / Unicode-3.0
+    / CC0-1.0 / MPL-2.0 / LGPL-3.0 / Unlicense / 0BSD / MIT-0 / Apache-2.0
+    WITH LLVM-exception / LGPL-2.1-or-later
+  结果：空——没有 crate 落在允许清单之外。
+
+  ── 风险清单 B：未声明任何许可的第三方 crate ──
+  结果：空——每个来自 registry 的 crate 都在 manifest 中声明了 license。
+
+  ── 补充：crate 数据中 source 为空（不是 registry/git 来源）的 crate ──
+  这些不是第三方依赖，其许可由 [0] 的仓库 LICENSE 覆盖；列出仅为消除歧义。
+    ets2nav-desktop@0.7.0-rc.1  reach=desktop=normal
+    nav-core-cli@0.7.0-rc.1  reach=nav_core=normal
+    nav-dataset@0.1.0  reach=nav_core=normal
+    nav-graph@0.1.0  reach=nav_core=normal
+    nav-matcher@0.1.0  reach=nav_core=normal
+    nav-router@0.1.0  reach=nav_core=normal
+    nav-spatial@0.1.0  reach=nav_core=normal
+    nav-telemetry@0.1.0  reach=nav_core=normal
+    od-corpus@0.1.0  reach=nav_core=normal
+
+  ── Tauri 运行时与 WebView2 ──
+  Tauri 以普通依赖（tauri 2.11.5）静态链接进 ets2nav-desktop.exe；其自身与其
+  全部 Rust 依赖都已经包含在上面的 crate 闭包与统计中（license 声明为 Apache-2.0 OR MIT），
+  不再单列。desktop/tauri.conf.json 未启用任何 bundler 目标，因此不产出 MSI/NSIS 包，
+  也不把 Tauri CLI 或任何运行时二进制复制进产物。
+  WebView2：desktop/Cargo.lock 中的 webview2-com / webview2-com-sys / webview2-com-macros
+  是 Microsoft WebView2 的 Rust 绑定（随 crate 闭包统计），但 WebView2 运行期本体是
+  Windows 上独立安装的 Microsoft Edge WebView2 Evergreen Runtime，按 Microsoft 自己的
+  许可条款分发，不在本仓库的产物内，也不由本项目再分发。
+
+  ── 字形字体（glyphs）──
+  状态：PENDING（当前 ABSENT）
+  依据：tools/ets2nav-web/app.js 以 vendor/fonts/{fontstack}/{range}.pbf 请求字形，
+  build.mjs 仅在 <web>/fonts/ 存在时才把它复制到 dist/vendor/fonts；
+  desktop/scripts/assemble-bundle.ps1 仅在显式传入 -FontsDir 与 -FontsProvenance
+  （要求含 font/version/upstream/license_spdx/source_sha256 等键）时才把它放进产物。
+  现状：git ls-files 中不存在任何 .ttf/.otf/.woff/.woff2/.pbf 字体文件，
+  仓库内也不存在字体 provenance 文件，因此最终随物的字形字体尚未确定，
+  本清单不登记任何字体许可。若发布时提供 -FontsDir，则必须在 -FontsProvenance 中
+  给出 license_spdx，并把对应许可文本补进本文件后重新生成。
+
+  ── 完整 crate 清单（name version | license | reach | source）──
+  reach: desktop=.../nav_core=...。normal 表示存在普通依赖边（可能被链接进该二进制），
+  build 表示仅经 build-dependency 边可达、或未被任何随物二进制依赖；source=registry
+  表示来自 crates.io，workspace-local 表示本项目自有代码（由仓库 LICENSE 覆盖）。
+    adler2 2.0.1 | 0BSD OR MIT OR Apache-2.0 | desktop=normal | registry
+    ahash 0.8.12 | MIT OR Apache-2.0 | nav_core=normal | registry
+    aho-corasick 1.1.5 | Unlicense OR MIT | desktop=normal | registry
+    alloc-no-stdlib 2.0.4 | BSD-3-Clause | desktop=normal | registry
+    alloc-stdlib 0.2.4 | BSD-3-Clause | desktop=normal | registry
+    android_system_properties 0.1.6 | MIT OR Apache-2.0 | desktop=normal | registry
+    anyhow 1.0.104 | MIT OR Apache-2.0 | desktop=normal | registry
+    atk 0.18.2 | MIT | desktop=normal | registry
+    atk-sys 0.18.2 | MIT | desktop=normal | registry
+    atomic-waker 1.1.2 | Apache-2.0 OR MIT | desktop=normal | registry
+    autocfg 1.5.1 | Apache-2.0 OR MIT | desktop=build | registry
+    base64 0.21.7 | MIT OR Apache-2.0 | desktop=normal | registry
+    base64 0.22.1 | MIT OR Apache-2.0 | desktop=normal | registry
+    bitflags 1.3.2 | MIT/Apache-2.0 | desktop=normal | registry
+    bitflags 2.13.1 | MIT OR Apache-2.0 | desktop=normal,nav_core=normal | registry
+    bit-set 0.8.0 | Apache-2.0 OR MIT | desktop=normal | registry
+    bit-vec 0.8.0 | Apache-2.0 OR MIT | desktop=normal | registry
+    block2 0.6.2 | MIT | desktop=normal | registry
+    block-buffer 0.10.4 | MIT OR Apache-2.0 | desktop=normal | registry
+    brotli 8.0.4 | BSD-3-Clause AND MIT | desktop=normal | registry
+    brotli-decompressor 5.0.3 | BSD-3-Clause/MIT | desktop=normal | registry
+    bs58 0.5.1 | MIT/Apache-2.0 | desktop=normal | registry
+    bumpalo 3.20.3 | MIT OR Apache-2.0 | desktop=normal | registry
+    bytemuck 1.25.2 | Zlib OR Apache-2.0 OR MIT | desktop=normal | registry
+    byteorder 1.5.0 | Unlicense OR MIT | desktop=normal | registry
+    bytes 1.12.1 | MIT | desktop=normal | registry
+    cairo-rs 0.18.5 | MIT | desktop=normal | registry
+    cairo-sys-rs 0.18.2 | MIT | desktop=normal | registry
+    camino 1.2.5 | MIT OR Apache-2.0 | desktop=normal | registry
+    cargo_metadata 0.19.2 | MIT | desktop=normal | registry
+    cargo_toml 0.22.3 | Apache-2.0 OR MIT | desktop=normal | registry
+    cargo-platform 0.1.9 | MIT OR Apache-2.0 | desktop=normal | registry
+    cc 1.4.2 | MIT OR Apache-2.0 | desktop=normal,nav_core=build | registry
+    cesu8 1.1.0 | Apache-2.0/MIT | desktop=normal | registry
+    cfb 0.7.3 | MIT | desktop=normal | registry
+    cfg-expr 0.15.8 | MIT OR Apache-2.0 | desktop=normal | registry
+    cfg-if 1.0.4 | MIT OR Apache-2.0 | desktop=normal,nav_core=normal | registry
+    chrono 0.4.45 | MIT OR Apache-2.0 | desktop=normal | registry
+    combine 4.6.7 | MIT | desktop=normal | registry
+    cookie 0.18.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    core-foundation 0.10.1 | MIT OR Apache-2.0 | desktop=normal | registry
+    core-foundation-sys 0.8.7 | MIT OR Apache-2.0 | desktop=normal | registry
+    core-graphics 0.25.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    core-graphics-types 0.2.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    cpufeatures 0.2.17 | MIT OR Apache-2.0 | desktop=normal | registry
+    crc32fast 1.5.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    crossbeam-channel 0.5.16 | MIT OR Apache-2.0 | desktop=normal | registry
+    crossbeam-utils 0.8.22 | MIT OR Apache-2.0 | desktop=normal | registry
+    crypto-common 0.1.7 | MIT OR Apache-2.0 | desktop=normal | registry
+    cssparser 0.36.0 | MPL-2.0 | desktop=normal | registry
+    cssparser-macros 0.6.1 | MPL-2.0 | desktop=normal | registry
+    ctor 0.8.0 | Apache-2.0 OR MIT | desktop=normal | registry
+    ctor-proc-macro 0.0.7 | Apache-2.0 OR MIT | desktop=normal | registry
+    darling_core 0.23.0 | MIT | desktop=normal | registry
+    darling_macro 0.23.0 | MIT | desktop=normal | registry
+    darling 0.23.0 | MIT | desktop=normal | registry
+    dbus 0.9.12 | Apache-2.0/MIT | desktop=normal | registry
+    defmt 1.1.1 | MIT OR Apache-2.0 | desktop=normal | registry
+    defmt-macros 1.1.1 | MIT OR Apache-2.0 | desktop=normal | registry
+    defmt-parser 1.0.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    deranged 0.5.8 | MIT OR Apache-2.0 | desktop=normal | registry
+    derive_more 2.1.1 | MIT | desktop=normal | registry
+    derive_more-impl 2.1.1 | MIT | desktop=normal | registry
+    digest 0.10.7 | MIT OR Apache-2.0 | desktop=normal | registry
+    dirs 6.0.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    dirs-sys 0.5.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    dispatch2 0.3.1 | Zlib OR Apache-2.0 OR MIT | desktop=normal | registry
+    displaydoc 0.2.7 | MIT OR Apache-2.0 | desktop=normal | registry
+    dlopen2_derive 0.4.3 | MIT | desktop=normal | registry
+    dlopen2 0.8.2 | MIT | desktop=normal | registry
+    dom_query 0.27.0 | MIT | desktop=normal | registry
+    dpi 0.1.2 | Apache-2.0 AND MIT | desktop=normal | registry
+    dtoa 1.0.11 | MIT OR Apache-2.0 | desktop=normal | registry
+    dtoa-short 0.3.5 | MPL-2.0 | desktop=normal | registry
+    dtor 0.3.0 | Apache-2.0 OR MIT | desktop=normal | registry
+    dtor-proc-macro 0.0.6 | Apache-2.0 OR MIT | desktop=normal | registry
+    dunce 1.0.5 | CC0-1.0 OR MIT-0 OR Apache-2.0 | desktop=normal | registry
+    dyn-clone 1.0.20 | MIT OR Apache-2.0 | desktop=normal | registry
+    embed_plist 1.2.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    embed-resource 3.0.11 | MIT | desktop=normal | registry
+    equivalent 1.0.2 | Apache-2.0 OR MIT | desktop=normal | registry
+    erased-serde 0.4.10 | MIT OR Apache-2.0 | desktop=normal | registry
+    ets2nav-desktop 0.7.0-rc.1 | (none) | desktop=normal | workspace-local
+    fallible-iterator 0.3.0 | MIT/Apache-2.0 | nav_core=normal | registry
+    fallible-streaming-iterator 0.1.9 | MIT/Apache-2.0 | nav_core=normal | registry
+    fastrand 2.5.0 | Apache-2.0 OR MIT | desktop=normal | registry
+    fdeflate 0.3.7 | MIT OR Apache-2.0 | desktop=normal | registry
+    field-offset 0.3.6 | MIT OR Apache-2.0 | desktop=normal | registry
+    find-msvc-tools 0.1.10 | MIT OR Apache-2.0 | desktop=normal,nav_core=normal | registry
+    flate2 1.1.9 | MIT OR Apache-2.0 | desktop=normal | registry
+    fnv 1.0.7 | Apache-2.0 / MIT | desktop=normal | registry
+    foldhash 0.2.0 | Zlib | desktop=normal | registry
+    foreign-types 0.5.0 | MIT/Apache-2.0 | desktop=normal | registry
+    foreign-types-macros 0.2.4 | MIT/Apache-2.0 | desktop=normal | registry
+    foreign-types-shared 0.3.1 | MIT/Apache-2.0 | desktop=normal | registry
+    form_urlencoded 1.2.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    futures-channel 0.3.34 | MIT OR Apache-2.0 | desktop=normal | registry
+    futures-core 0.3.34 | MIT OR Apache-2.0 | desktop=normal | registry
+    futures-executor 0.3.34 | MIT OR Apache-2.0 | desktop=normal | registry
+    futures-io 0.3.34 | MIT OR Apache-2.0 | desktop=normal | registry
+    futures-macro 0.3.34 | MIT OR Apache-2.0 | desktop=normal | registry
+    futures-sink 0.3.34 | MIT OR Apache-2.0 | desktop=normal | registry
+    futures-task 0.3.34 | MIT OR Apache-2.0 | desktop=normal | registry
+    futures-util 0.3.34 | MIT OR Apache-2.0 | desktop=normal | registry
+    gdk 0.18.2 | MIT | desktop=normal | registry
+    gdk-pixbuf 0.18.5 | MIT | desktop=normal | registry
+    gdk-pixbuf-sys 0.18.0 | MIT | desktop=normal | registry
+    gdk-sys 0.18.2 | MIT | desktop=normal | registry
+    gdkwayland-sys 0.18.2 | MIT | desktop=normal | registry
+    gdkx11 0.18.2 | MIT | desktop=normal | registry
+    gdkx11-sys 0.18.2 | MIT | desktop=normal | registry
+    generic-array 0.14.7 | MIT | desktop=normal | registry
+    getrandom 0.2.17 | MIT OR Apache-2.0 | desktop=normal | registry
+    getrandom 0.3.4 | MIT OR Apache-2.0 | desktop=normal | registry
+    getrandom 0.4.3 | MIT OR Apache-2.0 | desktop=normal,nav_core=normal | registry
+    gio 0.18.4 | MIT | desktop=normal | registry
+    gio-sys 0.18.1 | MIT | desktop=normal | registry
+    glib 0.18.5 | MIT | desktop=normal | registry
+    glib-macros 0.18.5 | MIT | desktop=normal | registry
+    glib-sys 0.18.1 | MIT | desktop=normal | registry
+    glob 0.3.4 | MIT OR Apache-2.0 | desktop=normal | registry
+    gobject-sys 0.18.0 | MIT | desktop=normal | registry
+    gtk 0.18.2 | MIT | desktop=normal | registry
+    gtk3-macros 0.18.2 | MIT | desktop=normal | registry
+    gtk-sys 0.18.2 | MIT | desktop=normal | registry
+    hashbrown 0.12.3 | MIT OR Apache-2.0 | desktop=normal | registry
+    hashbrown 0.14.5 | MIT OR Apache-2.0 | nav_core=normal | registry
+    hashbrown 0.17.1 | MIT OR Apache-2.0 | desktop=normal | registry
+    hashlink 0.9.1 | MIT OR Apache-2.0 | nav_core=normal | registry
+    heck 0.4.1 | MIT OR Apache-2.0 | desktop=normal | registry
+    heck 0.5.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    hex 0.4.3 | MIT OR Apache-2.0 | desktop=normal | registry
+    html5ever 0.38.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    http 1.5.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    httparse 1.10.1 | MIT OR Apache-2.0 | desktop=normal | registry
+    http-body 1.1.0 | MIT | desktop=normal | registry
+    http-body-util 0.1.4 | MIT | desktop=normal | registry
+    hyper 1.11.0 | MIT | desktop=normal | registry
+    hyper-util 0.1.20 | MIT | desktop=normal | registry
+    iana-time-zone 0.1.65 | MIT OR Apache-2.0 | desktop=normal | registry
+    iana-time-zone-haiku 0.1.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    ico 0.5.0 | MIT | desktop=normal | registry
+    icu_collections 2.2.0 | Unicode-3.0 | desktop=normal | registry
+    icu_locale_core 2.2.0 | Unicode-3.0 | desktop=normal | registry
+    icu_normalizer_data 2.2.0 | Unicode-3.0 | desktop=normal | registry
+    icu_normalizer 2.2.0 | Unicode-3.0 | desktop=normal | registry
+    icu_properties_data 2.2.0 | Unicode-3.0 | desktop=normal | registry
+    icu_properties 2.2.0 | Unicode-3.0 | desktop=normal | registry
+    icu_provider 2.2.0 | Unicode-3.0 | desktop=normal | registry
+    ident_case 1.0.1 | MIT/Apache-2.0 | desktop=normal | registry
+    idna_adapter 1.2.2 | Apache-2.0 OR MIT | desktop=normal | registry
+    idna 1.1.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    if-addrs 0.15.0 | MIT OR BSD-3-Clause | nav_core=normal | registry
+    indexmap 1.9.3 | Apache-2.0 OR MIT | desktop=normal | registry
+    indexmap 2.14.0 | Apache-2.0 OR MIT | desktop=normal | registry
+    infer 0.19.0 | MIT | desktop=normal | registry
+    ipnet 2.12.1 | MIT OR Apache-2.0 | desktop=normal | registry
+    itoa 1.0.18 | MIT OR Apache-2.0 | desktop=normal,nav_core=normal | registry
+    javascriptcore-rs 1.1.2 | MIT | desktop=normal | registry
+    javascriptcore-rs-sys 1.1.1 | MIT | desktop=normal | registry
+    jiff 0.2.35 | Unlicense OR MIT | desktop=normal | registry
+    jiff-core 0.1.0 | Unlicense OR MIT | desktop=normal | registry
+    jiff-static 0.2.35 | Unlicense OR MIT | desktop=normal | registry
+    jiff-tzdb 0.1.8 | Unlicense OR MIT | desktop=normal | registry
+    jiff-tzdb-platform 0.1.3 | Unlicense OR MIT | desktop=normal | registry
+    jni 0.21.1 | MIT/Apache-2.0 | desktop=normal | registry
+    jni-sys 0.3.1 | MIT OR Apache-2.0 | desktop=normal | registry
+    jni-sys 0.4.1 | MIT OR Apache-2.0 | desktop=normal | registry
+    jni-sys-macros 0.4.1 | MIT OR Apache-2.0 | desktop=normal | registry
+    json-patch 3.0.1 | MIT/Apache-2.0 | desktop=normal | registry
+    jsonptr 0.6.3 | MIT OR Apache-2.0 | desktop=normal | registry
+    js-sys 0.3.104 | MIT OR Apache-2.0 | desktop=normal | registry
+    keyboard-types 0.7.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    libappindicator 0.9.0 | Apache-2.0 OR MIT | desktop=normal | registry
+    libappindicator-sys 0.9.0 | Apache-2.0 OR MIT | desktop=normal | registry
+    libc 0.2.189 | MIT OR Apache-2.0 | desktop=normal,nav_core=normal | registry
+    libdbus-sys 0.2.7 | Apache-2.0/MIT | desktop=normal | registry
+    libloading 0.7.4 | ISC | desktop=normal | registry
+    libredox 0.1.19 | MIT | desktop=normal | registry
+    libsqlite3-sys 0.28.0 | MIT | nav_core=normal | registry
+    litemap 0.8.2 | Unicode-3.0 | desktop=normal | registry
+    lock_api 0.4.14 | MIT OR Apache-2.0 | desktop=normal | registry
+    log 0.4.33 | MIT OR Apache-2.0 | desktop=normal | registry
+    markup5ever 0.38.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    memchr 2.8.3 | Unlicense OR MIT | desktop=normal,nav_core=normal | registry
+    memoffset 0.9.1 | MIT | desktop=normal | registry
+    mime 0.3.17 | MIT OR Apache-2.0 | desktop=normal | registry
+    miniz_oxide 0.8.9 | MIT OR Zlib OR Apache-2.0 | desktop=normal | registry
+    mio 1.2.2 | MIT | desktop=normal | registry
+    muda 0.19.3 | Apache-2.0 OR MIT | desktop=normal | registry
+    nav-core-cli 0.7.0-rc.1 | (none) | nav_core=normal | workspace-local
+    nav-dataset 0.1.0 | (none) | nav_core=normal | workspace-local
+    nav-graph 0.1.0 | (none) | nav_core=normal | workspace-local
+    nav-matcher 0.1.0 | (none) | nav_core=normal | workspace-local
+    nav-router 0.1.0 | (none) | nav_core=normal | workspace-local
+    nav-spatial 0.1.0 | (none) | nav_core=normal | workspace-local
+    nav-telemetry 0.1.0 | (none) | nav_core=normal | workspace-local
+    ndk 0.9.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    ndk-sys 0.6.0+11769913 | MIT OR Apache-2.0 | desktop=normal | registry
+    new_debug_unreachable 1.0.6 | MIT | desktop=normal | registry
+    num_enum_derive 0.7.6 | BSD-3-Clause OR MIT OR Apache-2.0 | desktop=normal | registry
+    num_enum 0.7.6 | BSD-3-Clause OR MIT OR Apache-2.0 | desktop=normal | registry
+    num-conv 0.2.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    num-traits 0.2.19 | MIT OR Apache-2.0 | desktop=normal | registry
+    objc2 0.6.4 | MIT | desktop=normal | registry
+    objc2-app-kit 0.3.2 | Zlib OR Apache-2.0 OR MIT | desktop=normal | registry
+    objc2-cloud-kit 0.3.2 | Zlib OR Apache-2.0 OR MIT | desktop=normal | registry
+    objc2-core-data 0.3.2 | Zlib OR Apache-2.0 OR MIT | desktop=normal | registry
+    objc2-core-foundation 0.3.2 | Zlib OR Apache-2.0 OR MIT | desktop=normal | registry
+    objc2-core-graphics 0.3.2 | Zlib OR Apache-2.0 OR MIT | desktop=normal | registry
+    objc2-core-image 0.3.2 | Zlib OR Apache-2.0 OR MIT | desktop=normal | registry
+    objc2-core-location 0.3.2 | Zlib OR Apache-2.0 OR MIT | desktop=normal | registry
+    objc2-core-text 0.3.2 | Zlib OR Apache-2.0 OR MIT | desktop=normal | registry
+    objc2-encode 4.1.0 | MIT | desktop=normal | registry
+    objc2-exception-helper 0.1.1 | Zlib OR Apache-2.0 OR MIT | desktop=normal | registry
+    objc2-foundation 0.3.2 | MIT | desktop=normal | registry
+    objc2-io-surface 0.3.2 | Zlib OR Apache-2.0 OR MIT | desktop=normal | registry
+    objc2-quartz-core 0.3.2 | Zlib OR Apache-2.0 OR MIT | desktop=normal | registry
+    objc2-ui-kit 0.3.2 | Zlib OR Apache-2.0 OR MIT | desktop=normal | registry
+    objc2-user-notifications 0.3.2 | Zlib OR Apache-2.0 OR MIT | desktop=normal | registry
+    objc2-web-kit 0.3.2 | Zlib OR Apache-2.0 OR MIT | desktop=normal | registry
+    od-corpus 0.1.0 | (none) | nav_core=normal | workspace-local
+    once_cell 1.21.4 | MIT OR Apache-2.0 | desktop=normal,nav_core=normal | registry
+    option-ext 0.2.0 | MPL-2.0 | desktop=normal | registry
+    pango 0.18.3 | MIT | desktop=normal | registry
+    pango-sys 0.18.0 | MIT | desktop=normal | registry
+    parking_lot_core 0.9.12 | MIT OR Apache-2.0 | desktop=normal | registry
+    parking_lot 0.12.5 | MIT OR Apache-2.0 | desktop=normal | registry
+    percent-encoding 2.3.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    phf_codegen 0.13.1 | MIT | desktop=build | registry
+    phf_generator 0.13.1 | MIT | desktop=normal | registry
+    phf_macros 0.13.1 | MIT | desktop=normal | registry
+    phf_shared 0.13.1 | MIT | desktop=normal | registry
+    phf 0.13.1 | MIT | desktop=normal | registry
+    pin-project-lite 0.2.17 | Apache-2.0 OR MIT | desktop=normal | registry
+    pkg-config 0.3.33 | MIT OR Apache-2.0 | desktop=normal,nav_core=build | registry
+    plist 1.10.0 | MIT | desktop=normal | registry
+    png 0.17.16 | MIT OR Apache-2.0 | desktop=normal | registry
+    png 0.18.1 | MIT OR Apache-2.0 | desktop=normal | registry
+    portable-atomic 1.15.0 | Apache-2.0 OR MIT | desktop=normal | registry
+    portable-atomic-util 0.2.7 | Apache-2.0 OR MIT | desktop=normal | registry
+    potential_utf 0.1.5 | Unicode-3.0 | desktop=normal | registry
+    powerfmt 0.2.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    precomputed-hash 0.1.1 | MIT | desktop=normal | registry
+    proc-macro2 1.0.107 | MIT OR Apache-2.0 | desktop=normal,nav_core=normal | registry
+    proc-macro-crate 1.3.1 | MIT OR Apache-2.0 | desktop=normal | registry
+    proc-macro-crate 2.0.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    proc-macro-crate 3.5.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    proc-macro-error 1.0.4 | MIT OR Apache-2.0 | desktop=normal | registry
+    proc-macro-error-attr 1.0.4 | MIT OR Apache-2.0 | desktop=normal | registry
+    quick-xml 0.41.0 | MIT | desktop=normal | registry
+    quote 1.0.47 | MIT OR Apache-2.0 | desktop=normal,nav_core=normal | registry
+    raw-window-handle 0.6.2 | MIT OR Apache-2.0 OR Zlib | desktop=normal | registry
+    redox_syscall 0.5.18 | MIT | desktop=normal | registry
+    redox_users 0.5.2 | MIT | desktop=normal | registry
+    ref-cast 1.0.26 | MIT OR Apache-2.0 | desktop=normal | registry
+    ref-cast-impl 1.0.26 | MIT OR Apache-2.0 | desktop=normal | registry
+    r-efi 5.3.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later | desktop=normal | registry
+    r-efi 6.0.0 | MIT OR Apache-2.0 OR LGPL-2.1-or-later | desktop=normal,nav_core=normal | registry
+    regex 1.13.1 | MIT OR Apache-2.0 | desktop=normal | registry
+    regex-automata 0.4.18 | MIT OR Apache-2.0 | desktop=normal | registry
+    regex-syntax 0.8.11 | MIT OR Apache-2.0 | desktop=normal | registry
+    reqwest 0.13.4 | MIT OR Apache-2.0 | desktop=normal | registry
+    rusqlite 0.31.0 | MIT | nav_core=normal | registry
+    rustc_version 0.4.1 | MIT OR Apache-2.0 | desktop=normal | registry
+    rustc-hash 2.1.3 | Apache-2.0 OR MIT | desktop=normal | registry
+    rustversion 1.0.23 | MIT OR Apache-2.0 | desktop=normal | registry
+    same-file 1.0.6 | Unlicense/MIT | desktop=normal | registry
+    schemars_derive 0.8.22 | MIT | desktop=normal | registry
+    schemars 0.8.22 | MIT | desktop=normal | registry
+    schemars 0.9.0 | MIT | desktop=normal | registry
+    schemars 1.2.2 | MIT | desktop=normal | registry
+    scopeguard 1.2.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    selectors 0.36.1 | MPL-2.0 | desktop=normal | registry
+    semver 1.0.28 | MIT OR Apache-2.0 | desktop=normal | registry
+    serde_core 1.0.229 | MIT OR Apache-2.0 | desktop=normal,nav_core=normal | registry
+    serde_derive_internals 0.29.1 | MIT OR Apache-2.0 | desktop=normal | registry
+    serde_derive 1.0.229 | MIT OR Apache-2.0 | desktop=normal,nav_core=normal | registry
+    serde_json 1.0.151 | MIT OR Apache-2.0 | desktop=normal,nav_core=normal | registry
+    serde_repr 0.1.21 | MIT OR Apache-2.0 | desktop=normal | registry
+    serde_spanned 0.6.9 | MIT OR Apache-2.0 | desktop=normal | registry
+    serde_spanned 1.1.1 | MIT OR Apache-2.0 | desktop=normal | registry
+    serde_with_macros 3.22.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    serde_with 3.22.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    serde 1.0.229 | MIT OR Apache-2.0 | desktop=normal,nav_core=normal | registry
+    serde-untagged 0.1.9 | MIT OR Apache-2.0 | desktop=normal | registry
+    serialize-to-javascript 0.1.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    serialize-to-javascript-impl 0.1.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    servo_arc 0.4.3 | MIT OR Apache-2.0 | desktop=normal | registry
+    sha2 0.10.9 | MIT OR Apache-2.0 | desktop=normal | registry
+    shlex 2.0.1 | MIT OR Apache-2.0 | desktop=normal,nav_core=normal | registry
+    simd-adler32 0.3.10 | MIT | desktop=normal | registry
+    siphasher 1.0.3 | MIT/Apache-2.0 | desktop=normal | registry
+    slab 0.4.12 | MIT | desktop=normal | registry
+    smallvec 1.15.2 | MIT OR Apache-2.0 | desktop=normal,nav_core=normal | registry
+    socket2 0.6.5 | MIT OR Apache-2.0 | desktop=normal | registry
+    softbuffer 0.4.8 | MIT OR Apache-2.0 | desktop=normal | registry
+    soup3 0.5.0 | MIT | desktop=normal | registry
+    soup3-sys 0.5.0 | MIT | desktop=normal | registry
+    stable_deref_trait 1.2.1 | MIT OR Apache-2.0 | desktop=normal | registry
+    string_cache_codegen 0.6.1 | MIT OR Apache-2.0 | desktop=build | registry
+    string_cache 0.9.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    strsim 0.11.1 | MIT | desktop=normal | registry
+    swift-rs 1.0.7 | MIT OR Apache-2.0 | desktop=normal | registry
+    syn 1.0.109 | MIT OR Apache-2.0 | desktop=normal | registry
+    syn 2.0.119 | MIT OR Apache-2.0 | desktop=normal,nav_core=normal | registry
+    syn 3.0.3 | MIT OR Apache-2.0 | desktop=normal,nav_core=normal | registry
+    sync_wrapper 1.0.2 | Apache-2.0 | desktop=normal | registry
+    synstructure 0.13.2 | MIT | desktop=normal | registry
+    system-deps 6.2.2 | MIT OR Apache-2.0 | desktop=build | registry
+    tao 0.35.3 | Apache-2.0 | desktop=normal | registry
+    tao-macros 0.1.4 | MIT OR Apache-2.0 | desktop=normal | registry
+    target-lexicon 0.12.16 | Apache-2.0 WITH LLVM-exception | desktop=normal | registry
+    tauri 2.11.5 | Apache-2.0 OR MIT | desktop=normal | registry
+    tauri-build 2.6.3 | Apache-2.0 OR MIT | desktop=build | registry
+    tauri-codegen 2.6.3 | Apache-2.0 OR MIT | desktop=normal | registry
+    tauri-macros 2.6.3 | Apache-2.0 OR MIT | desktop=normal | registry
+    tauri-runtime 2.11.3 | Apache-2.0 OR MIT | desktop=normal | registry
+    tauri-runtime-wry 2.11.4 | Apache-2.0 OR MIT | desktop=normal | registry
+    tauri-utils 2.9.3 | Apache-2.0 OR MIT | desktop=normal | registry
+    tauri-winres 0.3.6 | MIT | desktop=normal | registry
+    tendril 0.5.1 | MIT OR Apache-2.0 | desktop=normal | registry
+    thiserror 1.0.69 | MIT OR Apache-2.0 | desktop=normal | registry
+    thiserror 2.0.20 | MIT OR Apache-2.0 | desktop=normal | registry
+    thiserror-impl 1.0.69 | MIT OR Apache-2.0 | desktop=normal | registry
+    thiserror-impl 2.0.20 | MIT OR Apache-2.0 | desktop=normal | registry
+    time 0.3.55 | MIT OR Apache-2.0 | desktop=normal | registry
+    time-core 0.1.9 | MIT OR Apache-2.0 | desktop=normal | registry
+    time-macros 0.2.32 | MIT OR Apache-2.0 | desktop=normal | registry
+    tinystr 0.8.3 | Unicode-3.0 | desktop=normal | registry
+    tinyvec_macros 0.1.1 | MIT OR Apache-2.0 OR Zlib | desktop=normal | registry
+    tinyvec 1.12.0 | Zlib OR Apache-2.0 OR MIT | desktop=normal | registry
+    tokio 1.53.1 | MIT | desktop=normal | registry
+    tokio-util 0.7.19 | MIT | desktop=normal | registry
+    toml_datetime 0.6.3 | MIT OR Apache-2.0 | desktop=normal | registry
+    toml_datetime 0.7.5+spec-1.1.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    toml_datetime 1.1.1+spec-1.1.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    toml_edit 0.19.15 | MIT OR Apache-2.0 | desktop=normal | registry
+    toml_edit 0.20.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    toml_edit 0.25.13+spec-1.1.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    toml_parser 1.1.3+spec-1.1.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    toml_writer 1.1.2+spec-1.1.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    toml 0.8.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    toml 0.9.12+spec-1.1.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    toml 1.1.4+spec-1.1.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    tower 0.5.3 | MIT | desktop=normal | registry
+    tower-http 0.6.11 | MIT | desktop=normal | registry
+    tower-layer 0.3.3 | MIT | desktop=normal | registry
+    tower-service 0.3.3 | MIT | desktop=normal | registry
+    tracing 0.1.44 | MIT | desktop=normal | registry
+    tracing-core 0.1.36 | MIT | desktop=normal | registry
+    tray-icon 0.24.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    try-lock 0.2.5 | MIT | desktop=normal | registry
+    typeid 1.0.3 | MIT OR Apache-2.0 | desktop=normal | registry
+    typenum 1.20.1 | MIT OR Apache-2.0 | desktop=normal | registry
+    unic-char-property 0.9.0 | MIT/Apache-2.0 | desktop=normal | registry
+    unic-char-range 0.9.0 | MIT/Apache-2.0 | desktop=normal | registry
+    unic-common 0.9.0 | MIT/Apache-2.0 | desktop=normal | registry
+    unicode-ident 1.0.24 | (MIT OR Apache-2.0) AND Unicode-3.0 | desktop=normal,nav_core=normal | registry
+    unicode-segmentation 1.13.3 | MIT OR Apache-2.0 | desktop=normal | registry
+    unic-ucd-ident 0.9.0 | MIT/Apache-2.0 | desktop=normal | registry
+    unic-ucd-version 0.9.0 | MIT/Apache-2.0 | desktop=normal | registry
+    url 2.5.8 | MIT OR Apache-2.0 | desktop=normal | registry
+    urlpattern 0.3.0 | MIT | desktop=normal | registry
+    utf8_iter 1.0.4 | Apache-2.0 OR MIT | desktop=normal | registry
+    uuid 1.24.0 | Apache-2.0 OR MIT | desktop=normal | registry
+    vcpkg 0.2.15 | MIT/Apache-2.0 | nav_core=build | registry
+    version_check 0.9.5 | MIT/Apache-2.0 | desktop=build,nav_core=build | registry
+    version-compare 0.2.1 | MIT | desktop=normal | registry
+    vswhom 0.1.0 | MIT | desktop=normal | registry
+    vswhom-sys 0.1.3 | MIT | desktop=normal | registry
+    walkdir 2.5.0 | Unlicense/MIT | desktop=normal | registry
+    want 0.3.1 | MIT | desktop=normal | registry
+    wasi 0.11.1+wasi-snapshot-preview1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | desktop=normal | registry
+    wasip2 1.0.4+wasi-0.2.12 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | desktop=normal | registry
+    wasm-bindgen 0.2.127 | MIT OR Apache-2.0 | desktop=normal | registry
+    wasm-bindgen-futures 0.4.77 | MIT OR Apache-2.0 | desktop=normal | registry
+    wasm-bindgen-macro 0.2.127 | MIT OR Apache-2.0 | desktop=normal | registry
+    wasm-bindgen-macro-support 0.2.127 | MIT OR Apache-2.0 | desktop=normal | registry
+    wasm-bindgen-shared 0.2.127 | MIT OR Apache-2.0 | desktop=normal | registry
+    wasm-streams 0.5.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    web_atoms 0.2.6 | MIT OR Apache-2.0 | desktop=normal | registry
+    webkit2gtk 2.0.2 | MIT | desktop=normal | registry
+    webkit2gtk-sys 2.0.2 | MIT | desktop=normal | registry
+    web-sys 0.3.104 | MIT OR Apache-2.0 | desktop=normal | registry
+    webview2-com 0.38.2 | MIT | desktop=normal | registry
+    webview2-com-macros 0.8.1 | MIT | desktop=normal | registry
+    webview2-com-sys 0.38.2 | MIT | desktop=normal | registry
+    winapi 0.3.9 | MIT/Apache-2.0 | desktop=normal | registry
+    winapi-i686-pc-windows-gnu 0.4.0 | MIT/Apache-2.0 | desktop=normal | registry
+    winapi-util 0.1.11 | Unlicense OR MIT | desktop=normal | registry
+    winapi-x86_64-pc-windows-gnu 0.4.0 | MIT/Apache-2.0 | desktop=normal | registry
+    windows_aarch64_gnullvm 0.42.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows_aarch64_gnullvm 0.52.6 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows_aarch64_msvc 0.42.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows_aarch64_msvc 0.52.6 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows_i686_gnu 0.42.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows_i686_gnu 0.52.6 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows_i686_gnullvm 0.52.6 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows_i686_msvc 0.42.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows_i686_msvc 0.52.6 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows_x86_64_gnu 0.42.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows_x86_64_gnu 0.52.6 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows_x86_64_gnullvm 0.42.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows_x86_64_gnullvm 0.52.6 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows_x86_64_msvc 0.42.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows_x86_64_msvc 0.52.6 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows 0.61.3 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows-collections 0.2.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows-core 0.61.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows-core 0.62.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows-future 0.2.1 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows-implement 0.60.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows-interface 0.59.3 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows-link 0.1.3 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows-link 0.2.1 | MIT OR Apache-2.0 | desktop=normal,nav_core=normal | registry
+    windows-numerics 0.2.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows-result 0.3.4 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows-result 0.4.1 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows-strings 0.4.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows-strings 0.5.1 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows-sys 0.45.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows-sys 0.59.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows-sys 0.61.2 | MIT OR Apache-2.0 | desktop=normal,nav_core=normal | registry
+    windows-targets 0.42.2 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows-targets 0.52.6 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows-threading 0.1.0 | MIT OR Apache-2.0 | desktop=normal | registry
+    windows-version 0.1.7 | MIT OR Apache-2.0 | desktop=normal | registry
+    window-vibrancy 0.6.0 | Apache-2.0 OR MIT | desktop=normal | registry
+    winnow 0.5.40 | MIT | desktop=normal | registry
+    winnow 0.7.15 | MIT | desktop=normal | registry
+    winnow 1.0.4 | MIT | desktop=normal | registry
+    winreg 0.55.0 | MIT | desktop=normal | registry
+    wit-bindgen 0.57.1 | Apache-2.0 WITH LLVM-exception OR Apache-2.0 OR MIT | desktop=normal | registry
+    writeable 0.6.3 | Unicode-3.0 | desktop=normal | registry
+    wry 0.55.1 | Apache-2.0 OR MIT | desktop=normal | registry
+    x11 2.21.0 | MIT | desktop=normal | registry
+    x11-dl 2.21.0 | MIT | desktop=normal | registry
+    yoke 0.8.3 | Unicode-3.0 | desktop=normal | registry
+    yoke-derive 0.8.2 | Unicode-3.0 | desktop=normal | registry
+    zerocopy 0.8.56 | BSD-2-Clause OR Apache-2.0 OR MIT | nav_core=normal | registry
+    zerocopy-derive 0.8.56 | BSD-2-Clause OR Apache-2.0 OR MIT | nav_core=normal | registry
+    zerofrom 0.1.8 | Unicode-3.0 | desktop=normal | registry
+    zerofrom-derive 0.1.7 | Unicode-3.0 | desktop=normal | registry
+    zerotrie 0.2.4 | Unicode-3.0 | desktop=normal | registry
+    zerovec 0.11.6 | Unicode-3.0 | desktop=normal | registry
+    zerovec-derive 0.11.3 | Unicode-3.0 | desktop=normal | registry
+    zmij 1.0.23 | MIT | desktop=normal,nav_core=normal | registry
+
+--------------------------------------------------------------------------------
+[3] SCS Telemetry SDK（telemetry-plugin 两个插件）
+--------------------------------------------------------------------------------
+
+  组件          : SCS Telemetry SDK 1.14
+  归档          : vendor/scs_sdk_1_14.zip  sha256=c6c1f7376b7324994d9f9c567f3c4141fbbf305b6bf803bc4cfeef2437b2023a（与 provenance 记录一致）
+  上游来源      : https://download.eurotrucksimulator2.com/scs_sdk_1_14.zip
+  上游许可标识  : MIT（provenance 的 license.spdx_identifier）
+  许可文本文件  : sdk_license.txt（归档内条目，逐字收录于下）
+  许可文本 sha256: da45ffca18f44f1fd26b4fb8da8767bbf0f052799c60838c1e8fbee4fbe07b50
+  文本长度      : 1064 字符（20 行）
+  版权行        : Copyright (C) 2016 SCS Software
+  是否随仓库提交: false（归档与解包目录均在 .gitignore 内）
+
+  可再分发性的操作语句（逐字引用 sdk_license.txt 第 4-9 行）：
+    "Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:"
+
+  同一许可文本的条件句（第 11-12 行）：
+    "The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software."
+
+  判定：允许再分发。上述授权句无条件列举了 use、copy、modify、merge、publish、
+  distribute、sublicense 与 sell，且明示及于 source and binary form；唯一条件是保留
+  版权与许可声明。sdk_license.txt 是未经改动的 MIT 许可文本（含 "Copyright (C) 2016
+  SCS Software"），归档内 readme.txt 不含任何额外的许可、再分发或第三方 mod 限制。
+  因此：把该归档或其头文件提交进仓库、或让 CI 下载它们，均被许可允许，不需要另行取得
+  SCS 的授权；任何再分发必须随附 sdk_license.txt。
+
+  本仓库当前的实际形态（来自 provenance）：归档未提交、CI 也不下载，构建脚本
+  telemetry-plugin/*/build.bat 在缺少 vendor/scs_sdk_1_14/include 时直接失败，
+  SDK 因此是一个外部前置条件（由 scripts/prepare-scs-sdk.ps1 按需满足）。
+  但两个插件 DLL 已提交并在仓库内分发：
+    - scs-nav-bridge：telemetry-plugin/scs-nav-bridge/out/scs-nav-bridge.dll
+      provenance 记录 sha256=bc9714779f6656955a350fc49c901722e4e0c8b75b3f108e059139e1172aa568（140288 字节）；on-disk sha256=bc9714779f6656955a350fc49c901722e4e0c8b75b3f108e059139e1172aa568
+    - semaphore-bridge：telemetry-plugin/semaphore-bridge/out/semaphore-bridge.dll
+      provenance 记录 sha256=171434e476666c90c63dee837f76f9812d80d846d71bb1b9751ac64a2d4e4452（139264 字节）；on-disk sha256=171434e476666c90c63dee837f76f9812d80d846d71bb1b9751ac64a2d4e4452
+  scs-nav-bridge.cpp 自述「基于官方 telemetry_mem 示例骨架（SCS SDK，MIT 许可）扩展」，
+  即该 DLL 包含 SDK 示例代码的派生部分，属于 MIT 条件句所称的 substantial portions，
+  故本节完整收录 sdk_license.txt 文本以满足保留声明的要求。
+
+  以下是 sdk_license.txt 的完整逐字内容。
+
+# sdk_license.txt（逐字收录，sha256 如上）
+# ---------------------------------------------------------------------------
+#   SCS SDK
+#   Copyright (C) 2016 SCS Software
+#
+#   Permission is hereby granted, free of charge, to any person obtaining a copy
+#   of this software and associated documentation files (the "Software"), to deal
+#   in the Software without restriction, including without limitation the rights
+#   to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+#   copies of the Software, and to permit persons to whom the Software is
+#   furnished to do so, subject to the following conditions:
+#
+#   The above copyright notice and this permission notice shall be included in all
+#   copies or substantial portions of the Software.
+#
+#   THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+#   IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+#   FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+#   AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+#   LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+#   OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
+#   SOFTWARE.
+#
+
+--------------------------------------------------------------------------------
+[3.1] 判定（Release license audit）
+--------------------------------------------------------------------------------
+
+  已登记的每个组件，其许可都由工作树中的文件确定：npm 组件来自已安装包的
+  package.json 与其 LICENSE 文件，Rust 组件来自 cargo metadata 读出的上游 manifest
+  字段，SCS SDK 来自归档内 sdk_license.txt 的文本与摘要。因此：
+
+    · 风险清单 A（许可不在允许清单内）：空。
+    · 风险清单 B（第三方 crate 未声明许可）：空。
+    · 未识别（unknown/unidentifiable）许可：无。
+    · 需要标注但不阻塞判定的一项：pmtiles 4.5.0 与 murmurhash-js 1.0.0 的包内没有
+      LICENSE 文件，其许可仅由 package.json 的 license 字段声明（分别为 BSD-3-Clause
+      与 MIT）；这是「文本缺失」而不是「许可未知」。
+
+  结论：就本清单覆盖的组件范围而言，可以判定 Release license audit = PASS。
+  但有 NOT CLOSED 项，发布前必须处理：[4] 第 1 条（最终随物的字形字体尚未确定，
+  其许可因此无法登记）；若发布时提供 -FontsDir，则本 PASS 对该资源不成立，必须先
+  补登字体许可再重新生成。其余 [4] 各项属于范围与精度说明，不改变上述判定。
+
+--------------------------------------------------------------------------------
+[4] NOT VERIFIED（本轮未能从证据确定的事项）
+--------------------------------------------------------------------------------
+
+  1. 字形字体许可：未决（见 [2] 末）。仓库内不存在字体文件与其 provenance。
+  2. Tauri 的 bundler 目标：desktop/tauri.conf.json 的 bundle 字段为空，
+     本轮未执行 `tauri build`，因此「不产出 MSI/NSIS」是由配置推断而非实测。
+  3. WebView2 运行期本体：不随物，本轮未在本机枚举已安装的 Evergreen Runtime 版本。
+  4. Rust 侧 build-only 与 linked 的区分：`reach=build` 只表示该 crate 仅经
+     build-dependency 边可达；`reach=normal` 只表示存在普通依赖边，两者都不等价于
+     「该 crate 的机器码出现在最终二进制里」——cfg 门控、dead code elimination 与
+     LTO 都可能把某个可达 crate 完全剔除。精确判定需要分析链接后的 PE/PDB，本轮未做。
+  5. 本次生成使用的是普通 `cargo metadata` 而非 `--locked`：desktop/Cargo.toml、
+     nav-core/tools/nav-core-cli/Cargo.toml 与 workspace 成员版本在本工作树中存在未提交的
+     变更（0.1.0 -> 0.7.0-rc.1），两个 Cargo.lock 仍记录 0.1.0，--locked 会因此报
+     "cannot update the lock file ... because --locked was passed"。可补偿的控制：
+     本轮用普通 metadata 求解，并把结果与锁定文件逐条核对——两个锁文件的全部
+     [[package]] 条目都已对应到闭包中的包（见 [2] 的核对行），版本差异只出现在锁文件
+     对 workspace 根包的占位版本上，且已在 [2] 中逐条列出。求解过程对 Cargo.lock 的
+     临时改动（仅重写这一处版本号）已还原为 Git 中的版本。
+  6. scripts/crate-licenses.json 是派生快照：它随 Cargo.lock 或 workspace 版本变化而
+     过期。生成脚本会逐条核对两个锁文件的 [[package]] 条目（缺项直接返回 3），但
+     「同名 crate 换了版本」只能通过 -RefreshCrateLicenses 重解才能反映。锁文件变更时
+     必须重新求解并重新生成本清单。
+  7. npm 侧的传递依赖完整性：随物分发的传递依赖取自被 esbuild 打包的入口的
+     dependencies 闭包，并用产物字节扫描核对（qrcode 的 dijkstrajs/pngjs/yargs 为零命中）。
+     这是静态判定，不是对 dist/ 的模块级来源分析。
+
+================================================================================
+清单结束。
+================================================================================
+# notices-body-sha256: 27b124df37982dd4fff260ea62106c78d901a446b9b4cfd75d0dcd2da64e5527
