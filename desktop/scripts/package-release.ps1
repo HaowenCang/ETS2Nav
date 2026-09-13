@@ -122,7 +122,7 @@ ETS2Nav 遥测插件安装说明
 if (-not (Test-Path -LiteralPath $StagingDir -PathType Container)) {
     Stop-Precondition "暂存目录不存在: $StagingDir"
 }
-$stagingFull = (Resolve-Path -LiteralPath $StagingDir).Path
+$stagingFull = Get-NormalisedRoot -Path $StagingDir
 $manifestPath = Join-Path $stagingFull 'bundle-manifest.json'
 if (-not (Test-Path -LiteralPath $manifestPath -PathType Leaf)) {
     Stop-Precondition "暂存目录缺少 bundle-manifest.json: $stagingFull"
@@ -186,7 +186,7 @@ foreach ($f in (Get-ChildItem -LiteralPath $stagingFull -Recurse -File -Force)) 
 }
 $forbidden = New-Object System.Collections.ArrayList
 foreach ($f in $stagingFiles) {
-    $rel = $f.FullName.Substring($stagingFull.Length).TrimStart('\', '/') -replace '\\', '/'
+    $rel = Get-RelativePathChecked -RootFull $stagingFull -FullPath $f.FullName
     if ($rel -match $forbiddenRegex) { [void]$forbidden.Add($rel) }
 }
 if ($forbidden.Count -gt 0) {
@@ -205,7 +205,7 @@ foreach ($rel in @('LICENSE', 'THIRD_PARTY_NOTICES.txt', 'plugins')) {
 # ── 条目集合 ─────────────────────────────────────────────────────────────────
 $entries = New-Object System.Collections.ArrayList
 foreach ($f in $stagingFiles) {
-    $rel = $f.FullName.Substring($stagingFull.Length).TrimStart('\', '/') -replace '\\', '/'
+    $rel = Get-RelativePathChecked -RootFull $stagingFull -FullPath $f.FullName
     [void]$entries.Add([pscustomobject]@{ Name = "$($script:ArtifactRoot)/$rel"; Kind = 'file'; Path = $f.FullName })
 }
 [void]$entries.Add([pscustomobject]@{ Name = "$($script:ArtifactRoot)/LICENSE"; Kind = 'file'; Path = $licenseSrc })

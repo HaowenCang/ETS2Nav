@@ -100,7 +100,7 @@ function Get-Sha256Local {
 }
 function Get-RelPath {
     param([string]$Root, [string]$Full)
-    return $Full.Substring($Root.Length).TrimStart('\', '/') -replace '\\', '/'
+    return Get-RelativePathChecked -RootFull $Root -FullPath $Full
 }
 
 # 取 JSON 值的子键名。必须同时处理 ConvertFrom-Json 产生的 PSCustomObject 与

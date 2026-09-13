@@ -67,6 +67,8 @@ param(
     [string]$WorkDir
 )
 
+. (Join-Path $PSScriptRoot 'BundleCommon.ps1')
+
 Set-StrictMode -Version 2.0
 $ErrorActionPreference = 'Stop'
 
@@ -248,12 +250,12 @@ function Invoke-PrivacyScan {
         [Parameter(Mandatory)][string]$RepoRootPath
     )
 
-    $rootFull = (Resolve-Path -LiteralPath $Root).Path
+    $rootFull = Get-NormalisedRoot -Path $Root
     $files = New-Object System.Collections.ArrayList
     foreach ($f in (Get-ChildItem -LiteralPath $rootFull -Recurse -File -Force)) {
         if (Test-TextFile -Path $f.FullName) { [void]$files.Add($f) }
     }
-    $relList = @($files | ForEach-Object { $_.FullName.Substring($rootFull.Length).TrimStart('\', '/') -replace '\\', '/' })
+    $relList = @($files | ForEach-Object { Get-RelativePathChecked -RootFull $rootFull -FullPath $_.FullName })
     [Array]::Sort($relList, [System.StringComparer]::Ordinal)
 
     $hits = New-Object System.Collections.ArrayList

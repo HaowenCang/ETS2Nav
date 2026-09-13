@@ -1,4 +1,4 @@
-#Requires -Version 5.1
+﻿#Requires -Version 5.1
 <#
 .SYNOPSIS
   Shared helpers for the Desktop bundle tooling (P4R Batch 6A sections 6, 9, 10).
@@ -25,12 +25,42 @@
 
 Set-StrictMode -Version 2.0
 
+# ── 相对路径推导（P4R Batch 6B §17 修复）─────────────────────────────────────
+# 原实现是 `$FullPath.Substring($Root.Length)`，而 `$Root` 来自 `Resolve-Path ... .Path`、
+# 子项来自 `Get-ChildItem` 的 `FileInfo.FullName`。两者**不保证是同一个规范化形式**：
+# 在 GitHub runner 上 $env:TEMP 含 8.3 短名（`RUNNER~1`），而 FileInfo 返回长名
+# （`runneradmin`），前缀长度因此不同，Substring 会静默切掉/多留字符，
+# 得到一个**看起来像相对路径但指向别处**的字符串。
+#
+# 该缺陷在 Source Gates 上以 `Could not find a part of the path '...\est\neg\allowed.md'`
+# 的形式暴露（`test` 被切掉了首字母 `t`），而不是在本地——本地两种形式恰好一致。
+#
+# 现在改为：根与子项都取自 `Get-Item` 的 `FullName`（同一规范化来源），并在相减之前
+# **断言前缀关系**，不一致就显式失败，而不是继续构造一个错误的路径。
+function Get-NormalisedRoot {
+    param([Parameter(Mandatory)][string]$Path)
+    return (Get-Item -LiteralPath $Path -Force).FullName.TrimEnd('\', '/')
+}
+
+function Get-RelativePathChecked {
+    param(
+        [Parameter(Mandatory)][string]$RootFull,
+        [Parameter(Mandatory)][string]$FullPath
+    )
+    $prefix = $RootFull + [IO.Path]::DirectorySeparatorChar
+    if (-not $FullPath.StartsWith($prefix, [StringComparison]::OrdinalIgnoreCase)) {
+        throw ("HARNESS FAILURE: 无法为 '$FullPath' 推导相对于 '$RootFull' 的路径——" +
+            "它不在该根之下，或两者来自不同的路径规范化形式。拒绝继续构造路径。")
+    }
+    return $FullPath.Substring($prefix.Length).Replace('\', '/')
+}
+
 function New-FileEntry {
     param(
         [Parameter(Mandatory)][string]$Root,
         [Parameter(Mandatory)][string]$FullPath
     )
-    $rel = $FullPath.Substring($Root.Length).TrimStart('\', '/') -replace '\\', '/'
+    $rel = Get-RelativePathChecked -RootFull $Root -FullPath $FullPath
     $item = Get-Item -LiteralPath $FullPath
     [pscustomobject]@{
         Rel    = $rel
@@ -41,7 +71,7 @@ function New-FileEntry {
 
 function Get-TreeEntries {
     param([Parameter(Mandatory)][string]$Root)
-    $full = (Resolve-Path -LiteralPath $Root).Path
+    $full = Get-NormalisedRoot -Path $Root
     $out = New-Object System.Collections.ArrayList
     foreach ($f in (Get-ChildItem -LiteralPath $full -Recurse -File -Force)) {
         [void]$out.Add((New-FileEntry -Root $full -FullPath $f.FullName))
